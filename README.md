@@ -177,3 +177,19 @@ npm run bundle
 - 기존 배포의 [자료실](https://skt-aleph-defense.vercel.app/)에서 이전 로그인/메모 API 응답을 확인합니다. 실제 접속 도구·동일 사용자 새 로그인 연동은 엔진 측 환경에서 따로 시험해야 합니다.
 
 커밋 뒤 `npm run bundle`을 실행하면 로컬 가상 판정, production 7단계 manifest, 기존 화면과 비로그인 401을 자기점검에 포함합니다. 실제 재로그인 계약과 실기기 검증은 확인하지 못했음을 명시하여 제출합니다.
+
+## 보너스 xdr-03 저장점 · 알려진 CVE 악용 탐지
+
+입력은 xdr/fixtures/known-cve.json의 가상 Wazuh 경보 24건입니다. 원본은 수정하지 않았습니다. xdr/known-cve/read-alerts.mjs는 시각·출발 주소·계정·규칙 수준·비밀값을 제거한 설명 다섯 필드만 추출합니다.
+
+근거: MITRE ATT&CK T1190 (https://attack.mitre.org/techniques/T1190/) 및 NVD CVE-2021-44228 (https://nvd.nist.gov/vuln/detail/CVE-2021-44228). patterns.json의 패턴을 심판 격리 실행용 decide.mjs 상단 PATTERNS 상수에도 동일하게 기록했습니다.
+
+- 완전한 원격 JNDI 조회 구문이 실제 HTTP 머리글 또는 인자에 있고 T1190 태그·Wazuh 수준으로 뒷받침될 때만 block합니다. 단어 검색·점검 흔적·잘린 구문은 alert, 정상 요청은 record입니다.
+- decide.mjs는 동기 decide(alert) 하나만 export하며 import, 파일 I/O, 네트워크를 사용하지 않습니다. 확신도 수치는 휴리스틱 점수이며 공격 성공 확률이 아닙니다.
+- respond.mjs는 강한 경보만 deny-rules.json 후보로 변환하고, block·alert를 민감정보 없이 xdr/alerts.log에 JSONL 한 줄씩 기록합니다. 중복 기록하지 않고 기존 모듈 로그를 보존합니다.
+- 기존 src/decider.mjs와 RULE_IDS는 변경하지 않습니다. 추가 ZTNA 검사는 상위 판정 allow, 서버 검증 출발지·경로·시각·경보 ID 모두 일치할 때만 거부합니다. 이 검증 정보가 운영 계약에 없어 후보는 simulation_only입니다.
+- 공유 IP에서 정상 경보가 있으면 후보를 제외하고, 경로 없는 머리글-only 경보는 주소 전체 차단으로 승격하지 않습니다. 후보는 경보 발생 15분 후 만료됩니다.
+
+재현: npm run test:xdr && npm run xdr:run -- known-cve && npm run xdr:run -- known-cve
+
+현재 fixture 기준 block 8 · alert 8 · record 8, 정상 이벤트 오차단 0건, 경로를 확인할 수 있는 오프라인 후보 6개, known-cve 알림 로그 16줄(재실행 중복 없음)입니다. 이는 비공개 심판이나 운영 차단 결과가 아닙니다.

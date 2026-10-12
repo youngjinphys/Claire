@@ -90,6 +90,14 @@ export async function runXdr({ root, moduleKey, writeError = (line) => console.e
     }
     await responseModule.respondToDecisions({ root, alerts: fixture.alerts, decisions });
   }
+  if (moduleKey === 'known-cve') {
+    // Only this local runner performs I/O; the judge-facing decide.mjs is isolated.
+    const module = await import(pathToFileURL(join(root, 'xdr', 'known-cve', 'respond.mjs')).href);
+    if (typeof module.respondToDecisions !== 'function') {
+      throw new Error('known-cve 로컬 대응 모듈을 찾을 수 없습니다.');
+    }
+    await module.respondToDecisions({ root, alerts: fixture.alerts, decisions });
+  }
   const result = { schema: 'aleph.xdr.result.v1', moduleKey, decisions, counts };
   const outDir = join(root, 'xdr', moduleKey);
   await mkdir(outDir, { recursive: true });
