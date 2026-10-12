@@ -1,6 +1,6 @@
-# BYTE BACK 방어전 · 6단계 저장점
+# BYTE BACK 방어전 · 7단계 저장점
 
-현재 단계는 **6단계**입니다. 1~5단계의 자료실 기능과 보너스 XDR을 보존하면서 기기 등록 확인 규칙 `device_registered`를 추가했습니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
+현재 단계는 **7단계**입니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
 
 ## 100점 가산점 대응
 
@@ -150,3 +150,30 @@ npm run bundle
 `npm run decider:test && node --test test/decider-stage6.test.mjs`
 
 `npm run bundle`은 로컬 가상 기기 판정, production `/aleph.json`의 연결 값, 기존 화면 응답, 비로그인 API의 401을 구분해 기록합니다. 직접 접속 도구의 실기기 시험은 **미검증**으로 남깁니다. 원본 경보, 기존 XDR 규칙, 서버 키, 웹 UI와 과거 배포는 수정·삭제하지 않습니다.
+
+## 7단계 · 평소와 다른 가상 접속은 다시 확인
+
+### 신뢰 경계 및 출처 검증
+
+- 근거 계약: `docs/DECIDER_REQUEST.md`의 `aleph.decision.v1`, `scripts/fixture-7.mjs`의 `normal`/`suspicious` 요청. `src/decider.mjs`의 응답은 기존의 다섯 항목만 유지합니다.
+- 위험 신호의 **출처 `judge_fixture`는 오직 심판이 전달한 가상 신호**입니다. 지역·네트워크·시각이 유효하고 최근 사건 배열의 구조가 확인된 경우에만 학습용 조합 판정에 사용합니다. 브라우저 헤더(`x-forwarded-for`, 위치·네트워크 값), `request.geo` 및 계약 외 신원 정보는 보지 않습니다.
+- 실제 엔진의 `signals.source = none`, `region/network = unknown`은 명시적으로 **정보 없음**입니다. 위험/안전 위치로 해석하지 않으며 기존 `device_registered` 기본 판정만 적용합니다. 데이터 출처 불명, 위치·시간·네트워크·행동 필드 누락·형식 오류는 정상 값으로 보정하지 않고 기본 거부(`starter_not_ready`)합니다.
+- 6단계 `device_registered`는 항상 먼저 적용됩니다. 미등록·식별자 확인 실패는 `device_not_registered`로 거부하며, 7단계 규칙이 기기 등록 조건을 우회하지 못합니다.
+
+### 가상 복합 사건 규칙
+
+- 추가한 규칙: `step_up_required`. **가상 시간대(22~05시) + unfamiliar 네트워크(`unusual`) + 최근 120초 내 `risk_signal`의 횟수 20건 이상**이 모두 충족될 때만 `step_up`을 반환합니다.
+- `signals.region`의 `foreign` 값 하나만으로 차단하거나 재인증을 요청하지 않습니다. 주어진 fixture의 `risk_signal`은 이름과 횟수만 제공하므로 **실제 메모 읽기 20회의 별도 검증 증거라고 주장할 수 없습니다.**
+- 가상 사건에서 `stepUp.verified === true`이고 `authAgeSeconds`가 0~120초인 **새로 전달된 요청을 다시 판정**하면 `allow`가 나옵니다. 누락·오래된 인증·검증되지 않은 요청은 차단 우회 조건이 될 수 없습니다.
+- 계약 한계: 제공 문서의 `stepUp = {verified, authAgeSeconds}`에는 그 재인증이 동일한 `subjectId`의 새 로그인에서 유래함을 검증하는 구체 절차나 증명 필드가 **명시돼 있지 않습니다.** 운영 릴레이가 별도로 증명하지 않는 한 실제 재로그인 유도, 보호 자료 차단, 재로그인 성공 여부는 **미실행·미검증**입니다.
+
+### 실행 및 기대 결과
+
+정상 검사: `npm run decider:test && npm run fixture:7 && node --test test/decider-stage7.test.mjs`
+
+- 정상 등록 기기의 제공 가상 정상 요청은 `allow / approved`입니다.
+- 복합 가상 위험 사건은 `step_up / step_up_required`, 가상 `verified: true`·`authAgeSeconds: 60`으로 다시 판정하면 `allow / approved`입니다.
+- 미등록·사용자/기기 식별자 실패는 `deny / device_not_registered`, 미확인 위치·행동 출처는 `deny / starter_not_ready`여야 합니다.
+- 기존 배포의 [자료실](https://skt-aleph-defense.vercel.app/)에서 이전 로그인/메모 API 응답을 확인합니다. 실제 접속 도구·동일 사용자 새 로그인 연동은 엔진 측 환경에서 따로 시험해야 합니다.
+
+커밋 뒤 `npm run bundle`을 실행하면 로컬 가상 판정, production 7단계 manifest, 기존 화면과 비로그인 401을 자기점검에 포함합니다. 실제 재로그인 계약과 실기기 검증은 확인하지 못했음을 명시하여 제출합니다.

@@ -20,12 +20,13 @@ async function assertVerdict(input, decision, reasonCode) {
 
 test('등록 기기는 허용하고 미등록 기기는 거부', async () => {
   const { normal } = fixtureRequests();
-  assert.deepEqual(RULE_IDS, ['device_registered']);
+  assert.ok(RULE_IDS.includes('device_registered'));
+  assert.ok(RULE_IDS.includes('step_up_required'));
   await assertVerdict(normal, 'allow', 'approved');
   await assertVerdict({ ...normal, deviceRegistered: false }, 'deny', 'device_not_registered');
   await assertVerdict({ ...normal, deviceRegistered: null }, 'deny', 'device_not_registered');
   const checks = await checkDecider({ decide, ruleIds: RULE_IDS });
-  assert.equal(checks.length, 2);
+  assert.equal(checks.length, 4);
   assert.ok(checks.every(x => x.passed));
 });
 

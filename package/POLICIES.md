@@ -6,4 +6,6 @@
 |---|---|---|---|
 | `device_registered` | 6 | 미등록·확인되지 않은 기기의 보호된 읽기 접근 거부 | `npm run decider:test` + 6단계 로컬 회귀 테스트 |
 
+| `step_up_required` | 7 | 엔진이 제공한 가상 비정상 시간·낯선 네트워크·최근 대량 위험 사건이 함께 있을 때 추가 확인 | `npm run fixture:7` 및 `node --test test/decider-stage7.test.mjs` (가상 사건) |
+
 브라우저에서 버튼을 숨기는 것만으로 서버 접근이 차단됐다고 적지 마세요.

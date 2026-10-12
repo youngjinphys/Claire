@@ -123,6 +123,74 @@ export async function runAttackChecks(config) {
     ];
   }
 
+  if (config.step === 7) {
+    const { decide } = await import('./decider.mjs');
+    const { fixtureRequests } = await import('../scripts/fixture-7.mjs');
+    const { normal, suspicious } = fixtureRequests();
+    const refreshed = {
+      ...suspicious, stepUp: { verified: true, authAgeSeconds: 60 },
+    };
+    const untrusted = {
+      ...suspicious,
+      signals: { ...suspicious.signals, source: 'client_header' },
+      headers: { 'x-forwarded-for': '127.0.0.1', 'x-region': 'local' },
+    };
+
+    const [normalDecision, riskyDecision, replayDecision, forgedDecision] =
+      await Promise.all([normal, suspicious, refreshed, untrusted].map(decide));
+
+    const manifestResponse = await fetch(new URL('/aleph.json', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const manifest = manifestResponse.ok ? await safeJson(manifestResponse) : null;
+    const configMatches = manifest?.step === 7
+      && manifest?.protectedService?.serviceId === config.protectedService?.serviceId
+      && manifest?.protectedService?.readRoute === config.protectedService?.readRoute;
+    const homeResponse = await fetch(app, {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'text/html' },
+    });
+    const listResponse = await fetch(new URL('/api/notes', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const listBody = await safeJson(listResponse);
+    const denied = listResponse.status === 401 && !Array.isArray(listBody)
+      && !Array.isArray(listBody?.notes);
+
+    return [
+      { attackId: 'synthetic_normal_allow', expected: '가상 정상 조합은 allow',
+        observed: normalDecision.decision === 'allow' ? '로컬 가상 정상 요청 allow'
+          : '가상 정상 요청 판정 실패' },
+      { attackId: 'synthetic_anomaly_step_up', expected: '가상 시간·네트워크·행동 복합 사건은 step_up',
+        observed: riskyDecision.decision === 'step_up'
+          && riskyDecision.reasonCode === 'step_up_required'
+          ? '로컬 가상 복합 사건 step_up_required' : '가상 복합 사건 판정 실패' },
+      { attackId: 'synthetic_verified_replay', expected: '가상 확인 완료·새 요청 재판정만 allow',
+        observed: replayDecision.decision === 'allow'
+          ? '로컬 가상 verified(60초) 후 재판정 allow (실제 재로그인 미검증)'
+          : '가상 재판정 실패' },
+      { attackId: 'untrusted_signal_provenance', expected: '클라이언트 출처 신호를 엔진 증거로 승격하지 않음',
+        observed: forgedDecision.decision === 'deny'
+          ? '로컬 client_header 출처 거부 (실제 엔진 헤더는 미확인)'
+          : '출처 불명 신호 거부 검증 실패' },
+      { attackId: 'deployed_stage7_identity', expected: '배포 manifest가 7단계 및 기존 서비스 연결 보존',
+        observed: configMatches ? 'production /aleph.json step=7 및 보호 서비스 일치'
+          : '배포 manifest 설정 확인 실패 (HTTP ' + manifestResponse.status + ')' },
+      { attackId: 'existing_browser_ui', expected: '기존 자료실 주소에서 첫 화면 응답',
+        observed: homeResponse.ok
+          ? '기존 자료실 HTTP ' + homeResponse.status + ' (접속 도구는 미검증)'
+          : '첫 화면 HTTP ' + homeResponse.status },
+      { attackId: 'anonymous_notes_denied', expected: '비로그인 서버 메모 API는 자료 없이 401',
+        observed: denied ? '무로그인 메모 목록 HTTP 401, 자료 없음'
+          : '비로그인 메모 거부 실패 (HTTP ' + listResponse.status + ')' },
+      { attackId: 'real_subject_reauth_unverified',
+        expected: '동일 사용자 새 로그인 시각을 엔진이 검증한 환경에서만 실측',
+        observed: '미실행: v1 계약에는 동일 주체의 신규 로그인 증명 및 운영 리다이렉트 확인 근거가 없음' },
+    ];
+  }
+
   if (config.step === 6) {
     const { decide, RULE_IDS } = await import('./decider.mjs');
     const { checkDecider } = await import('../scripts/decider-test.mjs');
