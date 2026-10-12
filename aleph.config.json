@@ -1,5 +1,5 @@
 {
-  "step": 5,
+  "step": 6,
   "repoUrl": "https://github.com/youngjinphys/choi-bujang-secret-vault",
   "publicAppUrl": "https://skt-aleph-defense.vercel.app",
   "judgeIssuer": "https://aleph-judge-production.up.railway.app/defense/judge",
@@ -13,5 +13,9 @@
     "/api/notes/:id"
   ],
   "originalApiUrl": "https://ytvwpdjfrpwxwtucclpe.supabase.co/rest/v1/learning_notes",
-  "restoreRoute": null
+  "restoreRoute": null,
+  "protectedService": {
+    "serviceId": "notes",
+    "readRoute": "GET /notes/:id"
+  }
 }

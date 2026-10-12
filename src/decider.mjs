@@ -1,14 +1,32 @@
-// ALEPH SDP 엔진이 확인한 요청만 받는 학생 판정기 시작점입니다.
-// 6단계부터 규칙을 하나씩 추가합니다. 이 기본 응답은 모든 요청을 거부합니다.
-// 요청 본문의 userId, role, 기기 키, 토큰을 별도로 믿거나 저장하지 마세요.
-export const RULE_IDS = Object.freeze(['starter.deny']);
+// The engine authenticates and binds subject, device and route before calling
+// this student policy. Browser-supplied identities are never trusted here.
+export const RULE_IDS = Object.freeze(['device_registered']);
+const SUBJECT = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
+const DEVICE_ID = /^[0-9a-f]{16}$/u;
+const READ_PATH = /^\/notes\/[A-Za-z0-9._~-]{1,128}$/u;
 
 export async function decide(request) {
+  const inScope = request?.schema === 'aleph.decision.v1'
+    && request?.service === 'notes'
+    && request?.method === 'GET'
+    && request?.route === 'GET /notes/:id'
+    && typeof request?.path === 'string'
+    && READ_PATH.test(request.path)
+    && typeof request?.classId === 'string' && request.classId.length > 0
+    && typeof request?.projectId === 'string' && request.projectId.length > 0;
+
+  // deviceRegistered must be an ENGINE attestation for this subject-device
+  // pair. V1 contains no independent ownership proof for an arbitrary pair.
+  const registered = request?.deviceRegistered === true
+    && typeof request?.subjectId === 'string' && SUBJECT.test(request.subjectId)
+    && typeof request?.deviceId === 'string' && DEVICE_ID.test(request.deviceId);
+
   return {
     schema: 'aleph.decision.v1',
-    requestId: request.requestId,
-    decision: 'deny',
-    reasonCode: 'starter_not_ready',
+    requestId: typeof request?.requestId === 'string' ? request.requestId : '',
+    decision: inScope && registered ? 'allow' : 'deny',
+    reasonCode: !inScope ? 'starter_not_ready'
+      : registered ? 'approved' : 'device_not_registered',
     ruleIds: [RULE_IDS[0]],
   };
 }

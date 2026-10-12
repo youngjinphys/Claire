@@ -123,6 +123,52 @@ export async function runAttackChecks(config) {
     ];
   }
 
+  if (config.step === 6) {
+    const { decide, RULE_IDS } = await import('./decider.mjs');
+    const { checkDecider } = await import('../scripts/decider-test.mjs');
+    const trials = await checkDecider({ decide, ruleIds: RULE_IDS });
+    const accepted = trials.find(item => item.name === '등록 기기의 정상 요청');
+    const rejected = trials.find(item => item.name === '미등록 기기의 가상 요청');
+
+    const manifestResponse = await fetch(new URL('/aleph.json', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const manifest = manifestResponse.ok ? await safeJson(manifestResponse) : null;
+    const matches = manifest?.step === 6
+      && manifest?.protectedService?.serviceId === config.protectedService?.serviceId
+      && manifest?.protectedService?.readRoute === config.protectedService?.readRoute;
+    const uiResponse = await fetch(app, {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'text/html' },
+    });
+    const listResponse = await fetch(new URL('/api/notes', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const unauthenticated = await safeJson(listResponse);
+    const denied = listResponse.status === 401
+      && !Array.isArray(unauthenticated) && !Array.isArray(unauthenticated?.notes);
+
+    return [
+      { attackId: 'local_registered_device', expected: '엔진 계약 모양의 등록 기기 모의 요청은 allow',
+        observed: accepted?.passed ? '로컬 가상 요청 allow 통과 (실제 접속 도구는 미확인)'
+          : '로컬 등록 기기 모의 요청 검증 실패' },
+      { attackId: 'local_unregistered_device', expected: '엔진 계약 모양의 미등록 기기 모의 요청은 deny',
+        observed: rejected?.passed ? '로컬 가상 요청 deny 통과 (실제 접속 도구는 미확인)'
+          : '로컬 미등록 기기 모의 요청 검증 실패' },
+      { attackId: 'deployed_protected_service', expected: '배포 식별정보의 보호 서비스 ID·읽기 경로 일치',
+        observed: matches ? 'production /aleph.json의 서비스 ID·경로 일치'
+          : 'production 연결 정보 검증 실패 (HTTP ' + manifestResponse.status + ')' },
+      { attackId: 'existing_browser_ui', expected: '기존 HTTPS 자료실 첫 화면이 응답',
+        observed: uiResponse.ok ? '기존 주소 첫 화면 HTTP ' + uiResponse.status + ' (엔진 경유는 미확인)'
+          : '기존 주소 첫 화면 HTTP ' + uiResponse.status },
+      { attackId: 'anonymous_note_denial', expected: '무로그인 메모 목록 직접 요청은 자료 없이 거부',
+        observed: denied ? '무로그인 자료실 API HTTP 401, 메모 없음 (기기 검증은 미확인)'
+          : '무로그인 자료실 요청 검증 실패 (HTTP ' + listResponse.status + ')' },
+    ];
+  }
+
   if (config.step !== 5) throw new Error('이 단계의 공격 점검을 src/attack-check.mjs에 구현해 주세요.');
 
   let original;

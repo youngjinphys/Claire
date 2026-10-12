@@ -34,4 +34,22 @@ export function validateOriginalApiUrl(config) {
   return original.href;
 }
 
+// Local fixture mapping only. The operating engine registry has not been inspected.
+export const STAGE6_PROTECTED_SERVICE = Object.freeze({
+  serviceId: 'notes',
+  readRoute: 'GET /notes/:id',
+});
+
+export function validateProtectedService(config) {
+  if ((config?.step ?? 0) < 6) return null;
+  const value = config?.protectedService;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== 'readRoute,serviceId'
+      || value.serviceId !== STAGE6_PROTECTED_SERVICE.serviceId
+      || value.readRoute !== STAGE6_PROTECTED_SERVICE.readRoute) {
+    throw new TypeError('invalid_protected_service');
+  }
+  return { serviceId: value.serviceId, readRoute: value.readRoute };
+}
+
 export { NOTE_ROUTES };
