@@ -123,6 +123,88 @@ export async function runAttackChecks(config) {
     ];
   }
 
+  if (config.step === 9) {
+    const { detect } = await import('./detect.mjs');
+    const { checkDetection } = await import('../scripts/detect-test.mjs');
+    const localCases = await checkDetection(detect);
+    const allPracticeCasesPass = localCases.length === 6
+      && localCases.every(item => item.passed);
+
+    const at0 = Date.UTC(2026, 9, 1);
+    const fixture = Array.from({ length: 121 }, (_, i) => ({
+      at: new Date(at0 + i * 2000).toISOString(),
+      method: 'GET', identity: { sub: 'learner_fixture' },
+    }));
+    const proposal = detect(fixture);
+    const normal = detect(fixture.slice(0, 120));
+    const spoofed = detect(fixture.map(event => ({
+      ...event, deviceId: 'unverified-browser-device',
+      network: 'unusual', headers: { 'x-network': 'unusual' },
+    })));
+    const proposed = proposal.action === 'propose_revocation'
+      && proposal.reasonCode === 'burst_read'
+      && proposal.subject === 'learner_fixture'
+      && Object.keys(proposal).sort().join(',') === 'action,reasonCode,subject';
+    const unaffectedByClientExtras =
+      JSON.stringify(spoofed) === JSON.stringify(proposal);
+
+    const manifestResponse = await fetch(new URL('/aleph.json', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const manifest = manifestResponse.ok ? await safeJson(manifestResponse) : null;
+    const deployed = manifest?.step === 9
+      && manifest?.originalApiUrl === config.originalApiUrl
+      && manifest?.protectedService?.serviceId === config.protectedService?.serviceId
+      && manifest?.protectedService?.readRoute === config.protectedService?.readRoute
+      && Array.isArray(manifest?.allowedRoutes)
+      && config.allowedRoutes?.every(route => manifest.allowedRoutes.includes(route));
+
+    const homeResponse = await fetch(app, {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'text/html' },
+    });
+    const anonymousResponse = await fetch(new URL('/api/notes', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const anonymousData = await safeJson(anonymousResponse);
+    const unauthorized = anonymousResponse.status === 401
+      && !Array.isArray(anonymousData) && !Array.isArray(anonymousData?.notes);
+
+    return [
+      { attackId: 'virtual_event_contract', expected: '제공된 여섯 가상 사건 계약 검증',
+        observed: allPracticeCasesPass
+          ? '로컬 가상 사건 6/6 검증 통과 (실제 엔진 사건 아님)'
+          : '로컬 사건 계약 확인 실패' },
+      { attackId: 'subject_burst_proposal', expected: '동일 가명 사용자 GET 121건 / 10분이면 burst_read 제안',
+        observed: proposed ? '로컬 가상 사건 propose_revocation + burst_read 반환'
+          : '가상 회수 제안 검증 실패' },
+      { attackId: 'normal_volume_observe', expected: '동일 가명 사용자 120건은 observe',
+        observed: normal.action === 'observe' ? '로컬 정상 조회 120건 observe'
+          : '정상 조회 사건 판정 오류' },
+      { attackId: 'client_metadata_not_trusted', expected: '클라이언트 추가 필드는 탐지 입력 신뢰 증거가 아님',
+        observed: unaffectedByClientExtras
+          ? '클라이언트 deviceId/network/headers 무시, 출력 불변'
+          : '추가 클라이언트 필드의 영향 발견' },
+      { attackId: 'deployed_stage9_manifest', expected: '배포 manifest는 단계 9 및 기존 주소를 보존',
+        observed: deployed ? 'production /aleph.json 9단계·보호 서비스·경로 일치'
+          : '배포 manifest 검사 실패 (HTTP ' + manifestResponse.status + ')' },
+      { attackId: 'existing_browser_ui', expected: '기존 로그인 화면의 응답 유지',
+        observed: homeResponse.ok ? '기존 자료실 첫 화면 HTTP ' + homeResponse.status
+          : '기존 자료실 첫 화면 확인 실패 (HTTP ' + homeResponse.status + ')' },
+      { attackId: 'anonymous_notes_denied', expected: '무로그인 자료 목록은 반환 없이 401',
+        observed: unauthorized ? '무로그인 /api/notes HTTP 401, 자료 없음'
+          : '무로그인 API 거부 확인 실패 (HTTP ' + anonymousResponse.status + ')' },
+      { attackId: 'network_device_contract_unavailable',
+        expected: '검증된 네트워크·기기 ID가 없는 계약은 운영 기기 탐지로 가장하지 않음',
+        observed: '미실행: 제공된 사건에는 네트워크·기기 ID·사전 판정이 없음' },
+      { attackId: 'real_revocation_unverified',
+        expected: '기기별 회수와 지연시간은 실제 엔진 이벤트로만 검증',
+        observed: '미실행: 회수 API 호출·기기 권한 변경·실제 경과시간 측정 없음' },
+    ];
+  }
+
   if (config.step === 7) {
     const { decide } = await import('./decider.mjs');
     const { fixtureRequests } = await import('../scripts/fixture-7.mjs');

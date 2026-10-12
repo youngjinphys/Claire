@@ -8,4 +8,6 @@
 
 | `step_up_required` | 7 | 엔진이 제공한 가상 비정상 시간·낯선 네트워크·최근 대량 위험 사건이 함께 있을 때 추가 확인 | `npm run fixture:7` 및 `node --test test/decider-stage7.test.mjs` (가상 사건) |
 
+| `burst_read` (별도 `detect(events)`) | 9 | 엔진 가상 사건에서 동일 가명 사용자 GET이 10분 내 120건을 초과하면 회수 제안(집행 없음) | `npm run detect:test` 및 `node --test test/detect-stage9.test.mjs` |
+
 브라우저에서 버튼을 숨기는 것만으로 서버 접근이 차단됐다고 적지 마세요.
