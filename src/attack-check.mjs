@@ -14,6 +14,16 @@ const safeJson = async (response) => {
   try { return await response.json(); } catch { return null; }
 };
 
+// A platform-auth challenge and a handler's Bearer challenge can both be
+// HTTP 401. Credit only a structured response from the application handler.
+const applicationBearer401 = (response, body) => response.status === 401
+  && body && typeof body === 'object' && !Array.isArray(body)
+  && body.error === 'UNAUTHORIZED'
+  && (response.headers.get('www-authenticate') || '').trim() === 'Bearer'
+  && /\bno-store\b/iu.test(response.headers.get('cache-control') || '')
+  && /^application\/json\b/iu.test(response.headers.get('content-type') || '');
+
+
 export async function runAttackChecks(config) {
   const app = appUrl(config);
 
@@ -233,6 +243,70 @@ export async function runAttackChecks(config) {
       { attackId: 'one_to_nine_live_regressions_unverified',
         expected: '1~9단계 실제 A/B 정상·금지 요청 회귀 실행',
         observed: '미실행: 실제 A/B 계정·엔진 접속 및 복구 완료 환경 부재' },
+    ];
+  }
+
+  if (config.step === 8) {
+    const { decide } = await import('./decider.mjs');
+    const { fixtureRequests } = await import('../scripts/fixture-7.mjs');
+    const { normal } = fixtureRequests();
+    const owned = await decide(normal);
+    const unScopeProject = await decide({ ...normal, projectId: '' });
+    const unScopeClass = await decide({ ...normal, classId: '' });
+    const unregisteredDevice = await decide({ ...normal, deviceRegistered: false });
+    const ownUpdate = await decide({ ...normal, method: 'PUT', route: 'PUT /notes/:id' });
+    const studentEditNotice = await decide({ ...normal, path: '/announcements/notice-demo',
+      method: 'PUT', route: 'PUT /announcements/:id' });
+    const teacherEditNotice = await decide({ ...normal, path: '/announcements/notice-demo',
+      method: 'PUT', route: 'PUT /announcements/:id',
+      subjectId: 'instructor_fixture', deviceId: 'b'.repeat(16) });
+    const unknownRoute = await decide({ ...normal, path: '/notes/export' });
+
+    const manifestResponse = await fetch(new URL('/aleph.json', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const manifest = manifestResponse.ok ? await safeJson(manifestResponse) : null;
+    const manifestCorrect = manifest?.step === 8 && manifest?.resourceZones?.memo?.resourceIdPrefix === 'memo:'
+      && manifest?.resourceZones?.instructorAnnouncement?.resourceIdPrefix === 'announcement:'
+      && config.allowedRoutes?.every(route => manifest?.allowedRoutes?.includes(route));
+
+    const anonymousNote = await fetch(new URL('/api/notes', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const anonymousNotice = await fetch(new URL('/api/announcements/00000000-0000-4000-8000-000000000000', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const noteData = await safeJson(anonymousNote);
+    const noticeData = await safeJson(anonymousNotice);
+
+    return [
+      { attackId: 'registered_memo_owner_read', expected: '가상 A의 자기 메모 GET 허용',
+        observed: owned.decision === 'allow' ? '로컬 자기 메모 allow' : '로컬 자기 메모 거부' },
+      { attackId: 'registered_memo_owner_update', expected: '가상 A의 자기 메모 PUT 허용',
+        observed: ownUpdate.decision === 'allow' ? '로컬 자기 메모 수정 allow' : '로컬 자기 메모 수정 거부' },
+      { attackId: 'other_owner_denied', expected: '미등록 기기 또는 범위 밖 요청 거부 (소유권은 API 검증)',
+        observed: [unScopeProject, unScopeClass, unregisteredDevice].every(x => x.decision === 'deny')
+          ? '로컬 미등록기기·범위외 요청 deny (소유권은 API 검증)' : '미등록 기기 또는 범위 밖 거부 실패' },
+      { attackId: 'student_notice_write_denied', expected: '역할 계약 부재로 판정기는 공지 쓰기를 누구에게나 거부',
+        observed: studentEditNotice.decision === 'deny' && teacherEditNotice.decision === 'deny'
+          ? '공지 쓰기 누구에게나 deny (판정기 역할 부재)' : '공지 쓰기 거부 실패' },
+      { attackId: 'unknown_route_denied', expected: '등록되지 않은 기능/자원 경로 기본 거부',
+        observed: unknownRoute.decision === 'deny' ? '로컬 미등록 export 경로 deny' : '미등록 경로 거부 실패' },
+      { attackId: 'stage8_deployed_resource_zones', expected: '실제 배포 manifest 구역 ID·경로와 현재 단계 일치',
+        observed: manifestCorrect ? 'production /aleph.json 8단계·구역 ID 일치'
+          : '배포 구역 manifest 검사 실패 (HTTP ' + manifestResponse.status + ')' },
+      { attackId: 'anonymous_note_zone_denied', expected: '실제 메모 API 무로그인 자료 없이 401',
+        observed: applicationBearer401(anonymousNote, noteData) && !Array.isArray(noteData)
+          ? '실제 /api/notes HTTP 401, 자료 없음' : '애플리케이션 Bearer 거부 미확인 (HTTP ' + anonymousNote.status + ')' },
+      { attackId: 'anonymous_notice_zone_denied', expected: '실제 공지 API 무로그인 자료 없이 401',
+        observed: applicationBearer401(anonymousNotice, noticeData) && !noticeData?.title && !noticeData?.body
+          ? '실제 /api/announcements/:id HTTP 401, 자료 없음'
+          : '애플리케이션 Bearer 거부 미확인 (HTTP ' + anonymousNotice.status + ')' },
+      { attackId: 'live_role_and_ownership_unverified', expected: '실제 A/B 로그인과 강사 메타데이터 직접 권한 확인',
+        observed: '미실행: 실제 A/B·강사 JWT로 소유권·권한을 확인한 E2E가 없어 별도 검증 필요' },
     ];
   }
 

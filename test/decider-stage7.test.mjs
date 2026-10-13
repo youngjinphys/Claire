@@ -17,12 +17,12 @@ const verdict = async (input) => {
 
 test('엔진 계약의 정상 사건 allow, 복합 가상 사건 step_up, 확인된 재판정 allow', async () => {
   const { normal, suspicious } = fixtureRequests();
-  assert.deepEqual(RULE_IDS, ['device_registered', 'step_up_required']);
-  assert.deepEqual((await verdict(normal)).ruleIds, ['device_registered']);
+  assert.deepEqual(RULE_IDS.slice(0, 2), ['device_registered', 'step_up_required']);
+  assert.deepEqual((await verdict(normal)).ruleIds, ['device_registered', 'memo_zone']);
   const risk = await verdict(suspicious);
   assert.equal(risk.decision, 'step_up');
   assert.equal(risk.reasonCode, 'step_up_required');
-  assert.deepEqual(risk.ruleIds, RULE_IDS);
+  assert.deepEqual(risk.ruleIds, ['device_registered', 'step_up_required', 'memo_zone']);
   const refreshed = await verdict({ ...suspicious,
     stepUp: { verified: true, authAgeSeconds: 60 },
   });
@@ -103,7 +103,7 @@ test('위치·행동 출처가 미확인·누락이면 정상 지역/네트워�
   // Engine "none" provides NO source evidence. Base device policy stays in
   // effect; client-controlled headers cannot trigger or satisfy risk criteria.
   assert.equal(bare.decision, 'allow');
-  assert.deepEqual(bare.ruleIds, ['device_registered']);
+  assert.deepEqual(bare.ruleIds, ['device_registered', 'memo_zone']);
 });
 
 test('기존 기기 미등록 거부가 step_up보다 우선하며 클라이언트 헤더는 무시', async () => {

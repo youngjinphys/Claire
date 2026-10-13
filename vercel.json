@@ -23,6 +23,10 @@
     {
       "source": "/api/restore/notes/:id",
       "destination": "/api/restore-note?id=:id"
+    },
+    {
+      "source": "/api/announcements/:id",
+      "destination": "/api/announcements?id=:id"
     }
   ],
   "headers": [

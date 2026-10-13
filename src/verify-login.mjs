@@ -40,8 +40,16 @@ function verifiedConfig(config) {
 // Create once in the server runtime. The judge intake separately compares the
 // checked-in judgeIssuer to its registered operator issuer before any attack.
 export function createLoginVerifier({ config, supabaseSecretKey, judgeKeySet,
-  supabaseClient } = {}) {
+  supabaseClient, deploymentHost = process.env.VERCEL_URL } = {}) {
   const bound = verifiedConfig(config);
+  // The judge may sign for the public alias or for the specific Vercel deployment.
+  // Only the server's verified deployment hostname can extend accepted audiences.
+  const trustedAudiences = [bound.audience];
+  if (typeof deploymentHost === 'string'
+      && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.vercel\.app$/u.test(deploymentHost)
+      && deploymentHost !== bound.audience) {
+    trustedAudiences.push(deploymentHost);
+  }
   if (!supabaseClient && (typeof supabaseSecretKey !== 'string'
       || !supabaseSecretKey.trim() || supabaseSecretKey !== supabaseSecretKey.trim())) {
     throw new TypeError('missing_supabase_secret_key');
@@ -65,10 +73,11 @@ export function createLoginVerifier({ config, supabaseSecretKey, judgeKeySet,
     if (issuer === bound.judgeIssuer) {
       try {
         const { payload, protectedHeader } = await jwtVerify(token, keys, {
-          issuer: bound.judgeIssuer, audience: bound.audience, algorithms: ['ES256'],
+          issuer: bound.judgeIssuer, audience: trustedAudiences, algorithms: ['ES256'],
           maxTokenAge: '15 minutes', clockTolerance: 5,
         });
-        if (protectedHeader.alg !== 'ES256' || payload.aud !== bound.audience
+        if (protectedHeader.alg !== 'ES256' || typeof payload.aud !== 'string'
+            || !trustedAudiences.includes(payload.aud)
             || !UUID_V4.test(payload.sub ?? '') || !UUID_V4.test(payload.aleph_run ?? '')
             || payload.aleph_role !== 'judge'
             || !['a', 'b'].includes(payload.aleph_identity)

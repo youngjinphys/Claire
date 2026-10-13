@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateBundleNotes } from './bundle-notes-validation.mjs';
-import { validateAllowedRoutes, validateOriginalApiUrl } from './config-contract.mjs';
+import { validateAllowedRoutes, validateOriginalApiUrl, validateResourceZones } from './config-contract.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const git = (...args) => execFileSync('git', ['-C', root, ...args], {
@@ -55,6 +55,7 @@ try {
   try {
     validateAllowedRoutes(config);
     validateOriginalApiUrl(config);
+    validateResourceZones(config);
   } catch (error) {
     if (error?.message === 'invalid_allowed_routes') {
       fail('3단계부터 allowedRoutes에는 실제 자료 API 경로만 중복 없이 기록해 주세요.');

@@ -1,4 +1,4 @@
-import { validateAllowedRoutes, validateOriginalApiUrl, validateProtectedService, validateRestoreRoute } from './config-contract.mjs';
+import { validateAllowedRoutes, validateOriginalApiUrl, validateProtectedService, validateRestoreRoute, validateResourceZones } from './config-contract.mjs';
 
 const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const REPO = /^[A-Za-z0-9._-]{1,100}$/u;
@@ -23,6 +23,7 @@ export function deploymentIdentity(env, config) {
     originalApiUrl = validateOriginalApiUrl(config);
     protectedService = validateProtectedService(config);
     restoreRoute = validateRestoreRoute(config);
+    validateResourceZones(config);
   } catch {
     throw new Error('배포 단계 설정의 허용 경로 또는 원본 자료 API 주소를 확인하세요.');
   }
@@ -48,6 +49,7 @@ export function deploymentIdentity(env, config) {
   if (step >= 3) identity.allowedRoutes = allowedRoutes;
   if (step >= 5) identity.originalApiUrl = originalApiUrl;
   if (step >= 6) identity.protectedService = protectedService;
+  if (step === 8) identity.resourceZones = validateResourceZones(config);
   if (step >= 10) identity.restoreRoute = restoreRoute;
   return identity;
 }

@@ -1,5 +1,5 @@
 {
-  "step": 10,
+  "step": 8,
   "repoUrl": "https://github.com/youngjinphys/choi-bujang-secret-vault",
   "publicAppUrl": "https://skt-aleph-defense.vercel.app",
   "judgeIssuer": "https://aleph-judge-production.up.railway.app/defense/judge",
@@ -11,12 +11,25 @@
   "allowedRoutes": [
     "/api/notes",
     "/api/notes/:id",
-    "/api/restore/notes/:id"
+    "/api/restore/notes/:id",
+    "/api/announcements/:id"
   ],
   "originalApiUrl": "https://ytvwpdjfrpwxwtucclpe.supabase.co/rest/v1/learning_notes",
   "restoreRoute": "/api/restore/notes/:id",
   "protectedService": {
     "serviceId": "notes",
     "readRoute": "GET /notes/:id"
+  },
+  "resourceZones": {
+    "memo": {
+      "resourceIdPrefix": "memo:",
+      "enginePath": "/notes/:id",
+      "apiPath": "/api/notes/:id"
+    },
+    "instructorAnnouncement": {
+      "resourceIdPrefix": "announcement:",
+      "enginePath": "/announcements/:id",
+      "apiPath": "/api/announcements/:id"
+    }
   }
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from '../src/verify-login.mjs';
+import { memoOwnerAllowed, typedResourceId } from '../src/resource-zones.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -34,21 +35,23 @@ const noteText = (value, maxLength) => {
 
 const noteId = (request) => {
   const value = request.query?.id;
-  const candidate = Array.isArray(value) ? value[0] : value;
+  const candidate = Array.isArray(value) ? false : value;
   if (candidate == null || candidate === '') return null;
   return typeof candidate === 'string' && UUID.test(candidate) ? candidate : false;
 };
 
+export function createNotesHandler({ env = process.env, supabaseFactory = createClient,
+  verifierFactory = createLoginVerifier } = {}) {
 let runtime;
 const getRuntime = () => {
   if (runtime) return runtime;
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const secretKey = process.env.SUPABASE_SECRET_KEY;
+  const supabaseUrl = env.SUPABASE_URL;
+  const secretKey = env.SUPABASE_SECRET_KEY;
   if (!supabaseUrl || !secretKey) return null;
-  const supabase = createClient(supabaseUrl, secretKey, {
+  const supabase = supabaseFactory(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
-  const verifyLogin = createLoginVerifier({ config, supabaseClient: supabase });
+  const verifyLogin = verifierFactory({ config, supabaseClient: supabase });
   runtime = { supabase, verifyLogin };
   return runtime;
 };
@@ -60,13 +63,17 @@ const ownedNote = async (supabase, id, userId) => {
     .from('learning_notes')
     .select('id,title,content,owner_id')
     .eq('id', id)
+    .eq('owner_id', userId)
     .maybeSingle();
   if (error) return { error };
-  if (!data || data.owner_id !== userId) return { data: null };
+  if (!data || data.owner_id !== userId || !memoOwnerAllowed(userId, data.owner_id)) {
+    if (data) console.info('RESOURCE_DENIED zone=memo reason=owner_mismatch');
+    return { data: null };
+  }
   return { data };
 };
 
-export default async function handler(request, response) {
+return async function handler(request, response) {
   noStore(response);
 
   const current = getRuntime();
@@ -90,6 +97,7 @@ export default async function handler(request, response) {
         .order('created_at', { ascending: true })
         .order('id', { ascending: true });
       if (error) return response.status(502).json({ error: 'NOTES_BACKEND_ERROR' });
+      response.setHeader('X-Resource-Zone', 'memo');
       return response.status(200).json((data ?? []).map(publicNote));
     }
 
@@ -113,6 +121,7 @@ export default async function handler(request, response) {
       });
       if (error?.code === '23505') return response.status(409).json({ error: 'NOTE_ID_EXISTS' });
       if (error) return response.status(502).json({ error: 'NOTES_BACKEND_ERROR' });
+      response.setHeader('X-Resource-Id', typedResourceId('memo', idToInsert));
       return response.status(201).json({ id: idToInsert });
     }
 
@@ -124,6 +133,7 @@ export default async function handler(request, response) {
     const owned = await ownedNote(current.supabase, id, identity.userId);
     if (owned.error) return response.status(502).json({ error: 'NOTES_BACKEND_ERROR' });
     if (!owned.data) return response.status(404).json({ error: 'NOTE_NOT_FOUND' });
+    response.setHeader('X-Resource-Id', typedResourceId('memo', id));
     return response.status(200).json(publicNote(owned.data));
   }
 
@@ -151,6 +161,7 @@ export default async function handler(request, response) {
     if (!data || data.owner_id !== identity.userId) {
       return response.status(404).json({ error: 'NOTE_NOT_FOUND' });
     }
+    response.setHeader('X-Resource-Id', typedResourceId('memo', id));
     return response.status(200).json(publicNote(data));
   }
 
@@ -170,9 +181,13 @@ export default async function handler(request, response) {
     if (!data || data.owner_id !== identity.userId) {
       return response.status(404).json({ error: 'NOTE_NOT_FOUND' });
     }
+    response.setHeader('X-Resource-Id', typedResourceId('memo', id));
     return response.status(200).json({ id });
   }
 
   response.setHeader('Allow', 'GET, PUT, DELETE');
   return response.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
 }
+}
+
+export default createNotesHandler();

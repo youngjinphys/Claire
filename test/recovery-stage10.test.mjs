@@ -267,7 +267,7 @@ test('서버 복원 GET/POST는 인증된 B의 확인 계획으로 지정 1건�
 
 test('10단계 배포는 단일 복구 경로를 허용 목록과 함께 검증', async () => {
   const { deploymentIdentity } = await import('../scripts/deployment-identity.mjs');
-  const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
+  const config = { ...JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8')), step: 10 };
   const env = {
     VERCEL_GIT_PROVIDER:'github',VERCEL_GIT_REPO_OWNER:'Student-A',
     VERCEL_GIT_REPO_SLUG:'aleph-defense',VERCEL_GIT_COMMIT_SHA:'a'.repeat(40),
@@ -285,7 +285,7 @@ test('10단계 배포는 단일 복구 경로를 허용 목록과 함께 검증'
 
 test('10단계 제출 점검은 운영 복구 미실행을 명확히 구분', async () => {
   const { runAttackChecks } = await import('../src/attack-check.mjs');
-  const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
+  const config = { ...JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8')), step: 10 };
   const old = globalThis.fetch;
   try {
     globalThis.fetch = async url => {

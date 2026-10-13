@@ -1,12 +1,12 @@
-# BYTE BACK 방어전 · 10단계 저장점
+# BYTE BACK 방어전 · 8단계 저장점
 
-현재 단계는 **10단계 복원 준비**입니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
+현재 제출 단계는 **8단계 자료 구역 정책**입니다. 기존 9·10단계 작업은 보존했습니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
 
 ## 100점 가산점 대응
 
 1. **`/aleph.json.allowedRoutes`**
    - production manifest가 `aleph.config.json.allowedRoutes`를 그대로 포함합니다.
-   - 현재 경로는 `/api/notes`, `/api/notes/:id`입니다.
+   - 현재 자료 경로는 `/api/notes`, `/api/notes/:id`, `/api/announcements/:id`입니다.
 2. **첫 화면 보안 헤더**
    - `vercel.json`의 `/` 응답에 `X-Content-Type-Options: nosniff`를 명시했습니다.
    - 첫 화면은 `Cache-Control: no-store`도 적용합니다.
@@ -322,3 +322,13 @@ npm run test:xdr && npm run xdr:run -- exfiltration && npm run xdr:run -- exfilt
 ```
 
 현재 공개 학습 fixture 결과: `block 10 · alert 10 · record 10`, 정상 이벤트 오차단 0건. 오프라인 후보 10개는 만료됐고, 기존 XDR 모듈 로그 75줄을 보존한 채 exfiltration 20줄을 중복 없이 기록해 전체 `xdr/alerts.log`는 95줄입니다. 이는 비공개 심판 판정이나 운영망 차단 증거가 아닙니다.
+
+## 8단계 저장점 · 자료 구역별 최소 판정 정책
+
+현재 활성 제출 단계는 **8단계**입니다. 이 문서의 기존 9·10단계 및 XDR 기록은 과거 작업 이력으로 보존했습니다. 8단계의 **확인된 공식 통과 조건**은 ZTNA 판정기의 공지 쓰기 전면 거부 및 메모 컬렉션 접근 거부입니다.
+
+- ZTNA 계약에는 강사 역할과 각 메모의 DB 소유자가 없습니다. 따라서 `POST/PUT/PATCH/DELETE /announcements` 및 `/announcements/:id`는 **누구든지 deny**합니다. 별도 등록된 가명 강사라도 판정기에서 쓰기를 허용하지 않습니다.
+- 등록된 주체·기기는 정확한 `GET/PUT /notes/:id`로 **개별 메모 한 건**에만 접근 가능하고, `/notes` 목록·`/notes/export`와 다른 기능 경로는 **deny**합니다. 메모 소유권은 실제 API의 검증된 JWT 사용자 UUID와 DB `owner_id`를 이용해 별도로 다시 검증합니다.
+- `GET /announcements/:id`는 등록 기기에 허용합니다. 기존 `device_registered`·`step_up_required` 순서와 5필드 결정 응답은 유지하며, 쿼리로 기능을 선택할 수 없습니다.
+- `api/notes.js`의 DB 소유자 검사와 `api/announcements.js`의 서버 강사 권한 확인은 유지합니다. **운영 엔진 역할 계약 없이 강사 권한을 판정기에서 추측하지 않습니다.**
+- 8단계 로컬 검증: `npm run test:zone && npm run decider:test && npm run fixture:7 && npm run build -- --local`. 제출 묶음은 동일 SHA가 production에 배포된 이후 `npm run bundle`로 생성합니다.
