@@ -305,3 +305,20 @@ npm run test:xdr && npm run xdr:run -- privilege && npm run xdr:run -- privilege
 ```
 
 학습용 26건 결과는 block 9 · alert 8 · record 9, 정상 오차단 0건입니다. 모의 거부 후보 8개는 모두 만료 상태이며 privilege 알림 로그 17줄은 재실행 시 중복되지 않습니다. 기존 brute-force 9줄·web-injection 17줄·known-cve 16줄·persistence 16줄을 보존하여 전체 alerts.log 75줄입니다. 심판의 비공개 채점이나 실제 운영 세션 철회 증적은 아닙니다.
+
+## 보너스 xdr-06 저장점 · 자료 빼돌리기 탐지
+
+- **대상·최소수집:** `xdr/fixtures/exfiltration.json`의 Wazuh 가상 경보 30건을 보존합니다. `read-alerts.mjs`는 시각·출발 주소·계정·규칙 수준·비밀값을 제거한 설명 다섯 필드만 반환하며, 목적지 IP·전송량·파일 내용·토큰은 출력하지 않습니다.
+- **MITRE 근거:** T1041은 기존 C2 채널을 통한 유출, T1048은 대체 프로토콜로의 유출입니다. 높은 수준의 경보나 단일 신규 목적지만으로 해당 프로토콜·C2 악용이 입증됐다고 단정하지 않습니다. `patterns.json`의 조건·근거·확신도를 독립 실행용 `decide.mjs` 상단 PATTERNS에도 그대로 내장했습니다.
+- **독립형 판정:** `decide.mjs`는 다른 파일·패키지 import, 파일 입출력, 네트워크 호출 없이 동기 `decide(alert)` 하나만 내보냅니다. 실제 목적지 IP와 충분한 바이트 전송에 신규 목적지·반복 전송·업무 외 시간·압축자료 등의 **복합 증거**가 있을 때만 `block`(0.85 이상), 약한 징후는 `alert`(0.5 이상), 정상은 `record`입니다. 확신도는 휴리스틱 일치 점수이지 실제 공격 성공 확률이 아닙니다.
+- **5필드 확인용 투영의 한계:** read-alerts가 반환한 5필드에는 목적지 IP·전송량이 없으므로 같은 사건도 `block`이 아닌 `alert`가 될 수 있습니다. 자동 차단을 위한 증거가 부족하기 때문이며, 격리 심판은 원본 경보를 `decide.mjs` 단독으로 전달합니다.
+- **응답·정책 분리:** `respond.mjs`가 강한 판정만 만료되는 `deny-rules.json` 목적지 후보로 만들고, `xdr/alerts.log`에는 시간·경보 ID·행동·패턴 이름만 JSONL로 기록합니다. 후보는 Wazuh agent·출발지·계정·목적지·15분 만료·증거 경보 ID로 제한합니다. 정상 이벤트가 있는 목적지는 자동 후보에서 제외합니다. 다른 XDR 로그를 보존하고 재실행 중복을 방지합니다.
+- **운영 미연동:** 기존 `src/decider.mjs`와 RULE_IDS는 수정하지 않았습니다. `checkZTNAExtra()`는 기존 판정 `allow`와 서버 검증 출발지·목적지·계정·경보 ID·시각이 모두 일치할 때만 추가 `deny`를 제안합니다. ALEPH ZTNA v1에는 신뢰된 목적지 IP가 없어 후보는 `simulation_only`이며 **실제 목적지 차단을 수행하지 않습니다**. 과거 훈련 경보의 차단을 현재 시점으로 재활성화하지 않습니다.
+
+재현:
+
+```bash
+npm run test:xdr && npm run xdr:run -- exfiltration && npm run xdr:run -- exfiltration
+```
+
+현재 공개 학습 fixture 결과: `block 10 · alert 10 · record 10`, 정상 이벤트 오차단 0건. 오프라인 후보 10개는 만료됐고, 기존 XDR 모듈 로그 75줄을 보존한 채 exfiltration 20줄을 중복 없이 기록해 전체 `xdr/alerts.log`는 95줄입니다. 이는 비공개 심판 판정이나 운영망 차단 증거가 아닙니다.

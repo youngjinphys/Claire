@@ -114,6 +114,14 @@ export async function runXdr({ root, moduleKey, writeError = (line) => console.e
     }
     await responseModule.respondToDecisions({ root, alerts: fixture.alerts, decisions });
   }
+  if (moduleKey === 'exfiltration') {
+    // The isolated judge loads only decide.mjs. Local response I/O stays separate.
+    const responder = await import(pathToFileURL(join(root, 'xdr', 'exfiltration', 'respond.mjs')).href);
+    if (typeof responder.respondToDecisions !== 'function') {
+      throw new Error('exfiltration 로컬 대응 모듈을 찾지 못했습니다.');
+    }
+    await responder.respondToDecisions({ root, alerts: fixture.alerts, decisions });
+  }
   const result = { schema: 'aleph.xdr.result.v1', moduleKey, decisions, counts };
   const outDir = join(root, 'xdr', moduleKey);
   await mkdir(outDir, { recursive: true });
