@@ -78,6 +78,15 @@ const safeRegularFile = async path => {
   if (!meta.isFile() || meta.isSymbolicLink()) fail('UNSAFE_POLICY_FILE');
   return readFile(path, 'utf8');
 };
+// Verify the on-disk backup each time it is read, including immediately before
+// writing. A previously verified in-memory object is not a trusted file.
+async function rereadVerifiedPolicyBackup(path, trustedSha256, incidentAt) {
+  let raw;
+  try { raw = await safeRegularFile(path); }
+  catch { fail('UNVERIFIED_POLICY_BACKUP'); }
+  verifyPolicyBackup(raw, trustedSha256, incidentAt);
+  return raw;
+}
 export async function recoverTestPolicyFile({ currentPath, backupPath, trustedSha256, incidentAt, confirm }) {
   if (typeof currentPath !== 'string' || typeof backupPath !== 'string'
       || basename(currentPath) !== 'test-policy.json'
@@ -92,13 +101,16 @@ export async function recoverTestPolicyFile({ currentPath, backupPath, trustedSh
   if (resolve(currentPath) !== resolvedCurrent || resolve(backupPath) !== resolvedBackup)
     fail('TEST_POLICY_PATH_REQUIRED');
   const currentRaw = await safeRegularFile(resolvedCurrent);
-  const backupRaw = await safeRegularFile(resolvedBackup);
+  const backupRaw = await rereadVerifiedPolicyBackup(resolvedBackup, trustedSha256, incidentAt);
   let current;
   try { current = JSON.parse(currentRaw); } catch { fail('INVALID_TEST_POLICY'); }
   const preview = previewPolicyRestore({ current, backupRaw, trustedSha256, incidentAt });
   if (confirm == null) return { preview, applied: false };
+  // Require a SECOND real disk read after preview, not just the cached raw.
+  const rereadBackup = await rereadVerifiedPolicyBackup(resolvedBackup, trustedSha256, incidentAt);
+  if (rereadBackup !== backupRaw) fail('UNVERIFIED_POLICY_BACKUP');
   const { restored } = restoreTestPolicy({
-    current, backupRaw, trustedSha256, incidentAt, confirmedPlanSha256: confirm,
+    current, backupRaw: rereadBackup, trustedSha256, incidentAt, confirmedPlanSha256: confirm,
   });
   // Optimistic compare immediately before the atomic replacement.
   if (hash(await safeRegularFile(resolvedCurrent)) !== hash(currentRaw))
@@ -106,6 +118,11 @@ export async function recoverTestPolicyFile({ currentPath, backupPath, trustedSh
   const temp = join(dir, '.test-policy-' + randomUUID() + '.tmp');
   try {
     await writeFile(temp, JSON.stringify(restored, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    // Recheck both source files after staging and before the atomic switch.
+    const backupBeforeCommit = await rereadVerifiedPolicyBackup(resolvedBackup, trustedSha256, incidentAt);
+    if (backupBeforeCommit !== rereadBackup) fail('UNVERIFIED_POLICY_BACKUP');
+    if (hash(await safeRegularFile(resolvedCurrent)) !== hash(currentRaw))
+      fail('POLICY_CHANGED_DURING_RESTORE');
     await rename(temp, resolvedCurrent);
   } finally {
     await unlink(temp).catch(error => { if (error?.code !== 'ENOENT') throw error; });

@@ -334,6 +334,28 @@ export async function runAttackChecks(config) {
       && Object.keys(proposal).sort().join(',') === 'action,reasonCode,subject';
     const unaffectedByClientExtras =
       JSON.stringify(spoofed) === JSON.stringify(proposal);
+    // Local-only attested event replay; not an operating engine verifier.
+    const { detectVerifiedDeviceAnomaly } = await import('./detect-verified-device.mjs');
+    const verifiedRecords = new WeakMap();
+    const isolatedEvents = Array.from({ length: 121 }, (_, index) => {
+      const raw = {};
+      verifiedRecords.set(raw, {
+        at: new Date(at0 + index * 2000).toISOString(),
+        method: 'GET', subject: 'learner_fixture', deviceId: 'a'.repeat(16),
+        decision: 'allow', networkBaselineVerified: true,
+        networkDeviation: 'unusual',
+      });
+      return raw;
+    });
+    const simulatedDevice = detectVerifiedDeviceAnomaly(isolatedEvents, {
+      verifyEngineEvent: item => verifiedRecords.get(item),
+    });
+    const withoutVerifier = detectVerifiedDeviceAnomaly(isolatedEvents);
+    const deviceProposalOk = simulatedDevice.action === 'propose_revocation'
+      && simulatedDevice.reasonCode === 'unusual_network_burst'
+      && simulatedDevice.subject === 'learner_fixture'
+      && simulatedDevice.deviceId === 'a'.repeat(16)
+      && withoutVerifier.action === 'observe';
 
     const manifestResponse = await fetch(new URL('/aleph.json', app), {
       redirect: 'error', signal: AbortSignal.timeout(10000),
@@ -383,7 +405,11 @@ export async function runAttackChecks(config) {
       { attackId: 'anonymous_notes_denied', expected: '무로그인 자료 목록은 반환 없이 401',
         observed: unauthorized ? '무로그인 /api/notes HTTP 401, 자료 없음'
           : '무로그인 API 거부 확인 실패 (HTTP ' + anonymousResponse.status + ')' },
-      { attackId: 'network_device_contract_unavailable',
+      { attackId: 'local_verified_device_anomaly',
+        expected: '가상 검증 콜백의 네트워크 변화와 동일 기기 폭주가 함께 있을 때만 회수 제안',
+        observed: deviceProposalOk
+          ? '로컬 합성 검증 121건에서 단일 기기 회수 제안, 콜백 없으면 observe'
+          : '로컬 선택형 기기 탐지 검증 실패' },      { attackId: 'network_device_contract_unavailable',
         expected: '검증된 네트워크·기기 ID가 없는 계약은 운영 기기 탐지로 가장하지 않음',
         observed: '미실행: 제공된 사건에는 네트워크·기기 ID·사전 판정이 없음' },
       { attackId: 'real_revocation_unverified',

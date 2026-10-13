@@ -122,7 +122,7 @@ test('9단계 제출 자기점검은 제안과 실기기 회수를 구분해 기
       return new Response('<!doctype html>', { status: 200 });
     };
     const checks = await runAttackChecks(config);
-    assert.equal(checks.length, 9);
+    assert.equal(checks.length, 10);
     assert.ok(checks.every(check =>
       Object.keys(check).sort().join(',') === 'attackId,expected,observed'));
     assert.match(checks[0].observed, /6\/6/u);
@@ -132,8 +132,9 @@ test('9단계 제출 자기점검은 제안과 실기기 회수를 구분해 기
     assert.match(checks[4].observed, /9단계/u);
     assert.match(checks[5].observed, /HTTP 200/u);
     assert.match(checks[6].observed, /401/u);
-    assert.match(checks[7].observed, /미실행/u);
+    assert.match(checks[7].observed, /로컬 합성 검증/u);
     assert.match(checks[8].observed, /미실행/u);
+    assert.match(checks[9].observed, /미실행/u);
   } finally {
     globalThis.fetch = originalFetch;
   }

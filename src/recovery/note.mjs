@@ -73,7 +73,7 @@ export function previewNoteRestore({
 }
 export async function restoreNoteOnce({
   store, raw, trustedSha256, incidentAt, pinnedBOwnerId,
-  identityUserId, id, confirmedPlanSha256,
+  identityUserId, id, confirmedPlanSha256, rereadBackup,
 }) {
   if (!store || typeof store.find !== 'function'
       || typeof store.insert !== 'function' || typeof store.replaceIfCurrent !== 'function')
@@ -84,6 +84,18 @@ export async function restoreNoteOnce({
   });
   if (!SHA.test(confirmedPlanSha256 ?? '') || preview.planSha256 !== confirmedPlanSha256)
     fail('NOTE_PLAN_CONFIRMATION_REQUIRED');
+  // Server adapter must re-read the configured backup and pinned digest after
+  // plan confirmation. A missing, switched or unverified backup cannot write.
+  if (rereadBackup !== undefined) {
+    if (typeof rereadBackup !== 'function') fail('UNVERIFIED_NOTE_BACKUP');
+    let source;
+    try { source = await rereadBackup(); }
+    catch { fail('UNVERIFIED_NOTE_BACKUP'); }
+    if (source?.raw !== raw || source?.trustedSha256 !== trustedSha256)
+      fail('UNVERIFIED_NOTE_BACKUP');
+    verifyNoteBackup({ raw: source.raw, trustedSha256: source.trustedSha256,
+      incidentAt, pinnedBOwnerId });
+  }
   if (preview.status !== 'already_restored') {
     const verified = verifyNoteBackup({ raw, trustedSha256, incidentAt, pinnedBOwnerId });
     // No upsert: never overwrite another owner's row or another concurrent write.

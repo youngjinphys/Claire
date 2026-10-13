@@ -142,10 +142,16 @@ export function createRestoreHandler({
       const applied = await restoreNoteOnce({
         ...inputs, identityUserId: identity.userId, id: wanted, store,
         confirmedPlanSha256: body.planSha256,
+        rereadBackup: async () => ({
+          raw: rawSnapshot(env.RESTORE_NOTE_SNAPSHOT_BASE64),
+          trustedSha256: env.RESTORE_NOTE_BACKUP_SHA256,
+        }),
       });
       return res.status(200).json(applied);
     } catch (error) {
       const code = error?.message;
+      if (code === 'UNVERIFIED_NOTE_BACKUP' || code === 'BACKUP_CONTENT_HASH_MISMATCH')
+        return res.status(503).json({ error: 'UNVERIFIED_NOTE_BACKUP' });
       if (code === 'NOTE_OWNER_CONFLICT') return res.status(409).json({ error: code });
       if (code === 'NOTE_CHANGED_DURING_RESTORE'
           || code === 'NOTE_PLAN_CONFIRMATION_REQUIRED')

@@ -325,3 +325,55 @@ test('사본 본문은 URL 필터 없이 서버 RPC 트랜잭션으로 조건부
   assert.match(sql, /grant execute[\s\S]*to service_role/iu);
   assert.match(sql, /where id = p_id[\s\S]*owner_id = p_owner_id/iu);
 });
+
+
+test('10단계 정책 사본을 미리보기 후 변경·삭제하면 적용 전 중단하고 원본 정책 불변', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'aleph-recovery-lab-'));
+  const currentPath = join(dir, 'test-policy.json');
+  const backupPath = join(dir, 'safe-policy.json');
+  const expected = compromised();
+  const backup = backupPolicy();
+  const options = { currentPath, backupPath,
+    trustedSha256: hash(backup), incidentAt };
+  try {
+    await writeFile(currentPath, JSON.stringify(expected));
+    await writeFile(backupPath, backup);
+    const { preview } = await recoverTestPolicyFile(options);
+    assert.equal(preview.restoreVersion, 'safe_v1');
+    assert.ok(preview.changedPaths.every(x => x.startsWith('services.notes.')));
+    await writeFile(backupPath, backup.replace('safe_v1', 'faked_v1'));
+    await assert.rejects(recoverTestPolicyFile({
+      ...options, confirm: preview.planSha256,
+    }), /UNVERIFIED_POLICY_BACKUP/);
+    assert.deepEqual(JSON.parse(await readFile(currentPath, 'utf8')), expected);
+    await rm(backupPath);
+    await assert.rejects(recoverTestPolicyFile({
+      ...options, confirm: preview.planSha256,
+    }), /UNVERIFIED_POLICY_BACKUP/);
+    assert.deepEqual(JSON.parse(await readFile(currentPath, 'utf8')), expected);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('10단계 서버의 계획 확인 후 사본 재조회가 실패하면 DB 쓰기 0건', async () => {
+  const values = noteInputs();
+  const current = noteStore();
+  const preview = previewNoteRestore({...values, current: null});
+  const options = {...values, store: current,
+    confirmedPlanSha256: preview.planSha256};
+  await assert.rejects(restoreNoteOnce({...options,
+    rereadBackup: async () => null,
+  }), /UNVERIFIED_NOTE_BACKUP/);
+  await assert.rejects(restoreNoteOnce({...options,
+    rereadBackup: async () => ({raw: privateNoteBackup().replace('backup_v1', 'changed_v1'),
+      trustedSha256: values.trustedSha256}),
+  }), /UNVERIFIED_NOTE_BACKUP/);
+  await assert.rejects(restoreNoteOnce({...options,
+    rereadBackup: async () => { throw new Error('backup unavailable'); },
+  }), /UNVERIFIED_NOTE_BACKUP/);
+  assert.equal(current.rows.size, 0);
+  const done = await restoreNoteOnce({...options,
+    rereadBackup: async () => ({raw:values.raw, trustedSha256:values.trustedSha256}),
+  });
+  assert.equal(done.status, 'restored');
+  assert.equal(current.rows.size, 1);
+});

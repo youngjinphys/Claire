@@ -91,7 +91,7 @@ test('Standalone judge module runs without any sibling files or network',async()
 });
 test('Platform SSO 401 HTML is not confused with handler Bearer401 JSON',async()=>{
   const saved=globalThis.fetch;
-  const current={...config,publicAppUrl:'https://example-stage8.vercel.app'};
+  const current={...config,step:8,publicAppUrl:'https://example-stage8.vercel.app'};
   const manifest=()=>new Response(JSON.stringify({step:8,resourceZones:config.resourceZones,
     allowedRoutes:config.allowedRoutes}),{status:200,headers:{'Content-Type':'application/json'}});
   try{

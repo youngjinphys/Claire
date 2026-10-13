@@ -1,6 +1,6 @@
-# BYTE BACK 방어전 · 8단계 저장점
+# BYTE BACK 방어전 · 9단계 저장점
 
-현재 제출 단계는 **8단계 자료 구역 정책**입니다. 기존 9·10단계 작업은 보존했습니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
+현재 제출 단계는 **9단계 탐지 및 10단계 백업 검증 보완**입니다. 기존 8·10단계 자원/API·복구 기능과 XDR 작업은 보존했습니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
 
 ## 100점 가산점 대응
 
@@ -332,3 +332,24 @@ npm run test:xdr && npm run xdr:run -- exfiltration && npm run xdr:run -- exfilt
 - `GET /announcements/:id`는 등록 기기에 허용합니다. 기존 `device_registered`·`step_up_required` 순서와 5필드 결정 응답은 유지하며, 쿼리로 기능을 선택할 수 없습니다.
 - `api/notes.js`의 DB 소유자 검사와 `api/announcements.js`의 서버 강사 권한 확인은 유지합니다. **운영 엔진 역할 계약 없이 강사 권한을 판정기에서 추측하지 않습니다.**
 - 8단계 로컬 검증: `npm run test:zone && npm run decider:test && npm run fixture:7 && npm run build -- --local`. 제출 묶음은 동일 SHA가 production에 배포된 이후 `npm run bundle`로 생성합니다.
+
+
+## 9단계 저장점 · 가명 사용자 탐지와 선택적 기기 검증
+
+현재 활성 제출 단계는 **9단계**입니다. 기존 8단계 자원 구역, 6~7단계 판정 응답, 10단계의 복구 구현 및 XDR 코드를 보존했습니다.
+
+**공식 계약** \`docs/DETECT_EVENTS.md\`의 사건은 \`{at, method, identity:{sub}}\` 세 필드입니다. 이에 맞춘 기존 \`src/detect.mjs\`와 \`detect(events)\` 결과는 바꾸지 않았습니다. 동일 가명 사용자의 10분 안 조회 121건 이상은 \`{action:'propose_revocation', reasonCode:'burst_read', subject}\`, 그 외는 \`{action:'observe'}\`입니다. 회수 대상 기기 및 네트워크 이력은 공식 계약에 없으므로 해당 탐지 결과만으로 특정 기기의 운영 권한을 회수할 수 없습니다.
+
+**선택적 확장** \`src/detect-verified-device.mjs\`는 실제 엔진이 제공해야 할 별도 검증 함수 \`verifyEngineEvent\`가 있을 때만 동작합니다. 검증된 사건에서 시각·가명 사용자·16자리 기기 ID·조회 메서드·허용 판정·검증된 네트워크 기준선 변화 여부만 투영합니다. 동일 가명 사용자·동일 기기의 **확인된 평소와 다른 네트워크에서 발생한 허용 GET 121건 이상이 10분 안에 집중된 경우에만** \`{action:'propose_revocation', reasonCode:'unusual_network_burst', subject, deviceId}\`를 제안합니다. 여러 기기·사용자의 조회는 합산하지 않습니다. 네트워크 변화만 있거나 단순 대량 조회만 있으면 \`observe\`이며, 검증 콜백이 없으면 무조건 \`observe\`입니다.
+
+확장 이벤트 구조는 **이번 코드에서 제안한 로컬 계약**이지 제공된 엔진 계약이 아닙니다. 실제 엔진의 기기·네트워크 증명 연동, 회수 명령 집행, 경과 시간 측정은 구현·검증했다고 주장하지 않습니다. \`src/decider.mjs\`의 allow/deny/step_up 응답을 변경하지 않으며 메모 본문·토큰·실명은 입출력에 넣지 않습니다.
+
+실행: \`npm run detect:test && npm run test:verified-device && node --test test/detect-stage9.test.mjs\`
+
+## 10단계 S10_BACKUP_UNVERIFIED · 사본 재조회와 실패 시 중단
+
+\`src/recovery/policy.mjs\`는 복원 전 미리보기로 **기존 버전·복구 버전·변경 경로·계획 해시**를 표시합니다. 적용 명령에서는 \`safe-policy.json\`을 **디스크에서 다시 읽어** 독립적으로 고정된 SHA-256, 본문 구조, 침해 전 검증 시각을 재검증하고, 임시 파일 작성 후 **원자적 교체 직전**에도 백업과 현재 정책이 처음 읽은 상태인지 다시 확인합니다. 백업이 없거나 변경됐거나 검증에 실패하면 \`UNVERIFIED_POLICY_BACKUP\`으로 중단하며 현재 정책 파일을 건드리지 않습니다.
+
+\`api/restore-note.js\`도 B 전용 복원 POST에서 계획 확인 후 서버 전용 백업을 다시 읽어 검증합니다. 두 번의 스냅샷이 달라지거나 사본을 읽을 수 없으면 \`UNVERIFIED_NOTE_BACKUP\`으로 중단하고 DB 쓰기를 수행하지 않습니다. 이 두 경로는 **기존 격리 학습 정책과 지정 B 메모 한 건에만** 적용되며 실제 운영 정책 복원·DB 복구를 수행하지 않았습니다. 독립적으로 보관한 진짜 백업의 진위는 외부 보관자가 보증해야 하며, 단순 자체 생성 해시만으로 안전성을 증명하지 않습니다.
+
+실행: \`npm run test:recovery\`로 정책 백업 변경·분실과 메모 백업 재조회 실패 시 쓰기 0건을 재현합니다. 실제 운영 정책 및 사용자 자격 정보는 건드리지 않습니다.

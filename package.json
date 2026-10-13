@@ -15,7 +15,8 @@
     "test:recovery": "node --test test/recovery-stage10.test.mjs",
     "recovery:preview": "node scripts/recovery-policy.mjs preview",
     "recovery:apply": "node scripts/recovery-policy.mjs apply",
-    "test:zone": "node --test test/zone-stage8.test.mjs test/zone-api-authorization.test.mjs test/zone-judge-runtime.test.mjs"
+    "test:zone": "node --test test/zone-stage8.test.mjs test/zone-api-authorization.test.mjs test/zone-judge-runtime.test.mjs",
+    "test:verified-device": "node --test test/detect-verified-device-stage9.test.mjs"
   },
   "engines": {
     "node": ">=22"

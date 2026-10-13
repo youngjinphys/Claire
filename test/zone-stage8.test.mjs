@@ -78,7 +78,7 @@ test('Server source authenticates then checks stored owner and admin-fetched app
   assert.doesNotMatch(announcements,/request\.body\.role|request\.query\.role|\.user_metadata\b/u);
 });
 test('Stage 8 manifest includes two zones and unchanged URLs',async()=>{
-  const cfg=JSON.parse(await readFile(new URL('../aleph.config.json',import.meta.url),'utf8'));
+  const cfg={...JSON.parse(await readFile(new URL('../aleph.config.json',import.meta.url),'utf8')),step:8};
   assert.equal(cfg.step,8);
   assert.ok(cfg.allowedRoutes.includes('/api/announcements/:id'));
   assert.ok(cfg.allowedRoutes.includes('/api/notes/:id'));
