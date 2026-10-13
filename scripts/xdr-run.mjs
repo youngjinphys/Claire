@@ -106,6 +106,14 @@ export async function runXdr({ root, moduleKey, writeError = (line) => console.e
     }
     await responseModule.respondToDecisions({ root, alerts: fixture.alerts, decisions });
   }
+  if (moduleKey === 'privilege') {
+    // Judge imports decide.mjs alone. Only this local runner performs I/O.
+    const responseModule = await import(pathToFileURL(join(root, 'xdr', 'privilege', 'respond.mjs')).href);
+    if (typeof responseModule.respondToDecisions !== 'function') {
+      throw new Error('privilege 로컬 대응 모듈을 찾지 못했습니다.');
+    }
+    await responseModule.respondToDecisions({ root, alerts: fixture.alerts, decisions });
+  }
   const result = { schema: 'aleph.xdr.result.v1', moduleKey, decisions, counts };
   const outDir = join(root, 'xdr', moduleKey);
   await mkdir(outDir, { recursive: true });

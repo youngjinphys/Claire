@@ -231,3 +231,21 @@ npm run test:xdr && npm run xdr:run -- persistence && npm run xdr:run -- persist
 ```
 
 학습용 24건 결과: block 8 · alert 8 · record 8, 정상 이벤트 오차단 0건. 오프라인 격리 후보 7개는 모두 만료 상태이며 알림 로그에 persistence 16줄이 중복 없이 기록됩니다. 기존 brute-force 9줄·web-injection 17줄·known-cve 16줄도 보존합니다. 이 결과는 비공개 심판 또는 실서비스 격리 성공을 의미하지 않습니다.
+
+## 보너스 xdr-05 저장점 · 권한 가로채기 탐지
+
+- **입력·최소수집:** xdr/fixtures/privilege.json의 가상 Wazuh 경보 26건을 읽어, read-alerts.mjs에서 시각·출발 주소·계정·규칙 수준·비밀값이 제거된 설명 5개 필드만 추출합니다. 원본 경보는 수정하지 않습니다.
+- **MITRE 근거:** T1068(취약점 악용에 의한 권한 상승), T1078(유효 계정 악용). 실제 관리자 그룹 조작에는 T1098.007, 관리자 명령에는 T1548이 더 직접적인 보조 근거입니다. 수업용 Wazuh 태그만으로 T1068 취약점 악용 또는 계정 침해가 입증됐다고 주장하지 않습니다. xdr/privilege/patterns.json의 조건·근거와 심판 격리용 decide.mjs 상단 PATTERNS는 같습니다.
+- **명확한 징후만 차단:** 원격 출발지에서 관리자 그룹 편입, 상승 직후 명령 실행, 처음 보는 주소·업무 외 시각의 관리자 명령, 여러 계정 동시 관리자 편입, 권한 철회 후 빠른 복귀 등 결합 증거가 있어야 block입니다. 한 번의 관리자 명령, 일반 그룹 변경, 실패한 권한 명령은 alert이며 정상 로그인·자료실 조회는 record입니다.
+- **격리 계약:** decide.mjs는 import/패키지/파일 읽기·쓰기/환경변수/네트워크 없이 동기 decide(alert)만 export합니다. 0.85+ block, 0.5+ alert, 나머지 record를 반환합니다. 민감정보가 있는 설명은 읽기 모듈에서 제거하고, 심판 판정 함수는 원문을 출력하지 않습니다.
+- **알림 및 거부 후보:** respond.mjs는 원본과 decision을 재대조하여 0.85 이상 강한 경보만 deny-rules.json 오프라인 후보로 넣습니다. 경보 번호·시작/만료 시각(15분)·출발 주소·계정·Wazuh agent를 범위로 지정합니다. xdr/alerts.log에는 경보 번호·시각·행동·근거 패턴만 JSONL 한 줄씩 추가하며 기존 모듈 로그와 재실행 중복을 보존합니다.
+- **ZTNA 원래 정책 우선:** src/decider.mjs는 수정하지 않았습니다. checkZTNAExtra()는 상위 allow, 서버 확인 Wazuh↔ZTNA 주체·세션 매핑, 출발 주소·계정·증거 경보 ID·시각 일치 시에만 요청에 대한 추가 deny를 제안합니다. 현재 계약에는 신뢰 가능한 Wazuh 사용자↔subjectId↔sessionId 매핑과 실세션 회수 API가 없어 mode는 simulation_only입니다. 실제 기존 세션 강제 종료를 수행하지 않으며 sessionId를 만들어 내지 않습니다.
+- **오차단 및 만료:** 같은 출발 주소에서 정상 이벤트가 관측되면 그 주소의 자동 후보를 생성하지 않습니다. 후보는 15분 후 만료되며 지난 연습 경보로 오늘의 계정 접속을 차단하지 않습니다. 비밀값·세션 토큰은 로그와 Git에 기록하지 않습니다.
+
+재현 명령:
+
+```bash
+npm run test:xdr && npm run xdr:run -- privilege && npm run xdr:run -- privilege
+```
+
+학습용 26건 결과는 block 9 · alert 8 · record 9, 정상 오차단 0건입니다. 모의 거부 후보 8개는 모두 만료 상태이며 privilege 알림 로그 17줄은 재실행 시 중복되지 않습니다. 기존 brute-force 9줄·web-injection 17줄·known-cve 16줄·persistence 16줄을 보존하여 전체 alerts.log 75줄입니다. 심판의 비공개 채점이나 실제 운영 세션 철회 증적은 아닙니다.
