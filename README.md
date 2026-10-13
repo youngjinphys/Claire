@@ -1,6 +1,6 @@
-# BYTE BACK 방어전 · 9단계 저장점
+# BYTE BACK 방어전 · 10단계 저장점
 
-현재 단계는 **9단계 탐지 제출 준비**입니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
+현재 단계는 **10단계 복원 준비**입니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
 
 ## 100점 가산점 대응
 
@@ -214,6 +214,62 @@ npm run bundle
 재현: npm run test:xdr && npm run xdr:run -- known-cve && npm run xdr:run -- known-cve
 
 현재 fixture 기준 block 8 · alert 8 · record 8, 정상 이벤트 오차단 0건, 경로를 확인할 수 있는 오프라인 후보 6개, known-cve 알림 로그 16줄(재실행 중복 없음)입니다. 이는 비공개 심판이나 운영 차단 결과가 아닙니다.
+
+## 10단계 · 백업에서 자료실을 되살립니다
+
+**현재 상태:** 저장소와 제공 자료에서 침해 전 독립 검증된 정책 백업과 B의 비공개 메모 백업을 찾지 못했습니다. 따라서 실제 운영 정책·학습 DB 복구는 **미실행**입니다. 현재 코드/DB를 임의로 안전한 침해 전 사본이라고 인정하지 않습니다.
+
+### 1. 안전 정책 백업 검증·미리보기·시험 복구
+
+- `src/recovery/policy.mjs` 및 `scripts/recovery-policy.mjs`: 외부에서 독립적으로 고정한 백업 SHA-256, `capturedAt <= verifiedAt < incidentAt`, 정책 스키마와 범위를 확인합니다. 시각과 SHA-256이 일치하더라도 실제 **사전 검증 증거의 신뢰성은 외부 보관자가 보증**해야 합니다.
+- 미리보기에서 복원 버전, 기존 버전, **오직 `services.notes` 하위의 변경 경로**, `planSha256`을 확인합니다. 승인 없이 적용하지 않으며, 다른 버전 또는 그사이 바뀐 시험 정책에는 이전 계획을 적용할 수 없습니다.
+- CLI의 쓰기 대상은 저장소 밖 `os.tmpdir()/aleph-recovery-lab-*` 내 `test-policy.json`에 고정됐습니다. 다른 서비스 규칙 및 감사 이력 배열은 유지합니다. `src/decider.mjs` 및 실제 운영 정책은 절대 덮어쓰지 않습니다.
+- 요구 환경변수: `ALEPH_RECOVERY_TEST_POLICY_PATH`, `ALEPH_RECOVERY_POLICY_BACKUP_PATH`, `ALEPH_RECOVERY_POLICY_SHA256`, `ALEPH_RECOVERY_INCIDENT_AT`. `safe-policy.json`은 같은 격리 디렉터리에 두고, **신뢰된 백업·원문·비밀은 Git에 추가하지 않습니다**.
+
+```bash
+npm run recovery:preview
+npm run recovery:apply -- <미리보기의 planSha256>
+```
+
+미검증 백업, 안전 버전 불일치, 시각 오류, 계획 해시 불일치, 운영 정책 경로 지정은 모두 쓰기 전에 거부합니다. A 정상 읽기 / B→A 자료 요청 거부는 기존 서버 owner 검사로 유지하지만 **실제 A/B 인증을 통한 재실행은 미검증**입니다.
+
+### 2. B 소유 가상 메모 한 건 복원
+
+- 보호 서비스: 기존 `notes`. 읽기 서비스 경로: `GET /notes/:id`.
+- Vercel 복구 경로: **`GET /api/restore/notes/:id`** (ID·owner·기존/백업/복원 후 SHA-256·확인 planHash 미리보기), **`POST /api/restore/notes/:id`** (`{"planSha256":"..."}`만 수신해 단일 노트 복구). 본문·토큰은 미리보기/결과에 보내지 않습니다.
+- 서버는 기존 `src/verify-login.mjs`로 확인한 Supabase 사용자만 사용합니다. `RESTORE_B_OWNER_ID`와 `RESTORE_OPERATOR_USER_ID`로 고정한 **B 시험 계정 한 명**만 요청할 수 있으며, 요청의 역할·소유자·메모 본문은 신뢰하지 않습니다.
+- 실제 백업은 Vercel 서버 전용 `RESTORE_NOTE_SNAPSHOT_BASE64`, `RESTORE_NOTE_BACKUP_SHA256`, `RESTORE_INCIDENT_AT`에서 읽습니다. `RESTORE_ENABLED=1`을 별도로 설정하지 않으면 API는 **503 RESTORE_DISABLED**로 종료됩니다. `SUPABASE_URL`, `SUPABASE_SECRET_KEY`는 기존 서버 전용 설정을 재사용합니다.
+- 검증 스냅샷 스키마 `aleph.recovery.note-backup.v1`은 `version`, `id`, `ownerId`, `title`, `body`, `capturedAt`, `verifiedAt`, `contentSha256`를 포함합니다. `contentSha256`은 `JSON.stringify({id,owner_id,title,body})` UTF-8 바이트의 SHA-256입니다. `RESTORE_NOTE_BACKUP_SHA256`은 원문 스냅샷 JSON 바이트 전체의 SHA-256이며 **신뢰된 침해 전 별도 채널에 고정**해야 합니다.
+- 본인 B 소유의 지정 UUID 한 건만 insert 또는 기존 내용의 조건부 update가 가능하며, 다른 owner 충돌 및 경쟁 변경은 중단합니다. 복구 후 해당 ID·owner·content hash를 다시 조회합니다. 다른 메모, XDR 로그, 기존 감사 이력은 수정하지 않습니다.
+- **실제 B 비공개 백업이 없으므로 이번 단계에서 Vercel 복구 환경변수를 활성화하거나 학습 DB에 쓰지 않았습니다.** 영속적 운영 감사 이벤트 수집 경로도 확인되지 않아 해당 내구성을 주장하지 않습니다.
+
+### 3. 복구 후 1~9단계 정상·금지 요청 순서
+
+1. **1~2단계:** `/data.json` 공개 메모·옛 marker 부재, `/aleph.json` 복구 저장점 일치 검사.
+2. **3단계:** 무로그인 자료 요청 401, A 계정 로그인/로그아웃, 유효하지 않은 JWT 거부 검사.
+3. **4단계:** A는 본인 GET/POST/PUT/DELETE 허용, B는 A 메모 UUID의 GET/PUT/DELETE 거부, `owner_id` 변경 거부 검사.
+4. **5단계:** 브라우저 서버 함수 경유, 공개 키로 원본 자료 직접 호출 거부, 첫 화면 보안 헤더·공개 키 부재 검사.
+5. **6단계:** 등록 기기 allow / 미등록 deny (가상 판정); 운영 엔진 실기기 시험은 별도.
+6. **7단계:** 가상 정상 allow, 복합 이상 step_up, 가상 인증 갱신 후 재판정; 운영 동일 사용자 재로그인은 별도.
+7. **8단계:** 저장소에 8단계 저장점·계약이 없어 확인할 수 있을 때까지 `미실행`.
+8. **9단계:** 동일 가명 GET 120건 observe, 121건 propose_revocation; 실제 기기 회수는 운영 엔진 시험.
+9. **10단계:** 시험 정책 사본 미리보기·승인 적용, B 한 건 메모 복원 및 ID·owner·본문 해시 재검증, 감사·다른 서비스/노트 불변 확인.
+
+**로컬 실행 명령:**
+
+```bash
+npm run test:recovery && npm run detect:test && npm run decider:test
+npm run test:r5 && npm run test:xdr && npm run test:package
+npm run bundle
+```
+
+실제 운영 정책 복원, B 메모 실제 복원, A/B 사용자의 라이브 E2E와 엔진 재확인/회수는 사본·계정·환경이 없어 **미실행**으로 남깁니다. 자체 모의 테스트를 심판 통과로 표시하지 않습니다.
+
+### 10단계 서버 전용 조건부 갱신 SQL (제안·미적용)
+
+`supabase/step10_restore_note_function.sql`은 지정 B 메모의 기존 ID·owner·기존 title/content를 트랜잭션 안에서 비교하고, 일치할 때만 해당 한 건을 갱신하는 `SECURITY INVOKER` 함수입니다. `PUBLIC`, `anon`, `authenticated`의 함수 실행 권한을 회수하고 `service_role`에만 부여하도록 설계했습니다.
+
+실제 DB에는 **아직 적용하지 않았습니다.** 따라서 기존 본문이 변조된 행의 운영 복원에는 검토 후 함수 설치가 필요합니다. POST 서버 함수는 민감한 내용을 데이터 API URL 검색 조건에 넣지 않고 암호화된 서버–DB RPC 요청 본문으로만 전달합니다. 감사 기록·다른 테이블은 수정하지 않습니다.
 
 ## 보너스 xdr-04 저장점 · 몰래 심어진 프로그램 탐지
 

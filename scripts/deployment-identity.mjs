@@ -1,4 +1,4 @@
-import { validateAllowedRoutes, validateOriginalApiUrl, validateProtectedService } from './config-contract.mjs';
+import { validateAllowedRoutes, validateOriginalApiUrl, validateProtectedService, validateRestoreRoute } from './config-contract.mjs';
 
 const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const REPO = /^[A-Za-z0-9._-]{1,100}$/u;
@@ -17,10 +17,12 @@ export function deploymentIdentity(env, config) {
   let allowedRoutes;
   let originalApiUrl;
   let protectedService;
+  let restoreRoute;
   try {
     allowedRoutes = validateAllowedRoutes(config);
     originalApiUrl = validateOriginalApiUrl(config);
     protectedService = validateProtectedService(config);
+    restoreRoute = validateRestoreRoute(config);
   } catch {
     throw new Error('배포 단계 설정의 허용 경로 또는 원본 자료 API 주소를 확인하세요.');
   }
@@ -28,7 +30,7 @@ export function deploymentIdentity(env, config) {
   if (env.VERCEL_GIT_PROVIDER !== 'github' || !OWNER.test(owner || '')
       || !REPO.test(repo || '') || repo === '.' || repo === '..'
       || repo.toLowerCase().endsWith('.git') || !SHA.test(commit || '')
-      || !HOST.test(host || '') || !Number.isInteger(step) || step < 1 || step > 9
+      || !HOST.test(host || '') || !Number.isInteger(step) || step < 1 || step > 10
       || typeof config.judgeIssuer !== 'string'
       || !/^https:\/\/[a-z0-9-]+\.up\.railway\.app\/defense\/judge$/iu.test(config.judgeIssuer)
       || stepOneMarkerInvalid) {
@@ -46,5 +48,6 @@ export function deploymentIdentity(env, config) {
   if (step >= 3) identity.allowedRoutes = allowedRoutes;
   if (step >= 5) identity.originalApiUrl = originalApiUrl;
   if (step >= 6) identity.protectedService = protectedService;
+  if (step >= 10) identity.restoreRoute = restoreRoute;
   return identity;
 }

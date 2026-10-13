@@ -52,4 +52,16 @@ export function validateProtectedService(config) {
   return { serviceId: value.serviceId, readRoute: value.readRoute };
 }
 
+// Stage 10: only the single-note recovery route is allowed. No query or wildcard.
+export const RECOVERY_NOTE_ROUTE = '/api/restore/notes/:id';
+export function validateRestoreRoute(config) {
+  if ((config?.step ?? 0) < 10) return null;
+  if (config.restoreRoute !== RECOVERY_NOTE_ROUTE
+      || !Array.isArray(config.allowedRoutes)
+      || !config.allowedRoutes.includes(RECOVERY_NOTE_ROUTE)) {
+    throw new TypeError('invalid_restore_route');
+  }
+  return config.restoreRoute;
+}
+
 export { NOTE_ROUTES };

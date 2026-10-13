@@ -11,7 +11,10 @@
     "detect:test": "node scripts/detect-test.mjs",
     "fixture:7": "node scripts/fixture-7.mjs",
     "xdr:run": "node scripts/xdr-run.mjs",
-    "test:xdr": "node --test test/xdr-run.test.mjs test/xdr-brute-force.test.mjs test/xdr-web-injection.test.mjs test/xdr-known-cve.test.mjs test/xdr-persistence.test.mjs test/xdr-privilege.test.mjs"
+    "test:xdr": "node --test test/xdr-run.test.mjs test/xdr-brute-force.test.mjs test/xdr-web-injection.test.mjs test/xdr-known-cve.test.mjs test/xdr-persistence.test.mjs test/xdr-privilege.test.mjs",
+    "test:recovery": "node --test test/recovery-stage10.test.mjs",
+    "recovery:preview": "node scripts/recovery-policy.mjs preview",
+    "recovery:apply": "node scripts/recovery-policy.mjs apply"
   },
   "engines": {
     "node": ">=22"

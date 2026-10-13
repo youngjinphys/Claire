@@ -123,6 +123,119 @@ export async function runAttackChecks(config) {
     ];
   }
 
+  if (config.step === 10) {
+    const { previewPolicyRestore, hash } = await import('./recovery/policy.mjs');
+    const { previewNoteRestore, sha256, contentSha256 } = await import('./recovery/note.mjs');
+
+    // Pure synthetic fixtures only. These are not pre-incident operator
+    // backups and never touch production data or operating policy.
+    const capturedAt = '2026-09-01T00:00:00.000Z';
+    const verifiedAt = '2026-09-02T00:00:00.000Z';
+    const incidentAt = '2026-09-04T00:00:00.000Z';
+    const currentPolicy = {
+      schema: 'aleph.recovery.test-policy.v1',
+      services: {
+        notes: { version: 'unsafe_v2', ownerOnly: false, rules: [] },
+        untouched: { version: 'untouched', ownerOnly: true, rules: ['prior_rule'] },
+      },
+      audit: [{ id: 'retained_fixture_audit' }],
+    };
+    const backupRaw = JSON.stringify({
+      schema: 'aleph.recovery.policy-backup.v1',
+      serviceId: 'notes', capturedAt, verifiedAt,
+      policy: { version: 'safe_v1', ownerOnly: true,
+        rules: ['device_registered', 'step_up_required'] },
+    });
+    const policyPlan = previewPolicyRestore({
+      current: currentPolicy, backupRaw, trustedSha256: hash(backupRaw), incidentAt,
+    });
+    const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const row = { id, owner_id: B, title: 'Example B',
+      body: 'Synthetic fixture, never actual backup' };
+    const noteRaw = JSON.stringify({
+      schema: 'aleph.recovery.note-backup.v1', version: 'example_v1',
+      id, ownerId: B, title: row.title, body: row.body,
+      capturedAt, verifiedAt, contentSha256: contentSha256(row),
+    });
+    const notePlan = previewNoteRestore({
+      raw: noteRaw, trustedSha256: sha256(noteRaw), incidentAt,
+      pinnedBOwnerId: B, identityUserId: B, id, current: null,
+    });
+
+    const identityResponse = await fetch(new URL('/aleph.json', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+    });
+    const identity = identityResponse.ok ? await safeJson(identityResponse) : null;
+    const manifestOk = identity?.step === 10
+      && identity.restoreRoute === config.restoreRoute
+      && identity.originalApiUrl === config.originalApiUrl
+      && Array.isArray(identity.allowedRoutes)
+      && identity.allowedRoutes.includes(config.restoreRoute);
+    const pageResponse = await fetch(app, {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'text/html' },
+    });
+    const notesResponse = await fetch(new URL('/api/notes', app), {
+      redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { Accept: 'application/json' },
+    });
+    const notesBody = await safeJson(notesResponse);
+    const notesDenied = notesResponse.status === 401
+      && !Array.isArray(notesBody) && !Array.isArray(notesBody?.notes);
+    const restoreResponse = await fetch(
+      new URL('/api/restore/notes/cccccccc-cccc-4ccc-8ccc-cccccccccccc', app),
+      { redirect: 'error', signal: AbortSignal.timeout(10000),
+        headers: { Accept: 'application/json' } },
+    );
+    const restoreBody = await safeJson(restoreResponse);
+    const restoreBlocked = [401, 403, 503].includes(restoreResponse.status)
+      && !restoreBody?.title && !restoreBody?.body;
+
+    return [
+      { attackId: 'synthetic_safe_policy_preview',
+        expected: '안전 정책 버전·변경 범위를 실행 전 표시',
+        observed: policyPlan.restoreVersion === 'safe_v1'
+          && policyPlan.changedPaths.every(x => x.startsWith('services.notes.'))
+          ? '로컬 합성 사본 safe_v1, notes 변경 경로 '
+            + policyPlan.changedPaths.length + '개 미리보기'
+          : '로컬 시험 정책 변경 범위 확인 실패' },
+      { attackId: 'synthetic_restore_single_note',
+        expected: 'B 소유 한 건의 ID·owner·content SHA-256 검증',
+        observed: notePlan.status === 'insert' && notePlan.contentSha256 === contentSha256(row)
+          ? '로컬 합성 B 메모 한 건의 ID·owner·해시 비교 통과 (실제 DB 쓰기 없음)'
+          : '로컬 가상 메모 해시 비교 실패' },
+      { attackId: 'deployed_restore_route',
+        expected: '배포 manifest와 복구 경로 일치',
+        observed: manifestOk ? 'production step=10 및 restoreRoute 일치'
+          : '배포 복구 설정 불일치 (HTTP ' + identityResponse.status + ')' },
+      { attackId: 'existing_browser_ui',
+        expected: '기존 자료실 첫 화면 응답',
+        observed: pageResponse.ok
+          ? '기존 자료실 HTTP ' + pageResponse.status
+          : '기존 자료실 응답 실패 (HTTP ' + pageResponse.status + ')' },
+      { attackId: 'anonymous_notes_denied',
+        expected: '비로그인 메모 목록은 자료 없이 401',
+        observed: notesDenied ? '무로그인 /api/notes HTTP 401, 자료 없음'
+          : '무로그인 메모 거부 검증 실패 (HTTP ' + notesResponse.status + ')' },
+      { attackId: 'recovery_default_fail_closed',
+        expected: '검증된 백업과 로그인 없이는 복구 경로 거부',
+        observed: restoreBlocked
+          ? '복구 미인증·미설정 요청 HTTP ' + restoreResponse.status
+            + ' (자료 본문 없음)'
+          : '복구 경로 거부 검증 실패 (HTTP ' + restoreResponse.status + ')' },
+      { attackId: 'live_policy_restore_unverified',
+        expected: '검증된 침해 전 운영 정책 사본의 실복원 검증',
+        observed: '미실행: 침해 전 독립 검증된 운영 정책 사본 없음' },
+      { attackId: 'live_b_note_restore_unverified',
+        expected: 'B 계정 비공개 사본으로 한 건 복구',
+        observed: '미실행: B의 검증된 비공개 백업 및 실제 B 인증 정보 없음' },
+      { attackId: 'one_to_nine_live_regressions_unverified',
+        expected: '1~9단계 실제 A/B 정상·금지 요청 회귀 실행',
+        observed: '미실행: 실제 A/B 계정·엔진 접속 및 복구 완료 환경 부재' },
+    ];
+  }
+
   if (config.step === 9) {
     const { detect } = await import('./detect.mjs');
     const { checkDetection } = await import('../scripts/detect-test.mjs');

@@ -107,7 +107,7 @@ test('9단계 제출 자기점검은 제안과 실기기 회수를 구분해 기
   const originalFetch = globalThis.fetch;
   const originalConfig = JSON.parse(await (await import('node:fs/promises'))
     .readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
-  const config = { ...originalConfig, publicAppUrl: 'https://fixture.vercel.app' };
+  const config = { ...originalConfig, step: 9, publicAppUrl: 'https://fixture.vercel.app' };
   try {
     globalThis.fetch = async (url) => {
       const path = new URL(String(url)).pathname;

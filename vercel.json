@@ -19,28 +19,50 @@
     {
       "source": "/api/notes/:id",
       "destination": "/api/notes?id=:id"
+    },
+    {
+      "source": "/api/restore/notes/:id",
+      "destination": "/api/restore-note?id=:id"
     }
   ],
   "headers": [
     {
       "source": "/",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
       ]
     },
     {
       "source": "/data.json",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
       ]
     },
     {
       "source": "/aleph.json",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
       ]
     }
   ]
