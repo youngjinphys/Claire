@@ -98,6 +98,14 @@ export async function runXdr({ root, moduleKey, writeError = (line) => console.e
     }
     await module.respondToDecisions({ root, alerts: fixture.alerts, decisions });
   }
+  if (moduleKey === 'persistence') {
+    // Only the local runner writes files; the isolated judge imports decide.mjs alone.
+    const responseModule = await import(pathToFileURL(join(root, 'xdr', 'persistence', 'respond.mjs')).href);
+    if (typeof responseModule.respondToDecisions !== 'function') {
+      throw new Error('persistence 로컬 대응 모듈을 찾지 못했습니다.');
+    }
+    await responseModule.respondToDecisions({ root, alerts: fixture.alerts, decisions });
+  }
   const result = { schema: 'aleph.xdr.result.v1', moduleKey, decisions, counts };
   const outDir = join(root, 'xdr', moduleKey);
   await mkdir(outDir, { recursive: true });

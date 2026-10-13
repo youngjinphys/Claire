@@ -214,3 +214,20 @@ npm run bundle
 재현: npm run test:xdr && npm run xdr:run -- known-cve && npm run xdr:run -- known-cve
 
 현재 fixture 기준 block 8 · alert 8 · record 8, 정상 이벤트 오차단 0건, 경로를 확인할 수 있는 오프라인 후보 6개, known-cve 알림 로그 16줄(재실행 중복 없음)입니다. 이는 비공개 심판이나 운영 차단 결과가 아닙니다.
+
+## 보너스 xdr-04 저장점 · 몰래 심어진 프로그램 탐지
+
+- **입력·최소수집:** xdr/fixtures/persistence.json의 가상 Wazuh 경보 24건을 읽고 read-alerts.mjs가 시각·출발 주소·계정·규칙 수준·비밀값을 제거한 설명 다섯 필드만 반환합니다. 원본 fixture는 수정하지 않았습니다.
+- **탐지 기준:** MITRE ATT&CK T1543(시스템 서비스 등록/변경), T1053(예약 작업), T1547.001(시작 폴더). 시작 폴더는 T1543이 아니라 T1547.001에 해당하므로 보조 기법으로 표시합니다. patterns.json의 패턴·근거·확신도를 독립형 decide.mjs 상단에 복제합니다.
+- **격리 판정기:** decide.mjs의 동기 decide(alert)만 export하며 import/파일 I/O/네트워크 요청 없이 작동합니다. 서명 없는 새 서비스+임시 실행 파일, 승인 목록 밖 시작 항목 추가, 낯선 작업+임시 실행 파일 등 결합 증거만 block합니다. 단순 서명 미확인, 수업용 작업, 서비스 재시작은 alert, 정상 이벤트는 record입니다.
+- **대응 책임:** respond.mjs는 명확한 공격만 만료되는 deny-rules.json 후보로 만들고 block/alert를 원문·IP·계정·비밀값 없이 xdr/alerts.log에 JSONL 한 줄씩 기록합니다. 다른 모듈 로그는 보존하고 중복 알림은 추가하지 않습니다.
+- **기존 ZTNA 우선:** 기존 src/decider.mjs와 RULE_IDS를 수정하지 않습니다. checkZTNAExtra()는 상위 allow, 서버 검증 기기 ID·Wazuh agent 바인딩·주소·계정·증거 경보 ID·시각이 모두 일치할 때만 추가 deny를 반환합니다. 현행 ZTNA 요청 계약에는 실제 기기↔Wazuh 연결이 없으므로 오프라인 후보는 simulation_only이며 운영 PC 차단은 연결되지 않았습니다.
+- **오차단 경계:** 동일 출발 주소에 정상 이벤트가 있으면 그 주소의 차단 후보는 생성하지 않습니다. 경보 발생 15분 뒤 만료되며 현재 접속 차단에 과거 경보를 재활성화하지 않습니다. 별도 기준 목록은 제공되지 않아 '평소 목록 밖' 여부는 Wazuh 경보 설명에 따른 분류이며 독립된 자산 목록 검증은 아닙니다.
+
+재현 명령:
+
+```bash
+npm run test:xdr && npm run xdr:run -- persistence && npm run xdr:run -- persistence
+```
+
+학습용 24건 결과: block 8 · alert 8 · record 8, 정상 이벤트 오차단 0건. 오프라인 격리 후보 7개는 모두 만료 상태이며 알림 로그에 persistence 16줄이 중복 없이 기록됩니다. 기존 brute-force 9줄·web-injection 17줄·known-cve 16줄도 보존합니다. 이 결과는 비공개 심판 또는 실서비스 격리 성공을 의미하지 않습니다.
