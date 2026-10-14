@@ -18,12 +18,13 @@ export function deploymentIdentity(env, config) {
   let originalApiUrl;
   let protectedService;
   let restoreRoute;
+  let resourceZones;
   try {
     allowedRoutes = validateAllowedRoutes(config);
     originalApiUrl = validateOriginalApiUrl(config);
     protectedService = validateProtectedService(config);
     restoreRoute = validateRestoreRoute(config);
-    validateResourceZones(config);
+    resourceZones = validateResourceZones(config);
   } catch {
     throw new Error('배포 단계 설정의 허용 경로 또는 원본 자료 API 주소를 확인하세요.');
   }
@@ -49,7 +50,7 @@ export function deploymentIdentity(env, config) {
   if (step >= 3) identity.allowedRoutes = allowedRoutes;
   if (step >= 5) identity.originalApiUrl = originalApiUrl;
   if (step >= 6) identity.protectedService = protectedService;
-  if (step === 8) identity.resourceZones = validateResourceZones(config);
+  if (step >= 8) identity.resourceZones = resourceZones;
   if (step >= 10) identity.restoreRoute = restoreRoute;
   return identity;
 }

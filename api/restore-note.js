@@ -1,8 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
-import { createLoginVerifier } from '../src/verify-login.mjs';
 import {
-  previewNoteRestore, restoreNoteOnce, verifyNoteBackup,
+  previewNoteRestore, restoreNoteOnce, verifyNoteBackup, contentSha256,
 } from '../src/recovery/note.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -42,35 +40,33 @@ function storeFor(db) {
     async find(id) {
       return check(await db.from('learning_notes').select(select).eq('id', id).maybeSingle());
     },
-    async insert(row) {
-      const { data, error } = await db.from('learning_notes')
-        .insert({ id: row.id, owner_id: row.owner_id, title: row.title, content: row.body })
-        .select('id')
-        .maybeSingle();
-      if (error?.code === '23505') throw new Error('NOTE_CHANGED_DURING_RESTORE');
-      check({ data, error });
-      if (!data || data.id !== row.id) throw new Error('NOTE_CHANGED_DURING_RESTORE');
-    },
-    async replaceIfCurrent(row, current) {
-      if (!current || current.id !== row.id || current.owner_id !== row.owner_id
-          || typeof current.title !== 'string' || typeof current.content !== 'string')
+    // One DB transaction handles CAS, the write, and readback verification.
+    async restoreVerified(row, previous) {
+      const expectedExists = previous !== null;
+      if (expectedExists && (previous.id !== row.id || previous.owner_id !== row.owner_id
+          || typeof previous.title !== 'string' || typeof previous.content !== 'string'))
         throw new Error('NOTE_OWNER_CONFLICT');
-      // Private note values belong in the HTTPS RPC body, not a URL filter.
-      // A SECURITY INVOKER SQL function handles the old-value CAS atomically.
       const { data, error } = await db.rpc('restore_one_learning_note', {
-        p_id: row.id, p_owner_id: row.owner_id,
-        p_original_title: current.title, p_original_content: current.content,
+        p_id: row.id, p_owner_id: row.owner_id, p_expected_exists: expectedExists,
+        p_original_title: previous?.title ?? null,
+        p_original_content: previous?.content ?? null,
         p_restored_title: row.title, p_restored_content: row.body,
       });
       check({ data, error });
-      if (data !== row.id) throw new Error('NOTE_CHANGED_DURING_RESTORE');
+      if (!data || data.verified !== true || data.id !== row.id
+          || data.owner_id !== row.owner_id
+          || typeof data.title !== 'string' || typeof data.content !== 'string'
+          || contentSha256({id:data.id,owner_id:data.owner_id,
+            title:data.title,body:data.content}) !== contentSha256(row))
+        throw new Error('RESTORE_TRANSACTION_NOT_VERIFIED');
+      return { id: data.id, transactionalReadbackVerified: true };
     },
   };
 }
 
 export function createRestoreHandler({
-  env = process.env, supabaseFactory = createClient,
-  verifierFactory = createLoginVerifier,
+  env = process.env, supabaseFactory,
+  verifierFactory,
 } = {}) {
   let runtime;
   return async function handler(req, res) {
@@ -111,10 +107,16 @@ export function createRestoreHandler({
 
     try {
       if (!runtime) {
-        const db = supabaseFactory(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+        // Injected test factories require no installed SDK or JWT package.
+        // Real restore requests still load the official security modules.
+        const createDb = supabaseFactory
+          ?? (await import('@supabase/supabase-js')).createClient;
+        const createVerifier = verifierFactory
+          ?? (await import('../src/verify-login.mjs')).createLoginVerifier;
+        const db = createDb(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
           auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
         });
-        runtime = { db, verify: verifierFactory({ config, supabaseClient: db }) };
+        runtime = { db, verify: createVerifier({ config, supabaseClient: db }) };
       }
       const identity = await runtime.verify(req.headers?.authorization);
       if (!identity) {
@@ -147,6 +149,8 @@ export function createRestoreHandler({
           trustedSha256: env.RESTORE_NOTE_BACKUP_SHA256,
         }),
       });
+      // restoreNoteOnce already re-read the backup and verified the saved row.
+      // No claim about the 1–9 live regression tests is made here.
       return res.status(200).json(applied);
     } catch (error) {
       const code = error?.message;

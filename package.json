@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node scripts/build-public.mjs",
     "test:r5": "node --test test/r5.test.mjs",
-    "test:package": "node --test test/package-starter.test.mjs",
+    "test:package": "node --test test/package-starter.test.mjs test/judge-compat.test.mjs",
     "bundle": "node scripts/bundle.mjs",
     "decider:test": "node scripts/decider-test.mjs",
     "detect:test": "node scripts/detect-test.mjs",
@@ -16,10 +16,14 @@
     "recovery:preview": "node scripts/recovery-policy.mjs preview",
     "recovery:apply": "node scripts/recovery-policy.mjs apply",
     "test:zone": "node --test test/zone-stage8.test.mjs test/zone-api-authorization.test.mjs test/zone-judge-runtime.test.mjs",
-    "test:verified-device": "node --test test/detect-verified-device-stage9.test.mjs"
+    "test:verified-device": "node --test test/detect-verified-device-stage9.test.mjs",
+    "recovery:diagnose": "node scripts/recovery-diagnose.mjs",
+    "test:decider-contract": "node --test test/decider-contract-stage10.test.mjs",
+    "recovery:retest": "node scripts/recovery-retest.mjs",
+    "judge:check": "node scripts/judge-contract-check.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22 <25"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.117.2",

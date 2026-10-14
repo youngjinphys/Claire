@@ -60,6 +60,11 @@ export function previewNoteRestore({
   const currentHash = existing ? contentSha256(existing) : null;
   const status = !existing ? 'insert' :
     currentHash === verified.item.contentSha256 ? 'already_restored' : 'replace';
+  // Preview only the exact fields that will change; never expose note body.
+  const changedFields = existing === null
+    ? ['id', 'owner_id', 'title', 'body']
+    : ['title', 'body'].filter(field =>
+        existing[field] !== verified.row[field]);
   const planSha256 = sha256(JSON.stringify({
     snapshotSha256: trustedSha256, id, ownerId: pinnedBOwnerId,
     beforeSha256: currentHash, afterSha256: verified.item.contentSha256, status,
@@ -68,7 +73,8 @@ export function previewNoteRestore({
     schema: 'aleph.recovery.note-preview.v1', id,
     ownerId: pinnedBOwnerId, beforeSha256: currentHash,
     contentSha256: verified.item.contentSha256,
-    backupSha256: trustedSha256, planSha256, status,
+    backupSha256: trustedSha256, backupVersion: verified.item.version,
+    changedFields, planSha256, status,
   };
 }
 export async function restoreNoteOnce({
@@ -76,7 +82,7 @@ export async function restoreNoteOnce({
   identityUserId, id, confirmedPlanSha256, rereadBackup,
 }) {
   if (!store || typeof store.find !== 'function'
-      || typeof store.insert !== 'function' || typeof store.replaceIfCurrent !== 'function')
+      || typeof store.restoreVerified !== 'function')
     fail('RESTORE_BACKEND_UNAVAILABLE');
   const current = await store.find(id);
   const preview = previewNoteRestore({
@@ -84,28 +90,32 @@ export async function restoreNoteOnce({
   });
   if (!SHA.test(confirmedPlanSha256 ?? '') || preview.planSha256 !== confirmedPlanSha256)
     fail('NOTE_PLAN_CONFIRMATION_REQUIRED');
-  // Server adapter must re-read the configured backup and pinned digest after
-  // plan confirmation. A missing, switched or unverified backup cannot write.
-  if (rereadBackup !== undefined) {
-    if (typeof rereadBackup !== 'function') fail('UNVERIFIED_NOTE_BACKUP');
-    let source;
-    try { source = await rereadBackup(); }
-    catch { fail('UNVERIFIED_NOTE_BACKUP'); }
-    if (source?.raw !== raw || source?.trustedSha256 !== trustedSha256)
-      fail('UNVERIFIED_NOTE_BACKUP');
-    verifyNoteBackup({ raw: source.raw, trustedSha256: source.trustedSha256,
-      incidentAt, pinnedBOwnerId });
-  }
+  // A backup re-read is mandatory in every call path, even for a no-op.
+  // Otherwise callers could accidentally bypass the pre-write verification.
+  if (typeof rereadBackup !== 'function') fail('UNVERIFIED_NOTE_BACKUP');
+  let source;
+  try { source = await rereadBackup(); }
+  catch { fail('UNVERIFIED_NOTE_BACKUP'); }
+  if (source?.raw !== raw || source?.trustedSha256 !== trustedSha256)
+    fail('UNVERIFIED_NOTE_BACKUP');
+  verifyNoteBackup({ raw: source.raw, trustedSha256: source.trustedSha256,
+    incidentAt, pinnedBOwnerId });
   if (preview.status !== 'already_restored') {
     const verified = verifyNoteBackup({ raw, trustedSha256, incidentAt, pinnedBOwnerId });
-    // No upsert: never overwrite another owner's row or another concurrent write.
-    if (preview.status === 'insert') await store.insert(verified.row);
-    else await store.replaceIfCurrent(verified.row, current);
+    // The SQL RPC must re-read and validate the changed row before its
+    // transaction commits; no later network failure can be called a rollback.
+    const completed = await store.restoreVerified(verified.row, current);
+    if (completed?.transactionalReadbackVerified !== true
+        || completed?.id !== verified.row.id)
+      fail('RESTORE_TRANSACTION_NOT_VERIFIED');
+    return { id, ownerId: pinnedBOwnerId, contentSha256: preview.contentSha256,
+      status: 'restored' };
   }
+  // No write path: verify the existing row without changing anything.
   const after = await store.find(id);
   if (!after || after.owner_id !== pinnedBOwnerId
-    || contentSha256(presentRow(after)) !== preview.contentSha256)
+      || contentSha256(presentRow(after)) !== preview.contentSha256)
     fail('POST_RESTORE_VERIFICATION_FAILED');
   return { id, ownerId: pinnedBOwnerId, contentSha256: preview.contentSha256,
-    status: preview.status === 'already_restored' ? 'unchanged' : 'restored' };
+    status: 'unchanged' };
 }

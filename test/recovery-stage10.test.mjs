@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, mkdir, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   hash, previewPolicyRestore, restoreTestPolicy, recoverTestPolicyFile,
 } from '../src/recovery/policy.mjs';
@@ -40,10 +42,14 @@ const privateNoteBackup = () => JSON.stringify({
   id:ID,ownerId:B,capturedAt,verifiedAt,
   title:targetNote.title,body:targetNote.body,contentSha256:contentSha256(targetNote),
 });
-const noteInputs = () => ({
-  raw:privateNoteBackup(), trustedSha256:sha256(privateNoteBackup()),
-  incidentAt,pinnedBOwnerId:B,identityUserId:B,id:ID,
-});
+const noteInputs = () => {
+  const raw = privateNoteBackup();
+  const trustedSha256 = sha256(raw);
+  return {
+    raw, trustedSha256, incidentAt, pinnedBOwnerId:B, identityUserId:B, id:ID,
+    rereadBackup: async () => ({ raw, trustedSha256 }),
+  };
+};
 const noteStore = (initial=[]) => {
   const rows = new Map(initial.map(row => [row.id,{...row}]));
   let audit = [{id:'historic',kind:'unchanged'}];
@@ -59,6 +65,17 @@ const noteStore = (initial=[]) => {
       if(!now || now.owner_id!==row.owner_id||now.title!==previous.title
         ||now.content!==previous.content) throw Error('NOTE_CHANGED_DURING_RESTORE');
       rows.set(row.id,{id:row.id,owner_id:row.owner_id,title:row.title,content:row.body});
+    },
+    async restoreVerified(row,previous){
+      const before=rows.get(row.id) ?? null;
+      if (previous === null) {
+        if (before) throw Error('NOTE_CHANGED_DURING_RESTORE');
+      } else if(!before || before.owner_id !== row.owner_id
+        || before.title !== previous.title || before.content !== previous.content) {
+        throw Error('NOTE_CHANGED_DURING_RESTORE');
+      }
+      rows.set(row.id,{id:row.id,owner_id:row.owner_id,title:row.title,content:row.body});
+      return {id:row.id,transactionalReadbackVerified:true};
     },
   };
 };
@@ -118,8 +135,10 @@ test('지정 B 가상 메모만 미리보기·복원·재확인; 다른 메모�
   const preview=previewNoteRestore({...values,current:await store.find(ID)});
   assert.equal(preview.status,'insert');
   assert.equal(preview.contentSha256,contentSha256(targetNote));
-  assert.deepEqual(Object.keys(preview).sort(),['backupSha256','beforeSha256',
-    'contentSha256','id','ownerId','planSha256','schema','status']);
+  assert.deepEqual(Object.keys(preview).sort(),['backupSha256','backupVersion',
+    'beforeSha256','changedFields','contentSha256','id','ownerId','planSha256','schema','status']);
+  assert.equal(preview.backupVersion, 'backup_v1');
+  assert.deepEqual(preview.changedFields, ['id','owner_id','title','body']);
   await assert.rejects(restoreNoteOnce({...values,store,
     confirmedPlanSha256:'0'.repeat(64)}),/NOTE_PLAN_CONFIRMATION_REQUIRED/);
   const restored=await restoreNoteOnce({...values,store,
@@ -153,7 +172,7 @@ test('기존 B 메모는 조건부 갱신, A 소유 충돌·경쟁 상태·백�
     confirmedPlanSha256:preview.planSha256})).status,'restored');
   assert.equal(store.rows.get(ID).title,targetNote.title);
   const concurrent=noteStore([old]);
-  concurrent.replaceIfCurrent=async()=>{throw Error('NOTE_CHANGED_DURING_RESTORE');};
+  concurrent.restoreVerified=async()=>{throw Error('NOTE_CHANGED_DURING_RESTORE');};
   await assert.rejects(restoreNoteOnce({...values,store:concurrent,
     confirmedPlanSha256:preview.planSha256}),/NOTE_CHANGED_DURING_RESTORE/);
 });
@@ -170,6 +189,8 @@ test('복원 HTTP 경로는 기본 비활성화, 비정상 메서드와 신원�
   await handler({method:'POST',query:{id:ID},headers:{}},response);
   assert.equal(response.code,503);
   assert.equal(response.body.error,'RESTORE_DISABLED');
+  assert.equal(response.headers['Cache-Control'],'no-store');
+  assert.ok(!Object.keys(response.headers).some(k=>k.startsWith('X-ALEPH-')));
   const method=mockResponse();
   await handler({method:'DELETE',headers:{},query:{id:ID}},method);
   assert.equal(method.code,405);
@@ -187,12 +208,17 @@ test('서버 복원 GET/POST는 인증된 B의 확인 계획으로 지정 1건�
   const fakeDB={
     async rpc(name, p) {
       assert.equal(name, 'restore_one_learning_note');
-      const current=rows.get(p.p_id);
-      if(!current || current.owner_id!==p.p_owner_id
-          || current.title!==p.p_original_title || current.content!==p.p_original_content)
-        return {data:null,error:null};
-      rows.set(p.p_id,{...current,title:p.p_restored_title,content:p.p_restored_content});
-      return {data:p.p_id,error:null};
+      const existing=rows.get(p.p_id);
+      if (p.p_expected_exists) {
+        if(!existing || existing.owner_id!==p.p_owner_id
+          || existing.title!==p.p_original_title
+          || existing.content!==p.p_original_content)
+          return {data:null,error:null};
+      } else if(existing) return {data:null,error:null};
+      rows.set(p.p_id,{id:p.p_id,owner_id:p.p_owner_id,
+        title:p.p_restored_title,content:p.p_restored_content});
+      // Transactional Postgres function performs readback before COMMIT.
+      return {data:{...rows.get(p.p_id),verified:true},error:null};
     },
     from(table) {
       assert.equal(table,'learning_notes');
@@ -248,6 +274,8 @@ test('서버 복원 GET/POST는 인증된 B의 확인 계획으로 지정 1건�
   assert.equal(response.body.ownerId,B);
   assert.equal(response.body.contentSha256,contentSha256(targetNote));
   assert.ok(!JSON.stringify(response.body).includes(targetNote.body));
+  assert.equal(response.headers['Cache-Control'],'no-store');
+  assert.ok(!Object.keys(response.headers).some(k=>k.startsWith('X-ALEPH-')));
   const plan=response.body.planSha256;
   response=mockResponse();
   await handler(req('POST',ID,'Bearer example-b',{planSha256:'0'.repeat(64)}),response);
@@ -257,6 +285,8 @@ test('서버 복원 GET/POST는 인증된 B의 확인 계획으로 지정 1건�
   await handler(req('POST',ID,'Bearer example-b',{planSha256:plan}),response);
   assert.equal(response.code,200);
   assert.equal(response.body.status,'restored');
+  assert.equal(response.headers['Cache-Control'],'no-store');
+  assert.ok(!Object.keys(response.headers).some(k=>k.startsWith('X-ALEPH-')));
   assert.equal(rows.get(ID).owner_id,B);
   assert.equal(contentSha256({...targetNote}),contentSha256({
     ...rows.get(ID),body:rows.get(ID).content,
@@ -302,7 +332,7 @@ test('10단계 제출 점검은 운영 복구 미실행을 명확히 구분', as
     };
     const checks=await runAttackChecks({...config,
       publicAppUrl:'https://stage10-test.vercel.app'});
-    assert.equal(checks.length,9);
+    assert.equal(checks.length,11);
     assert.ok(checks.every(x=>
       Object.keys(x).sort().join(',')==='attackId,expected,observed'));
     assert.match(checks[0].observed,/safe_v1/u);
@@ -310,8 +340,10 @@ test('10단계 제출 점검은 운영 복구 미실행을 명확히 구분', as
     assert.match(checks[2].observed,/step=10/u);
     assert.match(checks[3].observed,/HTTP 200/u);
     assert.match(checks[4].observed,/401/u);
-    assert.match(checks[5].observed,/HTTP 503/u);
-    assert.ok(checks.slice(6).every(x=>x.observed.startsWith('미실행:')));
+    assert.match(checks[5].observed,/HTTP 503 RESTORE_DISABLED.*미검증/u);
+    assert.ok(checks.slice(6,9).every(x=>x.observed.startsWith('미실행:')));
+    assert.match(checks[9].observed, /변조·분실 쓰기 차단/u);
+    assert.match(checks[10].observed, /0건 쓰기/u);
   }finally{globalThis.fetch=old;}
 });
 
@@ -319,8 +351,16 @@ test('사본 본문은 URL 필터 없이 서버 RPC 트랜잭션으로 조건부
   const source = await readFile(new URL('../api/restore-note.js', import.meta.url), 'utf8');
   assert.match(source, /\.rpc\('restore_one_learning_note'/u);
   assert.doesNotMatch(source, /\.eq\('content', current\.content\)/u);
+  assert.doesNotMatch(source, /\.insert\(/u);
+  assert.match(source, /restoreVerified\(row, previous\)/u);
   const sql = await readFile(new URL('../supabase/step10_restore_note_function.sql', import.meta.url), 'utf8');
   assert.match(sql, /security invoker/iu);
+  assert.match(sql, /p_expected_exists boolean/iu);
+  assert.match(sql, /returns jsonb/iu);
+  assert.match(sql, /jsonb_build_object/iu);
+  assert.match(sql, /for update/iu);
+  assert.match(sql, /raise exception 'POST_RESTORE_VERIFICATION_FAILED'/iu);
+  assert.match(sql, /insert into public.learning_notes/iu);
   assert.match(sql, /from public, anon, authenticated/iu);
   assert.match(sql, /grant execute[\s\S]*to service_role/iu);
   assert.match(sql, /where id = p_id[\s\S]*owner_id = p_owner_id/iu);
@@ -376,4 +416,153 @@ test('10단계 서버의 계획 확인 후 사본 재조회가 실패하면 DB �
   });
   assert.equal(done.status, 'restored');
   assert.equal(current.rows.size, 1);
+});
+
+
+test('복원 라우트는 node_modules 없는 격리 프로젝트에서도 모의 테스트를 시작할 수 있음', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aleph-restore-dependency-free-'));
+  try {
+    await mkdir(join(root, 'api'), { recursive: true });
+    await mkdir(join(root, 'src', 'recovery'), { recursive: true });
+    await copyFile(new URL('../api/restore-note.js', import.meta.url),
+      join(root, 'api', 'restore-note.js'));
+    await copyFile(new URL('../src/recovery/note.mjs', import.meta.url),
+      join(root, 'src', 'recovery', 'note.mjs'));
+    await copyFile(new URL('../aleph.config.json', import.meta.url),
+      join(root, 'aleph.config.json'));
+    await writeFile(join(root, 'package.json'), '{"type":"module"}\n');
+
+    // Neither node_modules nor the production auth verifier is available here.
+    // A future eager import of Supabase or jose must fail this regression test.
+    const isolatedUrl = pathToFileURL(join(root, 'api', 'restore-note.js')).href;
+    const program = [
+      'const { createRestoreHandler } = await import(' + JSON.stringify(isolatedUrl) + ');',
+      'const handler = createRestoreHandler({ env: { RESTORE_ENABLED: "0" } });',
+      'const res = { setHeader() {}, status(code) { this.code=code; return this; },',
+      '  json(body) { this.body=body; return this; } };',
+      'await handler({method:"POST",query:{},headers:{}},res);',
+      'if (res.code !== 503 || res.body?.error !== "RESTORE_DISABLED") process.exit(2);',
+    ].join('\n');
+    const child = spawnSync(process.execPath,
+      ['--input-type=module', '--eval', program],
+      { cwd: root, encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0,
+      '독립 복원 테스트 실행 실패: ' + (child.stderr || child.stdout || child.error));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('활성 10단계 배포 계약은 restoreRoute를 명시하고 준비 전 실복원으로 간주하지 않음', async () => {
+  const {deploymentIdentity} = await import('../scripts/deployment-identity.mjs');
+  const cfg = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url),'utf8'));
+  assert.equal(cfg.step,10);
+  const identity = deploymentIdentity({
+    VERCEL_GIT_PROVIDER: 'github',
+    VERCEL_GIT_REPO_OWNER: 'Student-A',
+    VERCEL_GIT_REPO_SLUG: 'aleph-defense',
+    VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40),
+    VERCEL_URL: 'example.vercel.app',
+  },cfg);
+  assert.equal(identity.step,10);
+  assert.equal(identity.restoreRoute,'/api/restore/notes/:id');
+  assert.ok(identity.allowedRoutes.includes(identity.restoreRoute));
+});
+
+
+test('복원 함수는 백업 재조회 콜백이 빠지면 쓰기 전에 거부', async () => {
+  const fixture = noteInputs();
+  const store = noteStore();
+  const { rereadBackup, ...withoutReread } = fixture;
+  const plan = previewNoteRestore({ ...fixture, current: null });
+  await assert.rejects(
+    restoreNoteOnce({ ...withoutReread, store, confirmedPlanSha256: plan.planSha256 }),
+    /UNVERIFIED_NOTE_BACKUP/u,
+  );
+  assert.equal(store.rows.size, 0);
+  const restored = await restoreNoteOnce({
+    ...fixture, store, confirmedPlanSha256: plan.planSha256,
+  });
+  assert.equal(restored.status, 'restored');
+});
+
+test('시험 정책 디스크 복원 결과는 다시 읽어 확인하고 감사 기록을 보존', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'aleph-recovery-lab-'));
+  try {
+    const currentPath = join(dir, 'test-policy.json');
+    const backupPath = join(dir, 'safe-policy.json');
+    const original = compromised();
+    const rawBackup = backupPolicy();
+    await writeFile(currentPath, JSON.stringify(original));
+    await writeFile(backupPath, rawBackup);
+    const options = { currentPath, backupPath,
+      trustedSha256: hash(rawBackup), incidentAt };
+    const first = await recoverTestPolicyFile(options);
+    assert.equal(first.applied, false);
+    assert.equal(first.preview.currentVersion, 'unsafe_v2');
+    assert.equal(first.preview.restoreVersion, 'safe_v1');
+    assert.deepEqual(first.preview.changedPaths, [
+      'services.notes.version','services.notes.ownerOnly','services.notes.rules',
+    ]);
+    const done = await recoverTestPolicyFile({
+      ...options, confirm: first.preview.planSha256,
+    });
+    assert.equal(done.applied, true);
+    assert.equal(done.verifiedAfterRead, true);
+    const disk = JSON.parse(await readFile(currentPath, 'utf8'));
+    assert.deepEqual(disk.services.notes, safeNotes);
+    assert.deepEqual(disk.services.otherService, original.services.otherService);
+    assert.deepEqual(disk.audit, original.audit);
+  } finally {
+    await rm(dir,{recursive:true,force:true});
+  }
+});
+
+test('사본 symlink는 신뢰하지 않으며 시험 정책을 덮어쓰지 않음', async () => {
+  const { symlink } = await import('node:fs/promises');
+  const dir = await mkdtemp(join(tmpdir(), 'aleph-recovery-lab-'));
+  try {
+    const currentPath = join(dir,'test-policy.json');
+    const backupPath = join(dir,'safe-policy.json');
+    const sourcePath = join(dir,'source-copy.json');
+    const backup = backupPolicy();
+    const original = compromised();
+    await writeFile(currentPath,JSON.stringify(original));
+    await writeFile(sourcePath,backup);
+    await symlink(sourcePath,backupPath);
+    await assert.rejects(recoverTestPolicyFile({
+      currentPath,backupPath,
+      trustedSha256:hash(backup),incidentAt,
+    }),/UNVERIFIED_POLICY_BACKUP/u);
+    assert.deepEqual(JSON.parse(await readFile(currentPath,'utf8')),original);
+  } finally {
+    await rm(dir,{recursive:true,force:true});
+  }
+});
+
+test('복원 단계별 지역 보고서는 실기기/실계정 증거로 오인하지 않음', async () => {
+  const { TEST_ORDER,sanitizeExitStatus } =
+    await import('../scripts/recovery-retest.mjs');
+  assert.deepEqual(TEST_ORDER.map(x=>x.stage),
+    ['1-5','6','7','8','9','10','contract','packaging']);
+  assert.equal(sanitizeExitStatus(null), null);
+  assert.equal(sanitizeExitStatus(0), 0);
+  assert.equal(sanitizeExitStatus(-1), null);
+});
+
+test('10단계 스냅샷 실패 게이트의 실제 로컬 파일·메모 쓰기 재현', async () => {
+  const { verifySyntheticStage10Recovery } =
+    await import('../src/recovery/self-check.mjs');
+  const proof = await verifySyntheticStage10Recovery();
+  assert.equal(proof.kind,'synthetic_local_only');
+  const required = [
+    'policyPreviewVerified','policyTamperStoppedBeforeWrite',
+    'policyMissingBackupStoppedBeforeWrite','policyRestoreReadbackVerified',
+    'unchangedServiceAndAuditPreserved','noteTamperStoppedBeforeWrite',
+    'noteMissingBackupStoppedBeforeWrite','noteRestoreReadbackVerified',
+    'otherNotesPreserved',
+  ];
+  for(const key of required) assert.equal(proof[key],true,key);
+  const json = JSON.stringify(proof);
+  assert.doesNotMatch(json,/Synthetic fixture only|Leave A unchanged/u);
 });

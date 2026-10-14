@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { open, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -74,9 +75,18 @@ export function restoreTestPolicy({ current, backupRaw, trustedSha256, incidentA
   return { preview, restored };
 }
 const safeRegularFile = async path => {
-  const meta = await lstat(path);
-  if (!meta.isFile() || meta.isSymbolicLink()) fail('UNSAFE_POLICY_FILE');
-  return readFile(path, 'utf8');
+  // Opening the descriptor with O_NOFOLLOW closes the lstat/readFile
+  // symlink-swap gap. Validate the SAME descriptor that supplies the bytes.
+  let handle;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const meta = await handle.stat();
+    if (!meta.isFile() || meta.nlink !== 1 || meta.size > 65536)
+      fail('UNSAFE_POLICY_FILE');
+    return await handle.readFile({ encoding: 'utf8' });
+  } finally {
+    await handle?.close();
+  }
 };
 // Verify the on-disk backup each time it is read, including immediately before
 // writing. A previously verified in-memory object is not a trusted file.
@@ -117,7 +127,11 @@ export async function recoverTestPolicyFile({ currentPath, backupPath, trustedSh
     fail('POLICY_CHANGED_DURING_RESTORE');
   const temp = join(dir, '.test-policy-' + randomUUID() + '.tmp');
   try {
-    await writeFile(temp, JSON.stringify(restored, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    const stagedRaw = JSON.stringify(restored, null, 2) + '\n';
+    await writeFile(temp, stagedRaw, { flag: 'wx', mode: 0o600 });
+    // Verify the exact staged bytes before replacing any policy file.
+    if (await safeRegularFile(temp) !== stagedRaw)
+      fail('UNVERIFIED_STAGED_POLICY');
     // Recheck both source files after staging and before the atomic switch.
     const backupBeforeCommit = await rereadVerifiedPolicyBackup(resolvedBackup, trustedSha256, incidentAt);
     if (backupBeforeCommit !== rereadBackup) fail('UNVERIFIED_POLICY_BACKUP');
@@ -127,5 +141,16 @@ export async function recoverTestPolicyFile({ currentPath, backupPath, trustedSh
   } finally {
     await unlink(temp).catch(error => { if (error?.code !== 'ENOENT') throw error; });
   }
-  return { preview, applied: true };
+  // A successful rename is not equivalent to a verified restoration.
+  // Read back the final policy and compare the entire allowed result,
+  // including unchanged services and immutable audit history.
+  let saved;
+  try { saved = JSON.parse(await safeRegularFile(resolvedCurrent)); }
+  catch { fail('POST_RESTORE_VERIFICATION_FAILED'); }
+  if (hash(JSON.stringify(saved)) !== hash(JSON.stringify(restored))
+      || JSON.stringify(saved.audit) !== JSON.stringify(current.audit)
+      || Object.keys(saved.services).sort().join(',') !== Object.keys(current.services).sort().join(',')) {
+    fail('POST_RESTORE_VERIFICATION_FAILED');
+  }
+  return { preview, applied: true, verifiedAfterRead: true };
 }

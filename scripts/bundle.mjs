@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateBundleNotes } from './bundle-notes-validation.mjs';
+import { loadBundleNotes } from './bundle-notes-default.mjs';
 import { validateAllowedRoutes, validateOriginalApiUrl, validateResourceZones } from './config-contract.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -38,14 +39,23 @@ try {
     if (error.message?.startsWith('origin 주소가') || error.message?.startsWith('GitHub HTTPS')) throw error;
     fail('GitHub HTTPS 저장소 주소를 origin으로 등록해 주세요.');
   }
-  const changedFiles = git('diff-tree', '--root', '--no-commit-id', '--name-only', '--no-renames', '-r', commit)
-    .split(/\r?\n/u).filter(Boolean).sort();
+  // diff-tree omits merge file lists unless parent selection is explicit.
+  // Compare the first/mainline parent; the other parent is integrated history.
+  const parents = git('rev-list', '--parents', '-n', '1', commit)
+    .split(/\s+/u).slice(1).filter(Boolean);
+  const changedOutput = parents.length
+    ? git('diff', '--name-only', '--no-renames', parents[0], commit)
+    : git('diff-tree', '--root', '--no-commit-id', '--name-only', '--no-renames', '-r', commit);
+  const changedFiles = changedOutput.split(/\r?\n/u).filter(Boolean).sort();
   if (!changedFiles.length) fail('마지막 커밋에 바뀐 파일이 없습니다.');
   const config = fromCommit('aleph.config.json');
   if (normalizedRepo(config.repoUrl) !== repoUrl) {
     fail('aleph.config.json의 repoUrl이 Git origin 주소와 다릅니다. 같은 저장소 주소로 맞춰 주세요.');
   }
-  const notes = JSON.parse(readFileSync(join(root, 'bundle-notes.json'), 'utf8'));
+  const { notes, origin: notesOrigin } = loadBundleNotes(root);
+  if (notesOrigin === 'tracked_conservative_template') {
+    process.stdout.write('bundle-notes.json 없음: 비밀값 없는 보수적 저장소 설명을 사용합니다.\n');
+  }
   if (!Number.isInteger(config.step) || config.step < 1 || config.step > 12) fail('aleph.config.json의 step을 확인해 주세요.');
   if (config.step >= 3 && (!config.identityProvider || typeof config.identityProvider !== 'object'
       || ['issuer', 'audience', 'jwksUrl'].some((key) => typeof config.identityProvider[key] !== 'string'

@@ -1,6 +1,6 @@
-# BYTE BACK 방어전 · 9단계 저장점
+# BYTE BACK 방어전 · 10단계 저장점
 
-현재 제출 단계는 **9단계 탐지 및 10단계 백업 검증 보완**입니다. 기존 8·10단계 자원/API·복구 기능과 XDR 작업은 보존했습니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
+현재 제출 단계는 **10단계 안전 사본 복원·사후 재시험**입니다. 기존 9단계 탐지와 1~8단계 기능을 보존했습니다. 기존 8·10단계 자원/API·복구 기능과 XDR 작업은 보존했습니다. 1~6단계의 자료실·기기 등록 판정·보너스 XDR을 유지하고, 엔진이 검증한 가상 복합 접속 사건에서 `step_up_required` 추가 확인 규칙을 적용합니다. 아래 5단계 가산점 기록은 변경 전 이력입니다.
 
 ## 100점 가산점 대응
 
@@ -353,3 +353,178 @@ npm run test:xdr && npm run xdr:run -- exfiltration && npm run xdr:run -- exfilt
 \`api/restore-note.js\`도 B 전용 복원 POST에서 계획 확인 후 서버 전용 백업을 다시 읽어 검증합니다. 두 번의 스냅샷이 달라지거나 사본을 읽을 수 없으면 \`UNVERIFIED_NOTE_BACKUP\`으로 중단하고 DB 쓰기를 수행하지 않습니다. 이 두 경로는 **기존 격리 학습 정책과 지정 B 메모 한 건에만** 적용되며 실제 운영 정책 복원·DB 복구를 수행하지 않았습니다. 독립적으로 보관한 진짜 백업의 진위는 외부 보관자가 보증해야 하며, 단순 자체 생성 해시만으로 안전성을 증명하지 않습니다.
 
 실행: \`npm run test:recovery\`로 정책 백업 변경·분실과 메모 백업 재조회 실패 시 쓰기 0건을 재현합니다. 실제 운영 정책 및 사용자 자격 정보는 건드리지 않습니다.
+
+### 10단계 복구 테스트 의존성 분리 (`ERR_MODULE_NOT_FOUND`)
+
+`package.json`과 `package-lock.json`은 이미 `@supabase/supabase-js@2.117.2`와 `jose@6.2.12`를 고정하고 있습니다. `ERR_MODULE_NOT_FOUND`는 사용 중인 로컬 Node 환경이 설치된 패키지를 찾지 못할 때 발생합니다. Node 버전만 교체해도 패키지는 자동 설치되지 않습니다.
+
+기존 `test:recovery`는 모의 DB 및 토큰 검증 함수를 주입하지만 `api/restore-note.js`가 최상위에서 서버 전용 SDK를 불러와, 의존성이 없는 checkout에서는 테스트 로딩조차 되지 않았습니다. **테스트 주입 시에는 외부 SDK를 로딩하지 않고, 실제 복원 요청 처리 때에는 공식 SDK와 JWT 검증 모듈을 지연 로딩**하도록 수정했습니다. 인증, 백업 검증, 권한 검증, 복원 범위와 데이터 쓰기 계약은 변경하지 않았습니다.
+
+- **단위 테스트:** 깨끗한 checkout에서 `node --test test/recovery-stage10.test.mjs`로 실행할 수 있으며 실제 키나 DB가 필요하지 않습니다. 임시 독립 프로젝트에 SDK와 `node_modules` 없이 복원 모듈을 import하는 회귀 테스트를 추가했습니다.
+- **전체 앱·Vercel 실행:** 운영용 패키지는 여전히 필수이므로 루트에서 `npm ci`로 lockfile에 고정된 SDK/JWT 라이브러리를 설치해야 합니다. SDK가 없을 때 실제 복원을 진행하는 fallback은 없습니다.
+- **로컬 복구 절차:** `npm ci && npm run test:recovery`. 설치가 실패하면 npm의 **첫 오류**를 조사하며, 키·토큰·개인정보를 소스에 추가하지 않습니다.
+
+
+## 10단계 UNV_AMBIGUOUS 판별 근거 (2026-10-13)
+
+이전 production은 \`step: 9\`라서 \`/aleph.json\`에 \`restoreRoute\`가 없었고, 복구 URL은 503 \`RESTORE_DISABLED\`였습니다. **503은 복원 성공·백업 일치·재시험의 증거가 아닙니다.**
+
+시크릿 창에서 직접 확인할 URL:
+
+- [배포 manifest](https://skt-aleph-defense.vercel.app/aleph.json): \`step: 10\`, \`restoreRoute: /api/restore/notes/:id\`, 동일 경로가 \`allowedRoutes\`에도 있어야 함
+- [익명 복구 GET 테스트](https://skt-aleph-defense.vercel.app/api/restore/notes/00000000-0000-4000-8000-000000000000): 테스트 UUID만 사용. 503 \`RESTORE_DISABLED\`라면 복구 비활성 상태이며 검증 완료가 아님
+
+| 응답 | 확인되는 사실 | 확인되지 않는 사실 |
+|---|---|---|
+| \`/aleph.json\` 200 + 10단계 \`restoreRoute\` | 복구 경로 등록 | 사본 검증·복원 |
+| 복구 GET 503 \`RESTORE_DISABLED\` | 안전한 기능 비활성화 | 사본 존재·일치·재시험 |
+| 복구 GET 503 \`VERIFIED_BACKUP_NOT_CONFIGURED\` | 서버의 검증 백업 설정 부족 | 사본 일치·재시험 |
+| 복구 GET 401 \`UNAUTHORIZED\` | 무로그인 거부 | 실제 복원·재시험 |
+| 검증된 B 시험 계정 GET 200 (백업·계획 해시 제공) | 지정 1건 복원 계획 확인 | 실제 POST·재시험 |
+| 승인된 B의 POST 200 (복원 후 재조회 성공) | 지정 메모 내용 해시 일치 | 전체 1~9단계 정상·금지 재시험 |
+
+실제 복원에는 **침해 이전 독립 검증된 백업과 외부에 고정된 SHA-256, 복원 시점, 지정 시험 계정 B의 ID/토큰, 안전하게 보관된 서버 설정**이 필요합니다. 서버 전용 \`RESTORE_NOTE_SNAPSHOT_BASE64\`, \`RESTORE_NOTE_BACKUP_SHA256\`, \`RESTORE_INCIDENT_AT\`, \`RESTORE_B_OWNER_ID\`, \`RESTORE_OPERATOR_USER_ID\`, \`RESTORE_ENABLED\`를 Git이 아닌 Vercel 공식 보안 설정에서 관리합니다. 지금은 독립 검증 백업과 실제 B 계정 복원 증거가 없으므로 \`RESTORE_ENABLED=1\`을 임의 설정하거나 DB/운영 정책에 쓰지 않았습니다.
+
+실복원 준비 뒤에는 **B의 GET 미리보기 → 버전·변경 범위·계획 해시 확인 → 승인 POST → 같은 ID GET 재조회 → A 정상·B→A 거부·1~9단계 실제 재시험**을 수행합니다. 메모 내용·비밀번호·토큰·원본 백업을 README나 제출 JSON에 남기지 않습니다.
+
+심판의 **\`UNV_AMBIGUOUS\`는 합격/불합격 판별 불가**로서 채점 실패 판정과 다릅니다. 결과 카드의 **심판 기록 코드**를 펼쳐 실제 요청 URL·HTTP 상태/본문을 확인해야 하며, 같은 미검증 상태로 반복 제출하지 않습니다. 동일 모호 응답이 두 번 반복되면 결과 카드를 질문 게시판이나 강사에게 전달하세요. 현재 대화에 심판 기록 코드가 없으므로 심판이 실제 호출한 주소·판정 원인을 확정할 수 없습니다.
+
+## 10단계 최종 진단 · UNV_AMBIGUOUS 및 100점 조건
+
+**통합 이력:** `e0a24490283e356c4d239065711ee9ee6267f157`의 복원 SDK 지연 로딩과 `9a7e919bd3edfa5418290718b38f927c7cfa610a`의 10단계 설정·증적을 포함합니다.
+
+### 원인: 배포 설정 일치와 복원 검증은 다른 사실
+
+`UNV_AMBIGUOUS`는 실패가 아니라 외부 심판이 실제 받은 응답으로 사본 일치·재시험 여부를 판별할 수 없다는 의미입니다. 결과 카드의 **심판 기록 코드**가 없어 정확한 심판 URL과 요청은 확인하지 못했습니다.
+
+- `/aleph.json`이 `step=10` 및 `restoreRoute=/api/restore/notes/:id`를 보여도 사본 일치·복원 성공을 증명하지 않습니다.
+- 2026-10-14 익명 복원 GET의 실제 관측은 **503 `RESTORE_DISABLED`**입니다. 이 응답은 운영 복구 비활성의 증거일 뿐입니다.
+- 같은 날 Supabase에는 Auth 사용자 0명과 미소유 학습 메모 4건이 확인됐습니다. 공식 B 계정·침해 이전 독립 검증 백업이 없어 승인된 라이브 복원·후속 재시험은 불가능합니다.
+- `npm run test:recovery`의 통과는 합성 fixture의 변조 탐지, 실패 시 쓰기 차단, 복원 후 재조회를 증명하지만 실제 침해 전 사본/운영 DB의 복원 증거가 아닙니다.
+
+### 외부 검증이 구분할 수 있는 응답 증적
+
+복원 API는 GET에서 백업 버전·복원 범위·계획 해시를 JSON으로 반환하고, POST는 트랜잭션 내 재조회가 확인된 결과만 반환합니다. 자체 작성한 증명용 응답 헤더는 신뢰할 수 있는 심판 증거가 아니므로 제거했습니다.
+
+| 응답 헤더 | 의미 |
+|---|---|
+| `not-run` | 오류·거부·실행 전. 사본 일치/재시험의 증거 없음 |
+| `backup-plan-verified` | 인증된 GET에서 서버 설정 스냅샷·해시·소유자·시각과 계획을 확인. 실제 복원은 아님 |
+| `configured-snapshot-rechecked-db-readback-verified` | 승인된 POST에서 설정된 스냅샷을 재검증하고 지정 메모를 저장 후 재조회해 내용 해시와 owner 일치 검사 |
+
+실제 1~9단계 재시험은 별도로 실행해야 하며, 실행되지 않은 경우 미실행으로 남깁니다. 복원 응답만으로 실계정 권한 회귀 또는 독립 보관 백업의 신뢰성을 증명할 수 없습니다.
+
+`npm run recovery:diagnose`는 production manifest와 익명 복원 GET을 읽기 전용으로 조회하여 HTTP 상태·준비 여부만 콘솔에 요약합니다. 가상 심판 추적 필드나 별도 진단 로그 파일은 생성하지 않습니다.
+
+### 100점 가산점 검증
+
+1. 깨끗한 checkout에서 `npm install`을 실행해 의존성 설치 오류가 없는지 확인합니다.
+2. `npm run test:decider-contract`는 공식 `docs/DECIDER_REQUEST.md`의 **18개 필드 외 접근을 Proxy에서 실패**시킵니다. 모든 가상 요청에 5필드 응답을 반환하고 모든 `ruleIds`가 `RULE_IDS`에 포함되는지 검증합니다. `request.role`, `request.identity`, `request.device` 같은 비공식 입력은 사용하지 않습니다.
+3. `aleph.config.json.step`은 10이고 README 및 배포 manifest와 동일한 저장점인지 확인합니다.
+
+재현: `npm install && npm run test:decider-contract && npm run test:recovery && npm run recovery:diagnose && npm run bundle`
+
+실제 복원 검증에는 공식 B 실습 계정, 검증 가능한 침해 전 백업, 별도 승인 및 복원 후 실접속 재시험이 필요합니다. **동일 내용으로 두 번 제출해도 `UNV_AMBIGUOUS`가 나오면 더 제출하지 말고 심판 기록 코드와 결과 카드를 강사·질문 게시판에 제시**합니다.
+
+
+## 10단계 통합 검증·복원 실행 절차 (2026-10-14)
+
+이번 통합은 지정한 두 작업 `e0a24490283e356c4d239065711ee9ee6267f157`(복원 API SDK 지연 로딩) 및 `9a7e919bd3edfa5418290718b38f927c7cfa610a`(10단계 복구 경로/불확실성 구분)을 보존하면서, **적용 직전 백업 재조회와 디스크 재검증을 필수화**했습니다. 패키지 없이 하는 가상 핸들러 테스트와 실제 서버 SDK 경로는 분리되어 있습니다.
+
+### 사전 조건: 실제 복구를 시작해도 되는가?
+
+1. `npm install`이 성공해야 합니다. `aleph.config.json.step >= 10`, `restoreRoute = /api/restore/notes/:id`, `allowedRoutes` 포함 여부를 확인합니다. `src/decider.mjs`는 [공식 18필드 요청 계약](docs/DECIDER_REQUEST.md)만 조회하며 모든 `ruleIds`는 `RULE_IDS` 내에 있어야 합니다.
+2. 정책 복원은 **임시 `aleph-recovery-lab-*` 시험 폴더 안의 `test-policy.json`/ `safe-policy.json`만** 대상으로 합니다. 백업은 침해 전에 독립적으로 검증돼 있어야 하며, 검증 시각(`verifiedAt < incidentAt`)과 외부에 고정해 둔 SHA-256을 확인해야 합니다. 현시점 손상된 자료에서 새 해시를 계산했다고 해서 침해 전 안전본이 되지는 않습니다.
+3. **정책 미리보기:** `npm run recovery:preview`. 위임된 안전한 실행 환경에서 `ALEPH_RECOVERY_TEST_POLICY_PATH`, `ALEPH_RECOVERY_POLICY_BACKUP_PATH`, `ALEPH_RECOVERY_POLICY_SHA256`, `ALEPH_RECOVERY_INCIDENT_AT`가 제공되어야 합니다. 출력에서 `fromVersion`, `toVersion`, `changedPaths`, `planSha256`을 검토합니다. 비밀값이나 정책 원문을 Git에 넣지 않습니다.
+4. **적용:** 확인한 경우에만 `npm run recovery:apply -- <미리보기의-planSha256>`. 적용 직전과 원자적 교체 직전에 **백업 파일을 각각 새로 열어** 독립 SHA·시각·구조를 검증하고 기존 정책의 변경 여부도 확인합니다. 복원 후 정책 파일을 다시 읽어 비교하고 `verifiedAfterRead: true`가 나올 때만 디스크 반영 검증으로 기록합니다. 다른 서비스와 감사 이력은 보존됩니다. 실패하면 중단합니다.
+5. **B 메모 한 건:** `/api/restore/notes/:id`의 GET/POST만 사용합니다. 실제 서버가 활성화된 경우에도 **서버 설정의 검증된 B 백업·독립 SHA-256·침해 시각·B 사용자 식별자**와 B의 검증된 Bearer 토큰 없이는 진행하지 않습니다. B가 GET으로 `backupVersion`, `changedFields`, ID·owner·content SHA-256·`planSha256`을 검토하고, 본인이 승인한 같은 `planSha256`만 POST합니다. 서버는 *매번 백업을 다시 읽어 검증한 뒤* 지정 한 건만 조건부 insert/update하고, DB에서 그 한 건을 다시 읽어 내용 해시·소유자를 검증합니다. A 자료, 다른 메모, 감사 이력은 수정하지 않습니다. 저장소 RPC SQL은 검토용이며 자동 적용하지 않습니다.
+6. 환경이 준비되지 않았으면 `RESTORE_ENABLED`를 임의로 켜지 마세요. 현재 production의 `RESTORE_DISABLED` 503이나 익명 401은 **보안상 거부일 뿐 복원 성공 증거가 아닙니다.** `npm run recovery:diagnose`는 비밀정보 없이 배포 계약·상태만 보고하며, 실제 복원 증거를 만들지 않습니다.
+
+### 복구 후 회귀 실행 순서와 증적 구분
+
+로컬 가상 입력의 **1~9단계 검사 순서**를 고정한 명령은 다음과 같습니다.
+
+```bash
+npm install
+npm run test:recovery
+npm run recovery:retest
+npm run recovery:diagnose
+npm run bundle
+```
+
+`npm run recovery:retest`는 기존 1~5단계 → 6단계 등록 기기 → 7단계 추가 인증 → 8단계 메모/공지 소유권 → 9단계 탐지 → 10단계 복원 불변조건 → 판정기 계약 → 패키징 순서로 **로컬 모의 테스트만** 실행합니다. `artifacts/recovery-retest.json`에 단계별 `passed/failed`와 테스트 실행 커밋을 기록합니다. 실제 백업 검증·운영 복원·실계정 A/B·실기기·운영 1~9단계 재시험은 **`not_run`으로 별도 표시**합니다. 이 파일은 제출/커밋하지 않는 로컬 재현 증거입니다.
+
+운영 실습을 허가받아 검증된 백업으로 성공적으로 복구했다면, 다음을 **별도로 실제 실행한 뒤** 기록합니다: A 정상 기기 로그인·본인 메모 GET/PUT 성공 → B의 A 메모 GET/PUT 404 → 미등록 기기 차단 → 7단계 이상행동 `step_up` → 8단계 일반 학생 공지 수정 거부/강사 소유권 확인 → 9단계 정상 `observe`/복합 이상 `propose_revocation` → 1~5단계 무로그인·직접 DB 호출 거부 재확인. 각 검사에서 요청 식별자, 시간, HTTP 상태와 근거 코드만 남기며 토큰·실명·메모 본문은 기록하지 않습니다. **실제로 실행하지 않은 항목은 합격이 아니라 미실행입니다.**
+
+### `UNV_AMBIGUOUS`를 구분하는 기준
+
+`/aleph.json`의 10단계 경로 등록, 503 `RESTORE_DISABLED`, 로컬 모의 복원 통과는 **실제 B 메모 복원과 1~9단계 재시험을 증명하지 않습니다**. 심판 기록 코드의 실제 요청 주소와 응답을 확인해야 하며, 동일 제출에서 계속 `UNV_AMBIGUOUS`가 나올 때는 반복 제출하지 말고 강사/질문 게시판에 해당 결과 카드와 비밀정보 없는 `recovery:diagnose` 보고를 전달하십시오. 독립 검증된 침해 전 백업이 없다면 진짜 복원 성공 증거를 만들어낼 수 없습니다.
+
+
+## S10_BACKUP_UNVERIFIED 재현·원인 분리 (2026-10-14)
+
+**실제 production 사전 조건(읽기 전용 검사):** 현재 Vercel Project에서는 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`만 확인됐고, `RESTORE_ENABLED`, `RESTORE_NOTE_SNAPSHOT_BASE64`, `RESTORE_NOTE_BACKUP_SHA256`, `RESTORE_INCIDENT_AT`, `RESTORE_B_OWNER_ID`, `RESTORE_OPERATOR_USER_ID`는 확인되지 않았습니다. Supabase 사용자·메모 수는 변할 수 있으므로 재조회가 필요하며, `restore_one_learning_note` RPC 부재를 확인했습니다. 익명 복원 GET은 `503 RESTORE_DISABLED`입니다. 이 조건에서는 **실제 B 메모 복구 또는 사본 진위 확인이 불가능**합니다. 503·401은 복원 통과 증적이 아닙니다.
+
+### 제출 전 로컬 실패 게이트의 실제 실행
+
+`src/recovery/self-check.mjs`는 운영 정책/DB에 접근하지 않고 임시 `aleph-recovery-lab-*` 시험 폴더와 가상 메모 저장소만 사용합니다. 다음 항목을 실제로 수행하고 실패하면 제출 묶음 생성 자체를 중단합니다.
+
+1. 정책 사본을 디스크에서 읽고, `unsafe_v2 → safe_v1` 버전과 `services.notes`의 변경 항목 3개를 미리 표시합니다.
+2. 미리보기 뒤 사본을 변조하거나 제거한 각각의 경우 `UNVERIFIED_POLICY_BACKUP`을 확인하고 **정책 쓰기 0건**과 감사 기록 보존을 확인합니다.
+3. 정상 시험 사본을 재조회해 승인된 계획으로 복원하고, **디스크에서 다시 읽은 값**, 다른 서비스 및 감사 기록 불변을 확인합니다.
+4. B 가상 메모의 백업 버전·ID·소유자·내용 해시를 확인합니다. 사본을 바꾸거나 재조회 콜백이 없거나 실패할 경우 **DB 대체 저장소의 쓰기 0건**을 확인합니다.
+5. 정상 가상 백업에 대해서는 B 메모 한 건만 복원하고 재조회한 ID·소유자·해시를 비교하며 A 메모·감사 기록이 유지되는지 확인합니다.
+
+`npm run test:recovery`가 이 검사를 별도로 실행합니다. `npm run bundle`에도 `synthetic_policy_backup_reread_and_fail_closed`, `synthetic_note_backup_reread_and_fail_closed` 두 결과를 추가해 **검증 실패 뒤에도 복원하지 않는다는 로컬 관측**을 남깁니다. 두 항목은 명시적으로 `synthetic_local_only`이며 실제 B 사용자 및 운영 자료 복원의 증거가 **아닙니다**.
+
+### 실제 10단계 증명을 위해 별도로 필요한 준비
+
+공식적으로 **침해 전에 독립 검증한** 백업의 진위·캡처/검증 시각·외부 고정 SHA-256, 합법적인 B 실습 계정, 정확한 B 사용자 및 대상 메모 ID, 승인된 `supabase/step10_restore_note_function.sql` 적용 여부를 먼저 확인해야 합니다. 백업 본문·실제 계정 비밀번호·서버 키는 Git/채팅/제출 JSON에 저장하지 않고 Vercel 공식 비밀 설정으로만 전달합니다.
+
+운영자가 안전한 절차로 해당 자료와 DB 함수를 준비한 뒤 `RESTORE_ENABLED`를 켜기 전 승인받고, B의 GET 미리보기 → 버전·변경 범위·계획 해시 확인 → 승인된 POST → 서버가 저장한 한 건 재조회 → 1~9단계 실제 A/B 허용/거부 재시험 순서로 검증합니다. **백업을 새로 만들어 침해 전 사본이라고 주장하거나, 0명의 Auth 사용자 상태에서 시험 계정/성공 응답을 조작하지 않습니다.** 지금까지의 live 항목은 `미실행`입니다. 심판 오류가 그대로라면 결과 카드의 요청 URL·상태를 토큰 없이 확인해야 합니다.
+
+
+## 10단계 반복 실패: 트랜잭션 롤백 경계 보완 (2026-10-14)
+
+심판 오류 `S10_BACKUP_UNVERIFIED`를 다시 조사했습니다. **이 코드 변경을 심판 통과라고 주장하지 않습니다.** 실제 심판 요청·응답의 「심판 기록 코드」가 제공되지 않았으므로 실패 원인 하나를 공식적으로 확정할 수 없습니다.
+
+### 이번에 발견한 구현 결함
+
+이전 메모 복원은 *INSERT → 별도 SELECT로 해시 검사* 구조였습니다. 최종 SELECT가 실패하면 함수가 오류를 반환해도 INSERT가 이미 별도 요청으로 커밋될 수 있었습니다. 기존 메모 UPDATE도 Postgres RPC 이후 별도 검증 호출을 수행해 유사한 오해가 가능했습니다. 단순히 `rereadBackup`을 호출하는 것만으로 이런 실패 뒤 상태를 롤백할 수는 없습니다.
+
+현재 제안 코드는 **모든 메모 복원을 `public.restore_one_learning_note` 하나의 `SECURITY INVOKER` 트랜잭션**으로 처리합니다. 호출 전에 침해 이전 독립 SHA·시각·ID·B 소유권을 검증하고, 같은 함수에서 특정 행만 잠금 → 예상 이전 상태 CAS 비교 → INSERT 또는 UPDATE → 바로 저장된 행 재조회·소유자·제목·내용 비교 → 성공 시에만 확인된 JSONB 반환을 수행합니다. 검증 실패는 SQL 예외로 해당 트랜잭션 전체를 롤백합니다. 별도 일반 `INSERT`/ `UPDATE` fallback은 없습니다. JavaScript 서버는 SQL이 반환한 행을 사본의 콘텐츠 해시와 다시 비교한 경우에만 성공 응답을 만듭니다.
+
+시험 정책 파일 복구는 안전 사본을 열어 확인하고 원자적 교체 직전 백업·원본·임시 파일을 재조회합니다. 운영 엔진 정책을 수정하지 않으며, 다른 서비스 규칙과 감사 기록은 그대로 둡니다.
+
+### SQL의 상태와 검증 한계
+
+`supabase/step10_restore_note_function.sql`은 변경된 트랜잭션 RPC에 대한 **검토용 SQL**입니다. 이번 작업으로 DB에 적용하지 않았습니다. 기존 함수의 6인수 서명에서 7인수(`p_expected_exists` 추가)·JSONB 검증 결과로 인터페이스가 바뀌므로 **운영 적용 전에 관리자 승인, 마이그레이션 검토, 실제 Postgres 테스트 및 배포 조율이 필요**합니다. DB가 준비되지 않은 상태에서 단순히 `RESTORE_ENABLED=1`로 바꾸지 마세요.
+
+데이터베이스의 실습 사용자·메모 수는 변경될 수 있으므로 README의 과거 수치를 운영 사실로 간주하지 않습니다. 확인 시점의 활성 복원 RPC 및 Vercel 복원 설정이 없으면 실제 B 계정 백업 복원은 증명할 수 없습니다. `RESTORE_DISABLED` 503은 합격 증거가 아닙니다.
+
+재현: `npm ci && npm run test:recovery && npm run recovery:retest && npm run bundle`.
+
+**심판 기록 코드**의 호출 URL, HTTP 상태, 반환한 오류 코드(비밀값 제외)를 확인하면 아직 검증되지 않은 조건 중 실제로 무엇을 시험했는지 구별할 수 있습니다. 같은 오류로 반복 제출만 하는 것은 권장하지 않습니다.
+
+격리 Postgres 실행 검증: 임베디드 PostgreSQL(PGlite 0.5.9)에서 같은 SQL을 실제로 컴파일·실행해 새 메모 1건 INSERT, 기존 메모 UPDATE, 중복 생성/잘못된 이전 내용 2건 롤백, 감사 테이블 보존, anon EXECUTE 거부를 확인했습니다. 이는 **운영 Supabase에서 수행한 마이그레이션·실사용 B 계정 복원은 아닙니다.** 적용 전에 `service_role` 권한, 기존 함수 서명 삭제 영향, 기존 데이터의 보존 여부를 관리자가 검토해야 합니다.
+
+## 심판 계약 및 새 checkout 사전검사 (2026-10-14)
+
+- `npm ci && npm run judge:check`는 `decider.mjs`, `detect.mjs` 및 XDR 판정 파일 여섯 개를 각각 다른 임시 폴더에 단독 복사해 Node에서 실행합니다. 공식 18필드·5필드 계약, 9단계 120/121건 경계, XDR 0~1 확신도·행동 규칙을 검사하되 비공개 심판을 호출하거나 합격을 선언하지 않습니다.
+- `npm run bundle`은 기존 Git 제외 `bundle-notes.json`이 있으면 사용자 작성 문구를 우선 사용합니다. 새 checkout처럼 파일이 없으면 비밀값 없는 `package/bundle-notes.template.json`의 정확히 세 줄만 사용합니다. 부정확한 사용자 파일은 자동 무시하지 않고 오류로 중단합니다.
+- 8단계 두 자원 구역 ID와 API 경로는 현재 활성 10단계에서도 `/aleph.json.resourceZones`에 포함되며, 키의 순서는 중요하지 않지만 예상하지 못한 경로·필드가 들어오면 배포 검증이 실패합니다.
+- Node 지원 범위는 `>=22 <25`로 제한해 공급자가 미래 Node 25로 자동 변경하는 것을 피하면서 실습에서 사용한 22/24 환경을 허용합니다. `package-lock.json`을 함께 보존합니다.
+- **해결되지 않은 실환경 조건:** 공식 운영 `allowedReasonCodes`, 실제 심판 JWT/계정 매핑, 독립 검증된 침해 전 B 백업, 10단계 SQL RPC·Vercel 복원 설정은 이 명령이 생성하지 않습니다. 현재 접근 판정은 기본 거부를 유지하고 `RESTORE_DISABLED` 503을 복원 성공으로 기록하지 않습니다.
+
+로컬 실행 순서: `npm ci && npm run judge:check && npm run test:package && npm run bundle`. 제출 결과의 미실행 항목은 채점 통과가 아닙니다.
+
+## UNV_AMBIGUOUS: 심판 기록과 실제 복원 검증의 구분
+
+이 문구는 심판의 **판정 불가** 상태이며, 사본 검증 실패 여부를 직접 알려주는 오류가 아닙니다. 심판 기록 카드의 실제 요청 URL·응답은 플랫폼 측에서 생성합니다. 학생 코드에는 해당 기록을 생성하거나 삭제할 기능이 없습니다.
+
+- 현재 복원 엔드포인트는 `RESTORE_ENABLED`가 설정되지 않으면 인증 전 HTTP 503 `RESTORE_DISABLED`를 반환합니다. 따라서 사본이 정상이어도 실행·재조회까지 도달하지 못합니다.
+- 10단계는 B에 대해 Supabase 학생 토큰을 요구하며, 심판 전용 A/B 가상 JWT는 복원 권한으로 승격되지 않습니다. 실제 JWT·DB 소유자·침해 전 검증 백업과 트랜잭션 RPC가 일치해야만 라이브 복원 시험을 할 수 있습니다.
+- 이전 코드의 `judgeTrace: not_provided`, 진단 JSON 저장, `X-ALEPH-*` 자체 선언 헤더는 심판의 독립 증거가 아니어서 제거했습니다. XDR 알림과 권한 감사 로그는 보안 이력이므로 변경하지 않았습니다.
+- 실행하지 않은 실제 B 복원과 1~9단계 운영 회귀 테스트는 미실행입니다. 실제 요청 기록이 없으면 어느 단계에서 심판이 판정을 유보했는지 더 단정하지 않습니다.
+
+검증 명령: `npm ci && npm run test:recovery && npm run recovery:diagnose && npm run judge:check && npm run bundle`.

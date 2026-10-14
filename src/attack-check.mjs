@@ -136,6 +136,8 @@ export async function runAttackChecks(config) {
   if (config.step === 10) {
     const { previewPolicyRestore, hash } = await import('./recovery/policy.mjs');
     const { previewNoteRestore, sha256, contentSha256 } = await import('./recovery/note.mjs');
+    const { verifySyntheticStage10Recovery } = await import('./recovery/self-check.mjs');
+    const localRecoveryProof = await verifySyntheticStage10Recovery();
 
     // Pure synthetic fixtures only. These are not pre-incident operator
     // backups and never touch production data or operating policy.
@@ -199,8 +201,21 @@ export async function runAttackChecks(config) {
         headers: { Accept: 'application/json' } },
     );
     const restoreBody = await safeJson(restoreResponse);
+    // A disabled restore service is not proof that a verified backup was
+    // restored. Keep observable deployment readiness separate from security.
+    const restoreError = typeof restoreBody?.error === 'string'
+      ? restoreBody.error : null;
+    const restoreNoData = !restoreBody?.title && !restoreBody?.body;
     const restoreBlocked = [401, 403, 503].includes(restoreResponse.status)
-      && !restoreBody?.title && !restoreBody?.body;
+      && restoreNoData;
+    const restoreObserved = !restoreBlocked
+      ? '복원 경로 거부/응답 검증 실패 (HTTP ' + restoreResponse.status + ')'
+      : restoreResponse.status === 503 && restoreError === 'RESTORE_DISABLED'
+        ? 'HTTP 503 RESTORE_DISABLED: 복구 비활성; 사본 일치·재시험 미검증'
+        : restoreResponse.status === 503 && restoreError === 'VERIFIED_BACKUP_NOT_CONFIGURED'
+          ? 'HTTP 503 VERIFIED_BACKUP_NOT_CONFIGURED: 검증 사본 없음; 재시험 미검증'
+          : 'HTTP ' + restoreResponse.status + ' ' + (restoreError || 'DENIED')
+            + ': 자료 없이 거부; 사본 일치·재시험은 별도 확인 필요';
 
     return [
       { attackId: 'synthetic_safe_policy_preview',
@@ -229,11 +244,8 @@ export async function runAttackChecks(config) {
         observed: notesDenied ? '무로그인 /api/notes HTTP 401, 자료 없음'
           : '무로그인 메모 거부 검증 실패 (HTTP ' + notesResponse.status + ')' },
       { attackId: 'recovery_default_fail_closed',
-        expected: '검증된 백업과 로그인 없이는 복구 경로 거부',
-        observed: restoreBlocked
-          ? '복구 미인증·미설정 요청 HTTP ' + restoreResponse.status
-            + ' (자료 본문 없음)'
-          : '복구 경로 거부 검증 실패 (HTTP ' + restoreResponse.status + ')' },
+        expected: '무인증 복구 거부와 복구 준비/미검증 상태를 별도 구분',
+        observed: restoreObserved },
       { attackId: 'live_policy_restore_unverified',
         expected: '검증된 침해 전 운영 정책 사본의 실복원 검증',
         observed: '미실행: 침해 전 독립 검증된 운영 정책 사본 없음' },
@@ -243,6 +255,22 @@ export async function runAttackChecks(config) {
       { attackId: 'one_to_nine_live_regressions_unverified',
         expected: '1~9단계 실제 A/B 정상·금지 요청 회귀 실행',
         observed: '미실행: 실제 A/B 계정·엔진 접속 및 복구 완료 환경 부재' },
+      { attackId: 'synthetic_policy_backup_reread_and_fail_closed',
+        expected: '임시 정책 사본 재조회·변조/분실 시 중단·복원 후 재확인',
+        observed: localRecoveryProof.policyTamperStoppedBeforeWrite
+          && localRecoveryProof.policyMissingBackupStoppedBeforeWrite
+          && localRecoveryProof.policyRestoreReadbackVerified
+          && localRecoveryProof.unchangedServiceAndAuditPreserved
+          ? '로컬 합성 정책: 재조회 후 변조·분실 쓰기 차단, 복원 재조회·감사 보존 (실백업 미검증)'
+          : '로컬 정책 사본 재검증 실패' },
+      { attackId: 'synthetic_note_backup_reread_and_fail_closed',
+        expected: '임시 B 사본 재조회·변조/분실 시 쓰기 차단·지정 1건만 복원',
+        observed: localRecoveryProof.noteTamperStoppedBeforeWrite
+          && localRecoveryProof.noteMissingBackupStoppedBeforeWrite
+          && localRecoveryProof.noteRestoreReadbackVerified
+          && localRecoveryProof.otherNotesPreserved
+          ? '로컬 합성 B 메모: 사본 변조·분실 시 0건 쓰기, 1건 재조회·타 메모 보존 (실DB 미실행)'
+          : '로컬 B 사본 재검증 실패' },
     ];
   }
 

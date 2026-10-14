@@ -1,13 +1,15 @@
 # 검문소·탐지 규칙
 
-실제로 구현한 규칙만 아래 표에 추가하세요. 규칙 이름, 단계, 어떤 요청을 막는지, 확인한 방법을 함께 적으세요.
+공식 SDP 입력 계약(`docs/DECIDER_REQUEST.md`)에서 확인한 조건만 판정합니다. 엔진이 제공하지 않는 사용자 소유자·강사 역할을 학생 코드가 추측하지 않습니다.
 
-| 규칙 | 단계 | 막는 공격 | 확인 방법 |
-|---|---|---|---|
-| `device_registered` | 6 | 미등록·확인되지 않은 기기의 보호된 읽기 접근 거부 | `npm run decider:test` + 6단계 로컬 회귀 테스트 |
+| 규칙 | 단계 | 막는 공격·제약 | 확인 방법 |
+|---|---:|---|---|
+| `device_registered` | 6 | 등록·사용자 결합이 확인되지 않은 기기의 보호된 요청 거부 | `npm run decider:test` |
+| `step_up_required` | 7 | 가상 사건에서 낯선 네트워크·비정상 시간·최근 위험 신호가 결합되면 추가 확인 | `npm run fixture:7` |
+| `memo_zone` | 8 | 허용된 개별 메모 GET/PUT 경로 이외 거부; 저장된 소유권은 메모 API에서 재검사 | `npm run test:zone` |
+| `announcement_read` | 8 | 허용된 공지 GET 경로 이외 거부; 조회 권한·객체 존재는 API에서 확인 | `npm run test:zone` |
+| `announcement_instructor_write` | 8 | 공식 SDP v1 요청에 검증된 강사 역할이 없으므로 공지 변경은 기본 거부 | `npm run test:zone` |
 
-| `step_up_required` | 7 | 엔진이 제공한 가상 비정상 시간·낯선 네트워크·최근 대량 위험 사건이 함께 있을 때 추가 확인 | `npm run fixture:7` 및 `node --test test/decider-stage7.test.mjs` (가상 사건) |
+**별도 9단계 탐지 함수:** `detect(events)`는 `burst_read`를 제안할 수 있지만 실제 회수를 집행하지 않습니다. `burst_read`는 `RULE_IDS`에 넣는 SDP 규칙이 아니라 별도 탐지 결과입니다.
 
-| `burst_read` (별도 `detect(events)`) | 9 | 엔진 가상 사건에서 동일 가명 사용자 GET이 10분 내 120건을 초과하면 회수 제안(집행 없음) | `npm run detect:test` 및 `node --test test/detect-stage9.test.mjs` |
-
-브라우저에서 버튼을 숨기는 것만으로 서버 접근이 차단됐다고 적지 마세요.
+브라우저에서 버튼을 숨기는 것만으로 서버 접근이 차단됐다고 적지 마세요. 공식 엔진의 `allowedReasonCodes` 등록부는 이 저장소에 없으므로 실제 코드 목록의 일치 여부는 별도 확인이 필요합니다.

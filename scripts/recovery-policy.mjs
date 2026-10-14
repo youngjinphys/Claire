@@ -16,6 +16,7 @@ if (!['preview', 'apply'].includes(action) || (action === 'apply' && !planSha256
     });
     process.stdout.write(JSON.stringify({
       applied: result.applied,
+      verifiedAfterRead: result.verifiedAfterRead === true,
       serviceId: result.preview.serviceId,
       fromVersion: result.preview.currentVersion,
       toVersion: result.preview.restoreVersion,

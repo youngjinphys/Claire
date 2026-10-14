@@ -67,19 +67,26 @@ export function validateRestoreRoute(config) {
 export { NOTE_ROUTES };
 
 export function validateResourceZones(config) {
-  if (config?.step !== 8) return null;
-  const zones=config.resourceZones;
+  if ((config?.step ?? 0) < 8) return null;
+  const zones = config?.resourceZones;
+  const expected = {
+    memo: { resourceIdPrefix:'memo:', enginePath:'/notes/:id', apiPath:'/api/notes/:id' },
+    instructorAnnouncement: {
+      resourceIdPrefix:'announcement:', enginePath:'/announcements/:id',
+      apiPath:'/api/announcements/:id',
+    },
+  };
+  const sameFields = (actual, want) => actual !== null && typeof actual === 'object'
+    && !Array.isArray(actual)
+    && Object.keys(actual).sort().join(',') === Object.keys(want).sort().join(',')
+    && Object.keys(want).every(key => actual[key] === want[key]);
   if (!zones || typeof zones !== 'object' || Array.isArray(zones)
       || Object.keys(zones).sort().join(',') !== 'instructorAnnouncement,memo'
+      || !sameFields(zones.memo, expected.memo)
+      || !sameFields(zones.instructorAnnouncement, expected.instructorAnnouncement)
+      || !Array.isArray(config.allowedRoutes)
+      || !config.allowedRoutes.includes('/api/notes/:id')
       || !config.allowedRoutes.includes('/api/announcements/:id')) {
-    throw new TypeError('invalid_resource_zones');
-  }
-  const expected = {
-    memo:{resourceIdPrefix:'memo:',enginePath:'/notes/:id',apiPath:'/api/notes/:id'},
-    instructorAnnouncement:{resourceIdPrefix:'announcement:',enginePath:'/announcements/:id',apiPath:'/api/announcements/:id'},
-  };
-  if (JSON.stringify(zones.memo) !== JSON.stringify(expected.memo)
-      || JSON.stringify(zones.instructorAnnouncement) !== JSON.stringify(expected.instructorAnnouncement)) {
     throw new TypeError('invalid_resource_zones');
   }
   return structuredClone(expected);
