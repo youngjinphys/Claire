@@ -39,7 +39,7 @@ test('resource zone configuration persists and stays validated in stages 8-10',(
     VERCEL_GIT_COMMIT_SHA:'a'.repeat(40),
     VERCEL_URL:'student-defense-123.vercel.app',
   };
-  for(const step of [8,9,10]){
+  for(const step of [8,9,10,12]){
     const cfg={...config,step};
     const result=deploymentIdentity(env,cfg);
     assert.deepEqual(result.resourceZones,config.resourceZones);
@@ -69,7 +69,7 @@ test('all implemented SDP RULE_IDS have corresponding policy documentation',asyn
 test('isolated judge-compatible module execution produces contract-compliant results',()=>{
   const report=judgeContractCheck();
   assert.equal(report.contract,'public_training_contract_only');
-  assert.equal(report.stage,10);
+  assert.equal(report.stage,12);
   assert.equal(report.deciderCases,7);
   assert.equal(report.detectionCases,2);
   assert.deepEqual(Object.keys(report.xdrCounts).sort(),

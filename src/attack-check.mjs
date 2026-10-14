@@ -133,7 +133,7 @@ export async function runAttackChecks(config) {
     ];
   }
 
-  if (config.step === 10) {
+  if (config.step === 10 || config.step === 12) {
     const { previewPolicyRestore, hash } = await import('./recovery/policy.mjs');
     const { previewNoteRestore, sha256, contentSha256 } = await import('./recovery/note.mjs');
     const { verifySyntheticStage10Recovery } = await import('./recovery/self-check.mjs');
@@ -179,7 +179,7 @@ export async function runAttackChecks(config) {
       redirect: 'error', signal: AbortSignal.timeout(10000),
     });
     const identity = identityResponse.ok ? await safeJson(identityResponse) : null;
-    const manifestOk = identity?.step === 10
+    const manifestOk = identity?.step === config.step
       && identity.restoreRoute === config.restoreRoute
       && identity.originalApiUrl === config.originalApiUrl
       && Array.isArray(identity.allowedRoutes)
@@ -217,7 +217,31 @@ export async function runAttackChecks(config) {
           : 'HTTP ' + restoreResponse.status + ' ' + (restoreError || 'DENIED')
             + ': 자료 없이 거부; 사본 일치·재시험은 별도 확인 필요';
 
+    let operationsObserved = '미실행: 현재 배포에서 12단계 작전실 API를 확인하지 못함';
+    if (config.step === 12) {
+      try {
+        const opsResponse = await fetch(new URL('/api/ops', app), {
+          redirect: 'error', signal: AbortSignal.timeout(10000),
+          headers: { Accept: 'application/json' },
+        });
+        const opsBody = opsResponse.ok ? await safeJson(opsResponse) : null;
+        if (opsBody?.schema === 'aleph.operations.snapshot.v1'
+            && opsBody.verdict?.complete === false
+            && opsBody.verdict?.attackTypesVerified === 0
+            && Array.isArray(opsBody.records)
+            && opsBody.records.every(r => !Object.hasOwn(r,'body'))) {
+          operationsObserved = '배포 작전실 API HTTP ' + opsResponse.status
+            + ': 실제 요청 기록만 표시, 공식 41종 미검증';
+        } else {
+          operationsObserved = '미검증: 작전실 API 응답/계약 불일치 (HTTP ' + opsResponse.status + ')';
+        }
+      } catch { operationsObserved = '미검증: 작전실 API 접속 실패'; }
+    }
+
     return [
+      ...(config.step === 12 ? [{ attackId: 'stage12_operations_snapshot',
+        expected: '실제 응답과 미실행을 분리하며 41종 공격의 공식 통과를 임의 표시하지 않음',
+        observed: operationsObserved }] : []),
       { attackId: 'synthetic_safe_policy_preview',
         expected: '안전 정책 버전·변경 범위를 실행 전 표시',
         observed: policyPlan.restoreVersion === 'safe_v1'
@@ -232,7 +256,7 @@ export async function runAttackChecks(config) {
           : '로컬 가상 메모 해시 비교 실패' },
       { attackId: 'deployed_restore_route',
         expected: '배포 manifest와 복구 경로 일치',
-        observed: manifestOk ? 'production step=10 및 restoreRoute 일치'
+        observed: manifestOk ? 'production step=' + config.step + ' 및 restoreRoute 일치'
           : '배포 복구 설정 불일치 (HTTP ' + identityResponse.status + ')' },
       { attackId: 'existing_browser_ui',
         expected: '기존 자료실 첫 화면 응답',

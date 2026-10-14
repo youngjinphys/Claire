@@ -20,7 +20,8 @@
     "recovery:diagnose": "node scripts/recovery-diagnose.mjs",
     "test:decider-contract": "node --test test/decider-contract-stage10.test.mjs",
     "recovery:retest": "node scripts/recovery-retest.mjs",
-    "judge:check": "node scripts/judge-contract-check.mjs"
+    "judge:check": "node scripts/judge-contract-check.mjs",
+    "test:operations": "node --test test/operations-stage12.test.mjs"
   },
   "engines": {
     "node": ">=22 <25"

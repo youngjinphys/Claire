@@ -7,6 +7,7 @@
     "api/announcements.js",
     "api/auth.js",
     "api/notes.js",
+    "api/ops.js",
     "api/restore-note.js",
     "api/threat-intel.js"
   ]
