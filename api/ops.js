@@ -72,6 +72,7 @@ export function createOperationsHandler({ fetchImpl = globalThis.fetch, env = pr
       try {
         const headers = {Accept:'application/json'};
         if (probe.id === 'authenticated_notes') headers.Authorization = authorization;
+        if (probe.id === 'authenticated_notes' && typeof req.headers?.['x-aleph-device-proof'] === 'string') headers['x-aleph-device-proof'] = req.headers['x-aleph-device-proof'];
         response = await fetchImpl(new URL(probe.path, origin), {
           method:'GET', redirect:'error', cache:'no-store',
           headers, signal:AbortSignal.timeout(6500),

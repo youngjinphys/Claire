@@ -249,6 +249,7 @@ test('서버 복원 GET/POST는 인증된 B의 확인 계획으로 지정 1건�
   };
   const handler=createRestoreHandler({
     env:environment,supabaseFactory:()=>fakeDB,
+    deviceGrantVerifier:async()=>true,
     verifierFactory:()=>async auth=>{
       if(auth==='Bearer example-b')return {kind:'student',userId:B};
       if(auth==='Bearer example-a')return {kind:'student',userId:A};
@@ -544,7 +545,7 @@ test('복원 단계별 지역 보고서는 실기기/실계정 증거로 오인�
   const { TEST_ORDER,sanitizeExitStatus } =
     await import('../scripts/recovery-retest.mjs');
   assert.deepEqual(TEST_ORDER.map(x=>x.stage),
-    ['1-5','6','7','8','9','10','contract','packaging']);
+    ['1-5','6','7','8','9','10','11','contract','packaging']);
   assert.equal(sanitizeExitStatus(null), null);
   assert.equal(sanitizeExitStatus(0), 0);
   assert.equal(sanitizeExitStatus(-1), null);

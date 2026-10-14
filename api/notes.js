@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from '../src/verify-login.mjs';
 import { memoOwnerAllowed, typedResourceId } from '../src/resource-zones.mjs';
+import { verifyDeviceGrant } from '../src/device-access.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -41,7 +42,7 @@ const noteId = (request) => {
 };
 
 export function createNotesHandler({ env = process.env, supabaseFactory = createClient,
-  verifierFactory = createLoginVerifier } = {}) {
+  verifierFactory = createLoginVerifier, deviceGrantVerifier = verifyDeviceGrant } = {}) {
 let runtime;
 const getRuntime = () => {
   if (runtime) return runtime;
@@ -84,6 +85,11 @@ return async function handler(request, response) {
     response.setHeader('WWW-Authenticate', 'Bearer');
     return response.status(401).json({ error: 'UNAUTHORIZED' });
   }
+
+  if(identity.kind !== 'judge' && !(await deviceGrantVerifier({
+    db: current.supabase, identity, authorization: request.headers?.authorization,
+    headers: request.headers ?? {}
+  }))) return response.status(403).json({error:'DEVICE_NOT_VERIFIED'});
 
   const id = noteId(request);
   if (id === false) return response.status(400).json({ error: 'INVALID_NOTE_ID' });

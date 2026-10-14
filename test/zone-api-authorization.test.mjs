@@ -77,6 +77,7 @@ function configured(handlerFactory,db) {
     env:{SUPABASE_URL:'https://fake.supabase.invalid',SUPABASE_SECRET_KEY:'test-server-key'},
     supabaseFactory:()=>db,
     verifierFactory:()=>async header=>users[header]??null,
+    deviceGrantVerifier:async()=>true,
   });
 }
 async function call(handler,token,method,id,body) {

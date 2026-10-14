@@ -8,6 +8,8 @@ const output = resolve(root, 'public', 'data.json');
 const config = JSON.parse(await readFile(resolve(root, 'aleph.config.json'), 'utf8'));
 
 await mkdir(resolve(root, 'public'), { recursive: true });
+await mkdir(resolve(root, 'public', 'vendor'), { recursive: true });
+await copyFile(resolve(root, 'node_modules', '@simplewebauthn', 'browser', 'dist','bundle','index.umd.min.js'), resolve(root, 'public', 'vendor','simplewebauthn.umd.min.js'));
 if (config.step === 1) {
   const data = JSON.parse(await readFile(source, 'utf8'));
   if (!Array.isArray(data.notes)) {

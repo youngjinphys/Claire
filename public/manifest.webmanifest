@@ -1,0 +1,26 @@
+{
+  "name": "BYTE BACK · 내 보안 자료실",
+  "short_name": "BYTE BACK",
+  "description": "ALEPH SDP 학생 자료실과 기기 승인 접속 화면",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0c1117",
+  "theme_color": "#0c1117",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

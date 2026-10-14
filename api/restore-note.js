@@ -66,7 +66,7 @@ function storeFor(db) {
 
 export function createRestoreHandler({
   env = process.env, supabaseFactory,
-  verifierFactory,
+  verifierFactory, deviceGrantVerifier,
 } = {}) {
   let runtime;
   return async function handler(req, res) {
@@ -123,6 +123,13 @@ export function createRestoreHandler({
         res.setHeader('WWW-Authenticate', 'Bearer');
         return res.status(401).json({ error: 'UNAUTHORIZED' });
       }
+      const guard = deviceGrantVerifier
+        ?? (await import('../src/device-access.mjs')).verifyDeviceGrant;
+      if(identity.kind !== 'judge' && !(await guard({
+        db: runtime.db, identity, authorization: req.headers?.authorization,
+        headers: req.headers ?? {}
+      }))) return res.status(403).json({error:'DEVICE_NOT_VERIFIED'});
+
       // Restore is a separately pinned test-user operation, not a role claim
       // sent from the browser. Judge tokens and other users cannot use it.
       if (identity.kind !== 'student'

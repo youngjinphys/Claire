@@ -15,6 +15,7 @@ export const TEST_ORDER = Object.freeze([
   {stage:'8',name:'resource and instructor-owner boundaries',command:'npm',args:['run','test:zone']},
   {stage:'9',name:'synthetic detection contract',command:'node',args:['--test','test/detect-stage9.test.mjs','test/detect-verified-device-stage9.test.mjs']},
   {stage:'10',name:'backup and restore invariants',command:'npm',args:['run','test:recovery']},
+  {stage:'11',name:'device approval and vault gate mock',command:'npm',args:['run','test:device']},
   {stage:'contract',name:'allowed request fields and response rule ids',command:'npm',args:['run','test:decider-contract']},
   {stage:'packaging',name:'starter and submission integrity',command:'npm',args:['run','test:package']},
 ]);

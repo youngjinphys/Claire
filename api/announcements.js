@@ -2,10 +2,11 @@ import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from '../src/verify-login.mjs';
 import { typedResourceId, mayEditAnnouncement } from '../src/resource-zones.mjs';
+import { verifyDeviceGrant } from '../src/device-access.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 export function createAnnouncementsHandler({ env = process.env, supabaseFactory = createClient,
-  verifierFactory = createLoginVerifier } = {}) {
+  verifierFactory = createLoginVerifier, deviceGrantVerifier = verifyDeviceGrant } = {}) {
 let backend;
 const init = () => {
   if (backend) return backend;
@@ -45,6 +46,11 @@ return async function handler(request, response) {
     response.setHeader('WWW-Authenticate', 'Bearer');
     return response.status(401).json({ error: 'UNAUTHORIZED' });
   }
+  if(identity.kind !== 'judge' && !(await deviceGrantVerifier({
+    db: current.db, identity, authorization: request.headers?.authorization,
+    headers: request.headers ?? {}
+  }))) return deny(response,403,'DEVICE_NOT_VERIFIED');
+
   const input = request.query?.id;
   const id = Array.isArray(input) ? null : input;
   if (typeof id !== 'string' || !UUID.test(id)) return response.status(400).json({ error: 'INVALID_RESOURCE_ID' });

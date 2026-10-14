@@ -180,3 +180,16 @@ textarea { min-height:95px; resize:vertical }
   html { scroll-behavior:auto }
   button,.bar-column { transition:none!important }
 }
+/* Stage 11 authentication surface: same restrained audit language as Recon Ledger */
+.install-panel {display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 16px;padding:13px 20px}
+.install-panel span {color:var(--muted);font-size:12px;line-height:1.5}
+.device-panel {margin-bottom:16px;padding:22px;border-color:#435965;background:#15222b}
+.device-heading {display:flex;justify-content:space-between;gap:18px;align-items:flex-start}
+.device-heading h3 {font-size:15px;font-weight:680;margin:0 0 8px}
+.device-heading p {font-size:12px;color:var(--quiet);line-height:1.65;margin:0}
+.device-detail {margin:16px 0;color:var(--muted);font-size:12px;line-height:1.7}
+.device-note {color:var(--quiet);font-size:11px;line-height:1.7;margin:16px 0 0}
+.device-actions {display:flex;flex-wrap:wrap;gap:9px}
+.device-actions button {min-height:39px}
+.device-panel .badge {white-space:normal;line-height:1.5}
+@media(max-width:730px){.device-heading,.install-panel{flex-direction:column;align-items:flex-start}}

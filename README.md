@@ -1,4 +1,14 @@
-# BYTE BACK 방어전 · 12단계 저장점
+# BYTE BACK 방어전 · 11단계 저장점 (기존 12단계 보존)
+
+이 저장점은 이전 `e645052adffb` (`12단계 저장점`) 이후, 과제 평가에서 누락된 11단계 **설치형 접속 화면·서버 기기 승인·보호 API**를 보완한 후속 기록입니다. 기존 12단계 작전실, `src/decider.mjs` 계약, XDR과 복구 기능을 유지하므로 `aleph.config.json.step=12`를 낮추지 않습니다. 공식 심판 통과 사실은 임의로 기록하지 않습니다.
+
+**변경 핵심:** `api/device.js`와 `src/device-access.mjs`가 WebAuthn 등록·독립 assertion·짧은 grant·DB 기기 승인 상태를 검사합니다. `/api/notes`, 공지, 활성 복구 API가 해당 기기 증명을 요구하며, 승인 전 브라우저 메모 DOM과 기존 CRUD 화면을 숨깁니다. 승인 후 서버 검증에서 발급된 증명으로 기존 메모 화면이 열립니다. PWA manifest와 설치 표시는 기기 승인과 관계없으며 기기 개인키/장기 토큰은 브라우저 저장소에 넣지 않습니다.
+
+설치·재현: `npm install && npm run test:device && npm run recovery:retest && npm run judge:check && npm run build -- --local`. 실제 물리 기기와 운영 ALEPH SDP 엔진 승인/공식 심판 검증은 별도로 필요합니다. 상세한 승인·거부 사례와 중지·복구 안내는 [11단계 보완 기록](docs/STAGE11_DEVICE.md)을 확인하세요.
+
+---
+
+## 보존된 12단계 기록
 
 **검사 기준 HEAD:** `a873b334f6fe910745859d16a2fd965ece24270b` (`Production URL added`; 변경 `package/DEMO.md`). 작업 시작 당시 `git status --porcelain`은 빈 출력이었고, `README.md`와 `aleph.config.json`은 **10단계**로 일치했습니다. 그러나 과제 전제인 *11단계 완료*에 대응하는 저장점은 이 커밋에서 확인되지 않았습니다. 아래 10단계 문서 전체를 보존했으며 11단계 통과를 새로 주장하지 않습니다. 새 저장점의 정확한 SHA는 `git log -1 --format=%H`로 확인하십시오.
 

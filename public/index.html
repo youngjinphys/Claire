@@ -7,6 +7,8 @@
   <meta name="theme-color" content="#0c1117">
   <meta name="description" content="ALEPH SDP 학생 판정, 탐지, 회수, 복구의 실측 증적을 확인하는 탈환 작전실">
   <title>탈환 작전실 — BYTE BACK</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
   <link rel="stylesheet" href="/operations.css">
 </head>
 <body>
@@ -146,6 +148,24 @@
       </div>
       <section class="vault-section" id="vault" aria-labelledby="vault-title">
         <div class="vault-top"><div><h2 class="section-title" id="vault-title">기존 학생 자료실</h2><p class="micro">보존된 인증 메모 CRUD · 작전실 기록과 논리적으로 분리</p></div><span class="badge">AUTHENTICATED</span></div>
+        <section class="panel install-panel" aria-label="웹앱 설치 정보">
+          <span id="pwa-state">설치 여부는 기기 승인과 무관합니다.</span>
+          <button class="secondary" id="pwa-install" type="button" hidden>웹앱 설치</button>
+        </section>
+        <section id="device-panel" class="panel device-panel" hidden aria-labelledby="device-heading">
+          <div class="device-heading">
+            <div><h3 id="device-heading">이 기기에서 자료실 열기</h3>
+              <p>로그인과 별도의 인증기 서명이 필요합니다.</p></div>
+            <span class="badge" id="device-state" role="status" aria-live="polite">확인 전</span>
+          </div>
+          <p class="device-detail" id="device-detail">서버의 승인 결과를 확인하기 전에는 보호 자료가 보이지 않습니다.</p>
+          <div class="device-actions">
+            <button class="primary" id="device-enroll" type="button">기기 등록 요청</button>
+            <button class="primary" id="device-unlock" type="button" hidden>승인된 기기로 열기</button>
+            <button class="secondary" id="device-refresh" type="button">서버 승인 다시 확인</button>
+          </div>
+          <p class="device-note">WebAuthn 인증기에서 기기 확인을 완료해야 합니다. 앱 설치 버튼만으로는 승인이 되지 않습니다.</p>
+        </section>
         <div class="vault-grid">
           <section id="signed-out" class="panel">
             <h3>학생 로그인</h3>
@@ -181,6 +201,7 @@
       <footer class="footer"><span>BYTE BACK / ALEPH SDP ENGINE — STUDENT IMPLEMENTATION</span><span>API evidence is not official grading · No simulated PASS</span></footer>
     </main>
   </div>
+  <script src="/vendor/simplewebauthn.umd.min.js"></script>
   <script>
 
     const signedOut = document.querySelector('#signed-out');
@@ -194,6 +215,30 @@
     const notesRoot = document.querySelector('#notes');
     const createForm = document.querySelector('#create-form');
     let session = null;
+    let deviceProof = null;
+    let deviceAccess = null;
+    let deviceTimer = null;
+    let vaultEpoch = 0;
+    const lockVault = () => {
+      vaultEpoch += 1;
+      deviceProof = null;
+      if (deviceTimer !== null) clearTimeout(deviceTimer);
+      deviceTimer = null;
+      notesRoot.replaceChildren();
+      workspace.hidden = true;
+    };
+    const verifiedVault = (proof, expiresInSeconds) => {
+      lockVault();
+      deviceProof = proof;
+      renderAuth();
+      const remainingMs = Number.isFinite(Number(session?.expires_at))
+        && Number(session.expires_at) > 0
+        ? Number(session.expires_at) * 1000 - Date.now() : Infinity;
+      deviceTimer = setTimeout(() => {
+        lockVault(); renderAuth(); void deviceAccess?.status();
+      }, Math.max(1000, Math.min(expiresInSeconds*1000, remainingMs) - 5000));
+      void loadNotes();
+    };
 
     const setStatus = (element, message = '', error = false) => {
       element.textContent = message;
@@ -206,9 +251,11 @@
 
     const applySession = (data) => {
       if (!data?.accessToken) {
+        lockVault();
         session = null;
         return false;
       }
+      lockVault();
       session = {
         access_token: data.accessToken,
         expires_at: data.expiresAt ?? null,
@@ -261,6 +308,11 @@
       headers.set('Accept', 'application/json');
       headers.set('Authorization', `Bearer ${session.access_token}`);
       if (init.body) headers.set('Content-Type', 'application/json');
+      const isProtected = /^\/api\/(notes|announcements|restore)(?:\/|$)/u.test(path);
+      if (isProtected) {
+        if (!deviceProof) throw Error('기기 서명 인증이 필요합니다.');
+        headers.set('x-aleph-device-proof', deviceProof);
+      }
       const response = await fetch(path, {
         ...init,
         headers,
@@ -268,7 +320,14 @@
         credentials: 'omit',
         redirect: 'error',
       });
+      if (response.status === 403 && isProtected) {
+        const payload = await response.clone().json().catch(() => null);
+        if (payload?.error === 'DEVICE_NOT_VERIFIED') {
+          lockVault(); renderAuth(); void deviceAccess?.status();
+        }
+      }
       if (response.status === 401 && retry && await restoreSession()) {
+        window.dispatchEvent(new Event('aleph:identity'));
         return authFetch(path, init, false);
       }
       return response;
@@ -278,11 +337,12 @@
       const loggedIn = Boolean(session?.access_token);
       signedOut.hidden = loggedIn;
       signedIn.hidden = !loggedIn;
-      workspace.hidden = !loggedIn;
+      workspace.hidden = !(loggedIn && Boolean(deviceProof));
       sessionLabel.textContent = loggedIn
         ? `로그인됨 · ${session.user?.email || 'Supabase 계정'}`
         : '로그아웃됨';
       if (!loggedIn) {
+        lockVault();
         notesRoot.replaceChildren();
         setStatus(workspaceStatus);
       }
@@ -361,15 +421,20 @@
     };
 
     async function loadNotes() {
-      if (!session?.access_token) return;
+      if (!session?.access_token || !deviceProof) return;
+      const epoch = vaultEpoch;
       try {
         const response = await authFetch('/api/notes');
+        if (epoch !== vaultEpoch || !deviceProof) return;
         if (!response.ok) {
-          setStatus(workspaceStatus, await apiError(response, '자료를 읽을 수 없습니다.'), true);
+          const message = await apiError(response, '자료를 읽을 수 없습니다.');
+          if (epoch !== vaultEpoch || !deviceProof) return;
+          setStatus(workspaceStatus, message, true);
           notesRoot.replaceChildren();
           return;
         }
         const notes = await response.json();
+        if (epoch !== vaultEpoch || !deviceProof) return;
         if (!Array.isArray(notes)) {
           setStatus(workspaceStatus, '자료 형식이 맞지 않습니다.', true);
           return;
@@ -377,6 +442,7 @@
         notesRoot.replaceChildren(...notes.map(noteEditor));
         if (!notes.length) setStatus(workspaceStatus, '메모가 없습니다.');
       } catch (error) {
+        if (epoch !== vaultEpoch) return;
         setStatus(workspaceStatus, error.message, true);
         session = null;
         renderAuth();
@@ -399,7 +465,7 @@
         }
         setStatus(loginStatus);
         renderAuth();
-        await loadNotes();
+        window.dispatchEvent(new Event('aleph:identity'));
       } catch {
         setStatus(loginStatus, '로그인 서버에 연결할 수 없습니다.', true);
       }
@@ -408,7 +474,9 @@
     logoutButton.addEventListener('click', async () => {
       try { await authApi('logout'); } catch {}
       session = null;
+      lockVault();
       renderAuth();
+      window.dispatchEvent(new Event('aleph:identity'));
     });
 
     createForm.addEventListener('submit', async (event) => {
@@ -437,11 +505,21 @@
     (async () => {
       await restoreSession();
       renderAuth();
-      if (session) await loadNotes();
+      window.dispatchEvent(new Event('aleph:identity'));
     })();
 
+    import('/device.mjs').then(({initDeviceAccess}) => {
+      deviceAccess = initDeviceAccess({
+        getAccessToken: () => session?.access_token ?? null,
+        onAuthorized: verifiedVault,
+        onLocked: () => { lockVault(); renderAuth(); }
+      });
+    }).catch(() => {
+      const status = document.querySelector('#device-state');
+      if (status) status.textContent = '기기 검증 구성 오류';
+    });
     import('/operations.mjs').then(({ initOperations }) => {
-      initOperations({getToken: () => session?.access_token ?? null});
+      initOperations({getToken: () => session?.access_token ?? null, getDeviceProof: () => deviceProof});
     }).catch(() => { const el = document.querySelector('#ops-state'); if (el) el.textContent = '동적 화면을 불러오지 못했습니다.'; });
 
   </script>

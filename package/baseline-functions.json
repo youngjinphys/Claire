@@ -6,6 +6,7 @@
     "api/ai.js",
     "api/announcements.js",
     "api/auth.js",
+    "api/device.js",
     "api/notes.js",
     "api/ops.js",
     "api/restore-note.js",

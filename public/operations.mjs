@@ -77,7 +77,7 @@ function chart(snapshot, onFilter) {
     svg.append(g);
   });
 }
-export function initOperations({getToken=()=>null}={}) {
+export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
   let snapshot=null;
   const stage=byId('filter-stage'),kind=byId('filter-kind'),outcome=byId('filter-state');
   const table=byId('evidence-body');
@@ -151,7 +151,11 @@ export function initOperations({getToken=()=>null}={}) {
     try {
       const token=getToken();
       const headers={Accept:'application/json'};
-      if(typeof token==='string'&&token)headers.Authorization='Bearer '+token;
+      if(typeof token==='string'&&token) {
+        headers.Authorization='Bearer '+token;
+        const proof=getDeviceProof();
+        if(typeof proof==='string'&&proof)headers['x-aleph-device-proof']=proof;
+      }
       const response=await fetch('/api/ops',{method:'GET',headers,cache:'no-store',redirect:'error'});
       if(!response.ok)throw Error('HTTP_'+response.status);
       const body=await response.json();

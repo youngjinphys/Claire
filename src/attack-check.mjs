@@ -238,7 +238,44 @@ export async function runAttackChecks(config) {
       } catch { operationsObserved = '미검증: 작전실 API 접속 실패'; }
     }
 
+
+    let manifestObserved='미실행: 설치형 앱 manifest 미확인';
+    let deviceStatusObserved='미실행: 기기 상태 API 요청 미확인';
+    if(config.step===12){
+      try {
+        const r=await fetch(new URL('/manifest.webmanifest',app),{
+          redirect:'error',signal:AbortSignal.timeout(10000),
+          headers:{Accept:'application/manifest+json'}
+        });
+        const manifest=r.ok?await safeJson(r):null;
+        manifestObserved=r.status===200 && manifest?.name==='BYTE BACK · 내 보안 자료실'
+          && manifest?.display==='standalone'
+          && Array.isArray(manifest.icons) && manifest.icons.length>0
+          ?'배포 manifest HTTP 200 확인 (PWA 설치는 기기 승인과 무관)'
+          :'미검증: 설치형 manifest 불일치 (HTTP '+r.status+')';
+      }catch {manifestObserved='미검증: 설치형 manifest 호출 실패';}
+      try {
+        const r=await fetch(new URL('/api/device?action=status',app),{
+          redirect:'error',signal:AbortSignal.timeout(10000),
+          headers:{Accept:'application/json'}
+        });
+        const body=await safeJson(r);
+        deviceStatusObserved=r.status===401 && body?.error==='UNAUTHORIZED'
+          && r.headers.get('www-authenticate')==='Bearer'
+          ?'실측: 무로그인 기기 상태 API HTTP 401, 승인 상태 비노출'
+          :'미검증: 익명 상태 조회 거부 불일치 (HTTP '+r.status+')';
+      }catch {deviceStatusObserved='미검증: 기기 상태 API 호출 실패';}
+    }
+
     return [
+      ...(config.step === 12 ? [
+        {attackId:'stage11_manifest_present',
+          expected:'설치형 앱 manifest 배포; 설치 상태는 승인의 증거가 아님',
+          observed:manifestObserved},
+        {attackId:'stage11_device_status_denied',
+          expected:'인증 없이 승인 기기 상태 요청 시 401 거부',
+          observed:deviceStatusObserved}
+      ] : []),
       ...(config.step === 12 ? [{ attackId: 'stage12_operations_snapshot',
         expected: '실제 응답과 미실행을 분리하며 41종 공격의 공식 통과를 임의 표시하지 않음',
         observed: operationsObserved }] : []),
