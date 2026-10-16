@@ -1,3 +1,12 @@
+## 2026-10-16 · Observatory 관제 UI 시각 레이어 (12단계 평가 이후)
+
+- **평가용 저장점**: 12단계 단일 커밋 `304bbf199bbf832dd38ada4cfebf5ed3828d177b`은 보존됩니다. 아래 원본 문서의 'main HEAD가 11단계의 직접 자식' 조건은 **평가용 커밋**에만 해당합니다. 이번 후속 UI 커밋은 별도이며 공식 평가 대상 저장점이라고 주장하지 않습니다.
+- **시각적 이식**: youngjinphys.com/observatory의 청색 HUD·반투명 관제 패널·궤도 장식을 `public/observatory-theme.css`에만 적용합니다. 배포 색상과 hero 마크업은 장식용으로 변경하며 `aria-hidden`, 반응형 및 reduced-motion을 지원합니다.
+- **보존**: `src/decider.mjs`, 인증, 자료실, `/api/ops` 증적 산출 및 공식 0/12·0/41 판정 로직은 변경하지 않습니다. 새로운 그래픽은 실제 계측값이 아닙니다.
+- **검증**: `node --test test/observatory-theme.test.mjs && npm run test:bundle-isolated && npm run bundle` (묶음은 후속 UI 커밋 SHA로만 생성하므로 12단계 원래 평가에는 위 평가용 커밋을 사용합니다).
+
+---
+
 ## 2026-10-16 · 12단계 단일 커밋 제출 및 심판 계약 검토 (공식 판정 미완료)
 
 - **단일 12단계 커밋**: 11단계 저장점 287bedb8e69a2c5bc3b44ea5586ac382987cf8b0의 직접 자식 한 커밋에 12단계 변경을 결합합니다. 다른 후속 커밋은 main에 누적하지 않습니다.
