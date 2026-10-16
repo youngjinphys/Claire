@@ -460,7 +460,13 @@
         const data = await parseJson(response);
         document.querySelector('#password').value = '';
         if (!response.ok || !applySession(data)) {
-          setStatus(loginStatus, data?.error || '로그인에 실패했습니다.', true);
+          setStatus(loginStatus, response.status === 429
+            ? '로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.'
+            : response.status === 503 && data?.error === 'AUTH_RISK_GUARD_UNAVAILABLE'
+              ? '로그인 보안 확인이 불가능하여 접근을 일시 중단했습니다.'
+              : data?.error === 'LOGIN_FAILED'
+                ? '로그인 정보가 일치하지 않습니다.'
+                : data?.error || '로그인에 실패했습니다.', true);
           return;
         }
         setStatus(loginStatus);

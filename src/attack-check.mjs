@@ -1,3 +1,5 @@
+import { URL } from 'node:url';
+
 // The student changes this check as each stage adds an attack to the same app.
 // Never return tokens, private keys, real names, or note bodies.
 const appUrl = (config) => {
@@ -26,6 +28,10 @@ const applicationBearer401 = (response, body) => response.status === 401
 
 export async function runAttackChecks(config) {
   const app = appUrl(config);
+  if (config.step === 12) {
+    const { runStage12ReadOnlyChecks } = await import('./attack-check-stage12.mjs');
+    return runStage12ReadOnlyChecks(config, app);
+  }
 
   if (config.step === 1) {
     if (typeof config.sampleMarker !== 'string' || !config.sampleMarker) {

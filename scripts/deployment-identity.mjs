@@ -1,3 +1,4 @@
+import { URL } from 'node:url';
 import { validateAllowedRoutes, validateOriginalApiUrl, validateProtectedService, validateRestoreRoute, validateResourceZones } from './config-contract.mjs';
 
 const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
@@ -11,6 +12,17 @@ export function deploymentIdentity(env, config) {
   const commit = env.VERCEL_GIT_COMMIT_SHA;
   const host = env.VERCEL_URL;
   const step = config?.step;
+  // Preserve the immutable deployment URL contract of stages 1-11.
+  // Stage 12 publishes the designated production alias.
+  const publicUrl = step === 12 ? (() => {
+    try {
+      const url = new URL(config?.publicAppUrl);
+      return url.protocol === 'https:' && HOST.test(url.hostname)
+        && url.pathname === '/' && !url.search && !url.hash
+        && !url.username && !url.password && !url.port
+        ? url.origin : null;
+    } catch { return null; }
+  })() : null;
   const stepOneMarkerInvalid = step === 1 && (typeof config.sampleMarker !== 'string'
     || !/^[A-Z0-9_]{1,80}$/u.test(config.sampleMarker));
 
@@ -32,7 +44,7 @@ export function deploymentIdentity(env, config) {
   if (env.VERCEL_GIT_PROVIDER !== 'github' || !OWNER.test(owner || '')
       || !REPO.test(repo || '') || repo === '.' || repo === '..'
       || repo.toLowerCase().endsWith('.git') || !SHA.test(commit || '')
-      || !HOST.test(host || '') || !Number.isInteger(step) || step < 1 || step > 12
+      || !HOST.test(host || '') || (step === 12 && !publicUrl) || !Number.isInteger(step) || step < 1 || step > 12
       || typeof config.judgeIssuer !== 'string'
       || !/^https:\/\/[a-z0-9-]+\.up\.railway\.app\/defense\/judge$/iu.test(config.judgeIssuer)
       || stepOneMarkerInvalid) {
@@ -43,7 +55,7 @@ export function deploymentIdentity(env, config) {
     step,
     repoUrl: `https://github.com/${owner.toLowerCase()}/${repo.toLowerCase()}`,
     commit: commit.toLowerCase(),
-    publicAppUrl: `https://${host.toLowerCase()}`,
+    publicAppUrl: step === 12 ? publicUrl : `https://${host.toLowerCase()}`,
     judgeIssuer: config.judgeIssuer,
   };
   if (step === 1) identity.sampleMarker = config.sampleMarker;

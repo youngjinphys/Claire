@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -21,7 +21,7 @@ export async function runXdr({ root, moduleKey, writeError = (line) => console.e
   if (!MODULE_KEYS.includes(moduleKey)) {
     throw new Error('moduleKey 가 없습니다. brute-force, web-injection, known-cve, persistence, privilege, exfiltration 중 하나를 넣습니다.');
   }
-  const fixture = JSON.parse(await readFile(join(root, 'xdr', 'fixtures', moduleKey + '.json'), 'utf8'));
+  const fixture = JSON.parse(await readFile(join(root, 'xdr', 'fixtures', `${moduleKey}.json`), 'utf8'));
   if (fixture?.schema !== 'aleph.xdr.fixture.v1' || fixture.moduleKey !== moduleKey || !Array.isArray(fixture.alerts)) {
     throw new Error('경보 묶음 형식이 아닙니다.');
   }
@@ -42,90 +42,19 @@ export async function runXdr({ root, moduleKey, writeError = (line) => console.e
         confidence = out.confidence;
         reason = out.reason;
       } else {
-        writeError('형식 오류: ' + (alertId || '(id 없음)'));
+        writeError(`형식 오류: ${alertId || '(id 없음)'}`);
       }
     } catch {
-      writeError('형식 오류: ' + (alertId || '(id 없음)'));
+      writeError(`형식 오류: ${alertId || '(id 없음)'}`);
     }
     decisions.push({ alertId, action, confidence, reason });
     counts[action] += 1;
   }
 
-  // The local runner, not the standalone judge module, owns file output.
-  if (moduleKey === 'brute-force') {
-    const gatePath = join(root, 'xdr', 'brute-force', 'ztna-gate.mjs');
-    let exists = true;
-    try {
-      await access(gatePath);
-    } catch (error) {
-      if (error?.code === 'ENOENT') exists = false;
-      else throw error;
-    }
-    if (exists) {
-      const gate = await import(pathToFileURL(gatePath).href);
-      if (typeof gate.writeIntegrationArtifacts !== 'function') {
-        throw new Error('brute-force 로컬 연동 함수를 찾지 못했습니다.');
-      }
-      await gate.writeIntegrationArtifacts({ root, alerts: fixture.alerts, decisions });
-    }
-    // File output belongs to respond.mjs, never to the isolated judge.
-    const respondPath = join(root, 'xdr', 'brute-force', 'respond.mjs');
-    let present = true;
-    try { await access(respondPath); } catch (error) {
-      if (error?.code === 'ENOENT') present = false;
-      else throw error;
-    }
-    if (present) {
-      const responder = await import(pathToFileURL(respondPath).href);
-      if (typeof responder.respond !== 'function') throw new Error('respond 함수를 찾지 못했습니다.');
-      await responder.respond({ root, alerts: fixture.alerts, decisions });
-    }
-  }
-  if (moduleKey === 'web-injection') {
-    // The judge imports only decide.mjs. All I/O and ZTNA candidate emission
-    // must happen here, in the local runner, via an independent module.
-    const responseModule = await import(pathToFileURL(join(root, 'xdr', 'web-injection', 'respond.mjs')).href);
-    if (typeof responseModule.respondToDecisions !== 'function') {
-      throw new Error('web-injection 로컬 연동 함수를 찾지 못했습니다.');
-    }
-    await responseModule.respondToDecisions({ root, alerts: fixture.alerts, decisions });
-  }
-  if (moduleKey === 'known-cve') {
-    // Only this local runner performs I/O; the judge-facing decide.mjs is isolated.
-    const module = await import(pathToFileURL(join(root, 'xdr', 'known-cve', 'respond.mjs')).href);
-    if (typeof module.respondToDecisions !== 'function') {
-      throw new Error('known-cve 로컬 대응 모듈을 찾을 수 없습니다.');
-    }
-    await module.respondToDecisions({ root, alerts: fixture.alerts, decisions });
-  }
-  if (moduleKey === 'persistence') {
-    // Only the local runner writes files; the isolated judge imports decide.mjs alone.
-    const responseModule = await import(pathToFileURL(join(root, 'xdr', 'persistence', 'respond.mjs')).href);
-    if (typeof responseModule.respondToDecisions !== 'function') {
-      throw new Error('persistence 로컬 대응 모듈을 찾지 못했습니다.');
-    }
-    await responseModule.respondToDecisions({ root, alerts: fixture.alerts, decisions });
-  }
-  if (moduleKey === 'privilege') {
-    // Judge imports decide.mjs alone. Only this local runner performs I/O.
-    const responseModule = await import(pathToFileURL(join(root, 'xdr', 'privilege', 'respond.mjs')).href);
-    if (typeof responseModule.respondToDecisions !== 'function') {
-      throw new Error('privilege 로컬 대응 모듈을 찾지 못했습니다.');
-    }
-    await responseModule.respondToDecisions({ root, alerts: fixture.alerts, decisions });
-  }
-  if (moduleKey === 'exfiltration') {
-    // The isolated judge loads only decide.mjs. Local response I/O stays separate.
-    const responder = await import(pathToFileURL(join(root, 'xdr', 'exfiltration', 'respond.mjs')).href);
-    if (typeof responder.respondToDecisions !== 'function') {
-      throw new Error('exfiltration 로컬 대응 모듈을 찾지 못했습니다.');
-    }
-    await responder.respondToDecisions({ root, alerts: fixture.alerts, decisions });
-  }
   const result = { schema: 'aleph.xdr.result.v1', moduleKey, decisions, counts };
   const outDir = join(root, 'xdr', moduleKey);
   await mkdir(outDir, { recursive: true });
-  await writeFile(join(outDir, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8');
+  await writeFile(join(outDir, 'result.json'), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
   return result;
 }
 

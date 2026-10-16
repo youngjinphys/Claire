@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build-public.mjs",
-    "test:r5": "node --test test/r5.test.mjs",
-    "test:package": "node --test test/package-starter.test.mjs test/judge-compat.test.mjs",
+    "test:r5": "node --test test/r5.test.mjs test/r5-stages2-5.test.mjs",
+    "test:package": "node --test test/package-starter.test.mjs test/judge-compat.test.mjs test/course-original-provenance.test.mjs",
     "bundle": "node scripts/bundle.mjs",
     "decider:test": "node scripts/decider-test.mjs",
     "detect:test": "node scripts/detect-test.mjs",
@@ -22,7 +22,9 @@
     "recovery:retest": "node scripts/recovery-retest.mjs",
     "judge:check": "node scripts/judge-contract-check.mjs",
     "test:operations": "node --test test/operations-stage12.test.mjs",
-    "test:device": "node --test test/device-stage11.test.mjs"
+    "test:device": "node --test test/device-stage11.test.mjs",
+    "test:auth-xdr": "node --test test/auth-xdr-stage12.test.mjs",
+    "test:bundle-isolated": "node --test test/bundle-stage12-isolated.test.mjs"
   },
   "engines": {
     "node": ">=22 <25"

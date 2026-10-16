@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 const baseline = JSON.parse(await readFile(new URL('../package/baseline-functions.json', import.meta.url)));
+const stageInventory = JSON.parse(await readFile(new URL('../package/stage-api-inventory.json', import.meta.url)));
 
 test('패키징 함수 기준표는 시작 틀과 현재 단계의 실제 API와 일치한다', async () => {
   const actual = (await readdir(new URL('../api/', import.meta.url)))
@@ -12,8 +13,19 @@ test('패키징 함수 기준표는 시작 틀과 현재 단계의 실제 API와
   assert.equal(baseline.version, 1);
   assert.equal(baseline.starter, 'ChoiTimo/aleph-defense-starter');
   assert.deepEqual(baseline.functions, []);
-  assert.deepEqual(baseline.allowedNew, ['api/ai.js', 'api/announcements.js', 'api/auth.js', 'api/device.js', 'api/notes.js', 'api/ops.js', 'api/restore-note.js', 'api/threat-intel.js']);
-  assert.deepEqual(actual, [...baseline.functions, ...baseline.allowedNew].sort());
+  // Course-import starter allowlist is immutable. Stage-specific server routes
+  // are a separately recorded student extension, not baseline permissions.
+  assert.deepEqual(baseline.allowedNew, ['api/ai.js', 'api/threat-intel.js']);
+  assert.equal(stageInventory.schema, 'aleph.defense.stage_api_inventory.v1');
+  const extensions = stageInventory.extensions;
+  assert.equal(extensions.length, 6);
+  assert.ok(extensions.every(item => Number.isInteger(item.introducedAt)
+    && item.introducedAt >= 2 && item.introducedAt <= 12
+    && typeof item.path === 'string' && item.path.startsWith('api/')));
+  const extra = extensions.map(item => item.path);
+  assert.equal(new Set(extra).size, extra.length);
+  assert.ok(extra.every(path => !baseline.allowedNew.includes(path)));
+  assert.deepEqual(actual, [...baseline.functions, ...baseline.allowedNew, ...extra].sort());
 });
 
 test('미구현 서버 뼈대는 성공이나 로그인 통과로 가장하지 않는다', async () => {

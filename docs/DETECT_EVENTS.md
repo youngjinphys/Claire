@@ -9,25 +9,3 @@
 같은 `identity.sub`의 `GET` 사건이 어느 10분 구간에서든 **120건을 넘을 때만** `{ action: 'propose_revocation', reasonCode: 'burst_read', subject: '해당 sub' }`를 돌려줍니다. 그 밖에는 `{ action: 'observe' }`입니다. 정확히 120건은 회수 제안 대상이 아닙니다. 다른 사용자의 사건을 합산하거나 10분 밖의 사건을 같은 묶음으로 세지 않습니다.
 
 이 파일의 사건 모양은 **로컬 연습용**입니다. 브라우저가 보낸 사용자 번호를 신원으로 취급하지 않습니다. 운영 반 엔진이 검증한 사건을 전달하고 회수 제안을 집행하는 경로는 별도로 연결·시험해야 합니다. 이 명령의 통과를 실제 접속 차단이나 심판 판정으로 표시하지 않습니다.
-
-## 선택적 엔진 검증 확장 (이번 9단계의 별도 로컬 규약)
-
-아래 확장은 제공된 \`aleph.decision.v1\` 또는 위 3필드 탐지 계약의 **공식 입력이 아닙니다**. 실제 엔진에 적용하려면 별도의 신뢰된 사건 전달/검증 계약을 먼저 제공받아야 합니다.
-
-\`detectVerifiedDeviceAnomaly(events, {verifyEngineEvent})\`의 검증 콜백은 각 사건을 서버·엔진에서 인증한 후 다음 **최소 투영**만 반환해야 합니다.
-
-\`\`\`js
-{
-  at: '2026-10-01T00:00:00.000Z',
-  method: 'GET',
-  subject: 'learner_fixture',
-  deviceId: 'aaaaaaaaaaaaaaaa',
-  decision: 'allow',
-  networkBaselineVerified: true,
-  networkDeviation: 'unusual'
-}
-\`\`\`
-
-검증 콜백이 없으면 \`observe\`만 반환합니다. 브라우저에서 보낸 \`deviceId\`, \`network\`, \`decision\`, \`headers\` 등은 직접 입력 증거가 아닙니다. 사용자와 기기를 정확히 매핑하고, 사전에 신뢰할 수 있는 네트워크 기준선과 비교했다는 책임은 콜백을 제공하는 엔진에 있습니다.
-
-동일 가명 사용자·동일 기기의 *검증된 비정상 네트워크상 허용된 GET* 사건이 10분에 **120건 초과**할 경우만 \`{action:'propose_revocation',reasonCode:'unusual_network_burst',subject,deviceId}\`를 반환합니다. 정상 연결·단순 지역 변경·다른 기기 조회 합산·검증 실패는 \`observe\`입니다. 기기를 실제로 회수하지 않으며 시간 측정은 운영 엔진/심판만 할 수 있습니다.

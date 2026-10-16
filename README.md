@@ -1,3 +1,36 @@
+## 2026-10-16 · 12단계 단일 커밋 제출 및 심판 계약 검토 (공식 판정 미완료)
+
+- **단일 12단계 커밋**: 11단계 저장점 287bedb8e69a2c5bc3b44ea5586ac382987cf8b0의 직접 자식 한 커밋에 12단계 변경을 결합합니다. 다른 후속 커밋은 main에 누적하지 않습니다.
+- **격리 환경**: `src/attack-check-stage12.mjs`에서 허용된 HTTPS GET/HEAD만 수행하고, 실제 실행 못한 점검은 `not_run`입니다. `npm run test:bundle-isolated`와 `npm run bundle`로 검증합니다.
+- **XDR 연계 범위(운영 실증 미완료)**: `api/auth.js` 로그인 경로에 HMAC 가명화·Supabase 시도 횟수 제한과 기존 `brute-force`/`web-injection` 판정기 호출이 **코드로 연결**되어 있습니다. CSRF·쿠키·입력 검증도 구현되어 있으나, 검증 근거는 주로 모의 입력·단위 테스트입니다. **실제 사용자 로그인, 운영환경 제한·차단 집행, WebAuthn E2E 및 공식 41종 공격 방어는 미검증**입니다. 나머지 XDR 4개 판정기는 교육용 가상 경보 대상으로 보존하며 실제 센서에 연결되지 않았습니다.
+- **상세**: [로그인 XDR](docs/STAGE12_AUTH_XDR.md) · [격리 제출](docs/STAGE12_ISOLATED_BUNDLE.md) · [차별화 연구 계획](docs/STAGE12_ROADMAP.md).
+- **계약 출처·검증 한계**: 공식 41종 전체 시나리오와 운영 엔진 reason-code 등록부는 저장소에 없으며 로컬 20건 자기 점검과 공식 판정은 다릅니다. docs/STAGE12_CONTRACT_AUDIT.md에서 차이를 검토합니다.
+- **심판 메모 입력**: Git에서 제외되는 개인용 bundle-notes.json과 추적된 package/bundle-notes.template.json의 원문 설명 3줄을 보존합니다. 이 내용은 비밀값이 없는 한정 공개 설명이며 artifacts/submission.json은 커밋하지 않습니다. 공개 주소는 https://skt-aleph-defense.vercel.app 입니다.
+- **재현**: `npm ci && npm run test:auth-xdr && npm run test:bundle-isolated && npm run test:xdr && npm run test:device && npm run bundle` (마지막 명령은 커밋 후). 1~11단계 기능과 심판 계약을 보존합니다. 공식 판정은 별도로 확인해야 합니다.
+
+### 검사 커밋 구분 (2026-10-16 기준)
+
+**이번 검사 커밋**(위 `재현` 절차가 적용되는 커밋)은 `main`의 HEAD이며, 부모가 정확히 `287bedb8e69a2c5bc3b44ea5586ac382987cf8b0` 하나인 12단계 단일 커밋입니다. Git 커밋 SHA는 이 README 내용까지 포함해 계산되므로 커밋 안에 자기 SHA를 적을 수 없습니다. 절차를 시작하기 전에 아래 두 명령으로 정확한 40자리 SHA를 고정하고, `npm run bundle` 출력의 `커밋` 앞 12자리와 GitHub `main`의 SHA가 같은지 대조하세요.
+
+```bash
+git rev-parse HEAD          # 이번 검사 커밋의 정확한 SHA
+git rev-parse HEAD^         # 반드시 287bedb8e69a2c5bc3b44ea5586ac382987cf8b0
+```
+
+| 구분 | SHA | 의미 | 현재 main 이력 |
+|---|---|---|---|
+| 이번 검사 | `git rev-parse HEAD` 출력 | 12단계 단일 커밋. 변경 파일 목록은 `package/bundle-commit-files.json`과 `git diff --name-only 287bedb8e69a2c5bc3b44ea5586ac382987cf8b0 HEAD`가 일치해야 함 | 있음 (HEAD) |
+| 이번 검사의 기준(부모) | `287bedb8e69a2c5bc3b44ea5586ac382987cf8b0` | 11단계 저장점 | 있음 |
+| 과거 검사 | `e645052adffb0ff57ce250e2b03dc90b24d0d71c` | 이전 12단계 저장점. 11단계 보완 기록의 기준 | 있음 |
+| 과거 검사 | `a873b334f6fe910745859d16a2fd965ece24270b` | `Production URL added`. 아래 "보존된 12단계 기록"의 검사 기준 HEAD | 있음 |
+| 과거 검사(폐기) | `02ed8b90deee5000cdade41f12b107100766fe69` | 이번 단일 커밋으로 대체된 이전 12단계 커밋 | 없음 |
+| 과거(폐기) | `20b3ade20df3901248bb72f258daf0427315628b`, `9644f2390f68157e156a3a7ba4175017a8804b4d` | `bundle-notes.json` 삭제·복원 커밋. 내용 차이 0으로 main에서 제거 | 없음 |
+| 과거 기록 인용 | `e0a24490283e356c4d239065711ee9ee6267f157`, `9a7e919bd3edfa5418290718b38f927c7cfa610a`, `f3f3e470`, `6039becd`, `d4e1825`, `ace8135` | 아래 10단계·문서 기록에 인용된 작업 SHA. 이전 이력 정리로 현재 저장소에서 객체를 찾을 수 없음 | 없음 |
+
+아래 본문과 `docs/`의 다른 SHA는 **과거 검사 당시의 기록**이며, 이번 검사 커밋의 결과로 읽지 않습니다.
+
+---
+
 # BYTE BACK 방어전 · 11단계 저장점 (기존 12단계 보존)
 
 이 저장점은 이전 `e645052adffb` (`12단계 저장점`) 이후, 과제 평가에서 누락된 11단계 **설치형 접속 화면·서버 기기 승인·보호 API**를 보완한 후속 기록입니다. 기존 12단계 작전실, `src/decider.mjs` 계약, XDR과 복구 기능을 유지하므로 `aleph.config.json.step=12`를 낮추지 않습니다. 공식 심판 통과 사실은 임의로 기록하지 않습니다.
