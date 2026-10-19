@@ -17,8 +17,13 @@ export function createStudentView() {
       };
       const modeLabels = { demo: '예제 자료', disconnected: '연결 없음', unknown: '확인 불가' };
       const readable = (value) => typeof value === 'string' && value.trim() ? value : '확인 불가';
-      const deviceState = (value) => deviceStates[value] || deviceStates.unknown;
-      const sessionState = (value) => sessionStates[value] || sessionStates.unknown;
+      const stateWithCode = (states, value) => {
+        const code = typeof value === 'string' && value.trim() ? value : 'unknown';
+        const description = Object.hasOwn(states, code) ? states[code] : states.unknown;
+        return `${description} (${code})`;
+      };
+      const deviceState = (value) => stateWithCode(deviceStates, value);
+      const sessionState = (value) => stateWithCode(sessionStates, value);
       const message = (parent, text) => {
         const p = document.createElement('p');
         p.textContent = text;
