@@ -1,0 +1,68 @@
+{
+  "schema": "aleph.xdr.known-cve.patterns.v1",
+  "technique": "T1190",
+  "cve": "CVE-2021-44228",
+  "patterns": [
+    {
+      "name": "jndi_header_and_parameter",
+      "condition": {
+        "signal": "complete_remote_jndi_lookup",
+        "locations": [
+          "http_header",
+          "query_parameter"
+        ],
+        "corroboration": "T1190 or Wazuh level >= 10"
+      },
+      "confidence": 0.99,
+      "evidence": "CVE-2021-44228 (NVD), MITRE T1190: 조작된 HTTP 입력의 JNDI 원격 조회 구문은 공개 애플리케이션 악용 시도 신호입니다."
+    },
+    {
+      "name": "repeated_remote_jndi_lookup",
+      "condition": {
+        "signal": "complete_remote_jndi_lookup",
+        "minOccurrences": 4,
+        "corroboration": "T1190 or Wazuh level >= 10"
+      },
+      "confidence": 0.98,
+      "evidence": "CVE-2021-44228 (NVD), MITRE T1190: 동일 원격 조회 악용 입력의 반복은 공격 탐지 신뢰를 높이는 정황입니다."
+    },
+    {
+      "name": "jndi_http_header_lookup",
+      "condition": {
+        "signal": "complete_remote_jndi_lookup",
+        "location": "http_header",
+        "corroboration": "T1190 or Wazuh level >= 10"
+      },
+      "confidence": 0.96,
+      "evidence": "CVE-2021-44228 (NVD), MITRE T1190: 로그에 기록되는 머리글에 JNDI 원격 조회 입력을 넣을 수 있습니다."
+    },
+    {
+      "name": "jndi_query_parameter_lookup",
+      "condition": {
+        "signal": "complete_remote_jndi_lookup",
+        "location": "query_parameter",
+        "corroboration": "T1190 or Wazuh level >= 10"
+      },
+      "confidence": 0.96,
+      "evidence": "CVE-2021-44228 (NVD), MITRE T1190: URL 인자처럼 로깅되는 입력의 원격 조회 구문은 악용 시도 징후입니다."
+    },
+    {
+      "name": "possible_vulnerability_scan",
+      "condition": {
+        "signal": "scan_tool_or_vulnerability_probe_without_complete_lookup",
+        "corroboration": "T1190 tag or vulnerability-related description"
+      },
+      "confidence": 0.67,
+      "evidence": "MITRE T1190: 취약점 탐색·점검 흔적은 추가 확인 대상이지만 실제 악용 구문 부재 시 차단 근거로 불충분합니다."
+    },
+    {
+      "name": "cve_or_jndi_reference",
+      "condition": {
+        "signal": "cve_name_jndi_keyword_or_lookup_fragment_only",
+        "corroboration": "T1190 tag or Wazuh level >= 5"
+      },
+      "confidence": 0.6,
+      "evidence": "NVD CVE-2021-44228, MITRE T1190: CVE·JNDI 단어만으로는 원격 조회 악용이 성립했다고 볼 수 없습니다."
+    }
+  ]
+}

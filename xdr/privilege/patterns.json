@@ -1,0 +1,152 @@
+{
+  "schema": "aleph.xdr.privilege.patterns.v1",
+  "techniques": [
+    "T1068",
+    "T1078"
+  ],
+  "supportingTechniques": [
+    "T1098.007",
+    "T1548"
+  ],
+  "note": "Group membership and privileged commands are behavioral signals, not direct proof of T1068 vulnerability exploitation or T1078 compromise.",
+  "patterns": [
+    {
+      "name": "remote_admin_group_enrollment",
+      "condition": {
+        "signal": "기존 비관리자가 원격 요청 뒤 관리자 그룹에 실제 추가됨",
+        "requires": [
+          "admin_group",
+          "new_membership",
+          "remote_origin"
+        ],
+        "minRuleLevel": 10
+      },
+      "confidence": 0.96,
+      "evidence": "MITRE T1078·T1098.007: 유효 계정에 관리자 그룹 권한을 부여하는 비정상 변경은 권한 오남용 신호입니다."
+    },
+    {
+      "name": "newly_elevated_account_admin_command",
+      "condition": {
+        "signal": "방금 관리자가 된 계정이 곧 관리자 명령까지 실행함",
+        "requires": [
+          "recent_elevation",
+          "admin_command"
+        ],
+        "minRuleLevel": 10
+      },
+      "confidence": 0.98,
+      "evidence": "MITRE T1078·T1548: 권한 상승 직후 관리자 명령 실행의 행위 연계는 계정 악용 징후를 강화합니다."
+    },
+    {
+      "name": "offhours_new_origin_admin_command",
+      "condition": {
+        "signal": "평소 업무 외 시간과 처음 보는 주소에서 관리자 명령 실행",
+        "requires": [
+          "offhours",
+          "unfamiliar_origin",
+          "admin_command"
+        ],
+        "minRuleLevel": 10
+      },
+      "confidence": 0.94,
+      "evidence": "MITRE T1078·T1548: 비정상 시각·미관측 주소의 관리자 명령은 유효 계정 악용을 조사할 복합 신호입니다."
+    },
+    {
+      "name": "ordinary_user_admin_membership_and_execution",
+      "condition": {
+        "signal": "일반 계정의 관리자 그룹 편입 후 즉시 권한 명령 실행",
+        "requires": [
+          "ordinary_account",
+          "admin_group",
+          "elevation_then_execution"
+        ],
+        "minRuleLevel": 10
+      },
+      "confidence": 0.99,
+      "evidence": "MITRE T1098.007·T1078: 일반 계정의 관리자 그룹 편입과 즉시 실행이 결합하면 권한 오남용 가능성이 높아집니다."
+    },
+    {
+      "name": "multiple_accounts_added_to_admins",
+      "condition": {
+        "signal": "같은 주소에서 세 개 이상 계정이 관리자 그룹에 추가됨",
+        "requires": [
+          "admin_group",
+          "multiple_accounts",
+          "shared_source"
+        ],
+        "minAccounts": 3,
+        "minRuleLevel": 10
+      },
+      "confidence": 0.96,
+      "evidence": "MITRE T1098.007·T1078: 단일 출발지에서 여러 계정을 관리자 그룹에 추가하는 행위는 대량 권한 조작 신호입니다."
+    },
+    {
+      "name": "session_admin_elevation_new_origin",
+      "condition": {
+        "signal": "세션 권한이 관리자로 변하고 출발 주소도 미관측",
+        "requires": [
+          "admin_session_change",
+          "unfamiliar_origin"
+        ],
+        "minRuleLevel": 10
+      },
+      "confidence": 0.96,
+      "evidence": "MITRE T1078·T1548: 새 출발지에서의 관리자 세션 권한 변화는 계정 악용의 복합 이상 징후입니다."
+    },
+    {
+      "name": "offhours_admin_group_and_command",
+      "condition": {
+        "signal": "업무 외 시간에 관리자 그룹 추가와 권한 명령 실행이 함께 관측",
+        "requires": [
+          "offhours",
+          "admin_group",
+          "admin_command"
+        ],
+        "minRuleLevel": 10
+      },
+      "confidence": 0.98,
+      "evidence": "MITRE T1098.007·T1078: 비정상 시간의 관리자 그룹 변경과 후속 실행은 권한 오남용 연쇄입니다."
+    },
+    {
+      "name": "cross_account_admin_command",
+      "condition": {
+        "signal": "현재 계정이 다른 계정의 권한으로 관리자 명령을 실행",
+        "requires": [
+          "other_account_privilege",
+          "admin_command"
+        ],
+        "minRuleLevel": 10
+      },
+      "confidence": 0.95,
+      "evidence": "MITRE T1078·T1548: 계정 간 권한 사용과 관리자 명령 결합은 계정 오용 여부 확인이 필요한 강한 징후입니다."
+    },
+    {
+      "name": "rapid_admin_group_regrant",
+      "condition": {
+        "signal": "관리자 그룹에서 제외된 뒤 짧은 시간 안에 재편입",
+        "requires": [
+          "previous_removal",
+          "quick_readdition",
+          "admin_group"
+        ],
+        "maxMinutes": 2,
+        "minRuleLevel": 10
+      },
+      "confidence": 0.93,
+      "evidence": "MITRE T1098.007·T1078: 관리자 권한 철회 직후 재부여는 승인되지 않은 계정 권한 조작 신호일 수 있습니다."
+    },
+    {
+      "name": "unconfirmed_privilege_activity",
+      "condition": {
+        "signal": "관리자 명령·그룹 변경·권한 상승 단서가 있지만 충분한 악성 근거는 없음",
+        "requires": [
+          "related_event",
+          "incomplete_evidence"
+        ],
+        "minRuleLevel": 5
+      },
+      "confidence": 0.65,
+      "evidence": "MITRE T1068·T1078: 취약점 악용 또는 유효 계정 침해가 확인되지 않은 단발 권한 이벤트는 우선 조사·알림 대상으로 취급합니다."
+    }
+  ]
+}
