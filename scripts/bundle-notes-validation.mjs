@@ -17,7 +17,10 @@ export function validateBundleNotes(notes, step) {
   if (!notes || typeof notes !== 'object' || Array.isArray(notes)) {
     throw new Error('bundle-notes.json은 JSON 객체여야 합니다.');
   }
-  const { trimmed } = explanationText(notes.explanation);
+  const { trimmed, lines } = explanationText(notes.explanation);
+  // The Stage-12 submission must contain exactly three nonempty physical lines.
+  // Preserve each line's wording while normalizing optional blank lines/CRLF.
+  if (step === 12) return lines.join('\n');
   if (step !== 2) return trimmed;
 
   const text = trimmed.normalize('NFKC');

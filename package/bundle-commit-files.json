@@ -1,12 +1,10 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "README.md",
     "package/bundle-commit-files.json",
-    "public/index.html",
-    "public/manifest.webmanifest",
-    "public/observatory-theme.css",
-    "test/observatory-theme.test.mjs"
+    "scripts/bundle-notes-validation.mjs",
+    "src/attack-check-stage12.mjs",
+    "test/bundle-stage12-isolated.test.mjs"
   ],
-  "releaseNote": "Post-evaluation Observatory UI layer. Stage12 judge checkpoint 304bbf19 is preserved; no defense or API evidence changes."
+  "releaseNote": "Stage12: preserve exactly three memo statements; record actual HTTP responses independently of optional judge case IDs. Official 41-type scores remain unverified."
 }

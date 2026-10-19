@@ -179,15 +179,10 @@ export async function runStage12ReadOnlyChecks(config, app, fetchImpl = globalTh
   const observedFor = (key, response, detail) => {
     if (!response || !Number.isInteger(response.status)
         || response.status < 100 || response.status > 599) return NOT_RUN;
-    // A successful HTTPS fetch only proves that the public server responded.
-    // It does not prove the ALEPH judge recorded this attackId. Judge request
-    // identifiers must be provided by the judge itself; neither a URL nor
-    // x-vercel-id is a substitute for a recorded request.
-    const caseId = response.headers?.get?.('x-case-id');
-    const requestKey = response.headers?.get?.('x-request-key');
-    const judgeRecorded = [caseId, requestKey].some(
-      value => typeof value === 'string' && SERVER_REQUEST_ID.test(value));
-    if (!judgeRecorded) return NOT_RUN;
+    // A real HTTPS response proves an HTTP exchange, NOT official judge
+    // acceptance. Record its observed method, URL and HTTP status regardless
+    // of whether optional judge correlation headers are present.
+    // Never synthesize caseId/requestKey or equate a Vercel ID with a judge ID.
     const request = requestDetails[key];
     const vercel = response.headers?.get?.('x-vercel-id');
     const upstream = response.headers?.get?.('x-request-id');

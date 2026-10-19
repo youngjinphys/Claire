@@ -16,8 +16,6 @@ function http(status, body = null, extra = {}) {
     headers: {
       'cache-control': 'no-store',
       'content-type': 'application/json',
-      // Simulated judge correlation: a mock HTTP response alone is not proof.
-      'x-case-id': 'test-recorded-request',
       ...extra,
     },
   });
@@ -514,9 +512,8 @@ test('caseId and requestKey appear only if returned verbatim by the server', asy
   assert.match(note,/caseId=server-actual-case/u);
   assert.match(note,/requestKey=server-actual-key/u);
   const anonymousPage=attempts.find(a=>a.attackId==='existing_browser_ui').observed;
-  // Default fixture provides its own simulated caseId, never the server's
-  // explicitly overridden values from the anonymous notes response.
-  assert.match(anonymousPage,/caseId=test-recorded-request/u);
+  // No default fixture invents official judge correlation headers.
+  assert.doesNotMatch(anonymousPage,/caseId=|requestKey=/u);
   assert.doesNotMatch(anonymousPage,/server-actual-case|server-actual-key/u);
   assert.equal(attempts.filter(a=>a.observed==='not_run').length,8);
 });
@@ -556,24 +553,41 @@ test('no HTTP response means not_run even when all twelve string requests were a
   assert.ok(checks.every(item => item.observed === 'not_run'));
 });
 
-test('HTTP response without judge request evidence is not_run even if status is 200', async () => {
-  const checks = await runStage12ReadOnlyChecks(config, origin,
-    async () => new Response(null, {status:200}));
-  assert.equal(checks.length,20);
-  assert.ok(checks.every(entry => entry.observed === 'not_run'));
+test('HTTP responses without judge headers retain their actual method, URL and status', async () => {
+  const calls=[];
+  const checks=await runStage12ReadOnlyChecks(config,origin,mockFetch(calls));
+  assert.equal(calls.length,12);
+  assert.equal(checks.filter(x=>x.observed==='not_run').length,8);
+  const checked=checks.filter(x=>x.observed!=='not_run');
+  assert.equal(checked.length,12);
+  assert.ok(checked.every(x=>/^(GET|HEAD) https:\/\/skt-aleph-defense\.vercel\.app\/.* HTTP (?:200|401|405|503); requestId=unavailable;/u.test(x.observed)));
+  assert.ok(checked.every(x=>!/caseId=|requestKey=/u.test(x.observed)));
 });
 
-test('a judge-recorded subset of 3 does not credit the other 9 HTTP responses', async () => {
-  // Hypothetical marker distribution, NOT a claim about actual grader IDs.
+test('optional judge correlation headers never change whether HTTP was observed', async () => {
+  // Unit-test-only headers. These do not establish actual judge acceptance.
   const correlated = new Set(['/aleph.json','/data.json','/api/notes']);
   const fetcher = mockFetch([]);
-  const attempts = await runStage12ReadOnlyChecks(config, origin, async (url, options) => {
-    const response = await fetcher(url, options);
-    if (!correlated.has(new URL(url).pathname)) response.headers.delete('x-case-id');
+  const attempts = await runStage12ReadOnlyChecks(config,origin,async (url,options)=>{
+    const response=await fetcher(url,options);
+    if(correlated.has(new URL(url).pathname)) response.headers.set('x-case-id','fixture-correlation');
     return response;
   });
-  const confirmed = attempts.filter(x => x.observed !== 'not_run');
-  assert.equal(confirmed.length, 3);
-  assert.ok(confirmed.every(x => /HTTP (?:200|401);/u.test(x.observed)));
-  assert.equal(attempts.filter(x => x.observed === 'not_run').length, 17);
+  const checked=attempts.filter(x=>x.observed!=='not_run');
+  assert.equal(checked.length,12);
+  assert.equal(checked.filter(x=>x.observed.includes('caseId=fixture-correlation')).length,3);
+  assert.equal(attempts.filter(x=>x.observed==='not_run').length,8);
+});
+
+test('Stage12 memo output preserves the three statements and strips only extra blank lines', async () => {
+  const {validateBundleNotes}=await import('../scripts/bundle-notes-validation.mjs');
+  const {readFileSync}=await import('node:fs');
+  const original=JSON.parse(readFileSync('package/bundle-notes.template.json','utf8'));
+  const lines=original.explanation.split('\n');
+  assert.equal(lines.length,3);
+  const decorated='  \r\n'+lines[0]+'\r\n\r\n'+lines[1]+'\r\n'+lines[2]+'\r\n';
+  assert.equal(validateBundleNotes({...original,explanation:decorated},12),lines.join('\n'));
+  assert.throws(()=>validateBundleNotes({
+    explanation:original.explanation+'\n추가되거나 실제 검증하지 않은 사실을 기재하지 않습니다.'
+  },12),/정확히 세 줄/u);
 });
