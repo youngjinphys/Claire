@@ -1,0 +1,38 @@
+{
+  "name": "aleph-defense-starter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-public.mjs",
+    "test:r5": "node --test test/r5.test.mjs test/r5-stages2-5.test.mjs",
+    "test:package": "node --test test/package-starter.test.mjs test/judge-compat.test.mjs test/course-original-provenance.test.mjs",
+    "bundle": "node scripts/bundle.mjs",
+    "decider:test": "node scripts/decider-test.mjs",
+    "detect:test": "node scripts/detect-test.mjs",
+    "fixture:7": "node scripts/fixture-7.mjs",
+    "xdr:run": "node scripts/xdr-run.mjs",
+    "test:xdr": "node --test test/xdr-run.test.mjs test/xdr-brute-force.test.mjs test/xdr-web-injection.test.mjs test/xdr-known-cve.test.mjs test/xdr-persistence.test.mjs test/xdr-privilege.test.mjs test/xdr-exfiltration.test.mjs",
+    "test:recovery": "node --test test/recovery-stage10.test.mjs",
+    "recovery:preview": "node scripts/recovery-policy.mjs preview",
+    "recovery:apply": "node scripts/recovery-policy.mjs apply",
+    "test:zone": "node --test test/zone-stage8.test.mjs test/zone-api-authorization.test.mjs test/zone-judge-runtime.test.mjs",
+    "test:verified-device": "node --test test/detect-verified-device-stage9.test.mjs",
+    "recovery:diagnose": "node scripts/recovery-diagnose.mjs",
+    "test:decider-contract": "node --test test/decider-contract-stage10.test.mjs",
+    "recovery:retest": "node scripts/recovery-retest.mjs",
+    "judge:check": "node scripts/judge-contract-check.mjs",
+    "test:operations": "node --test test/operations-stage12.test.mjs",
+    "test:device": "node --test test/device-stage11.test.mjs",
+    "test:auth-xdr": "node --test test/auth-xdr-stage12.test.mjs",
+    "test:bundle-isolated": "node --test test/bundle-stage12-isolated.test.mjs"
+  },
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.117.2",
+    "jose": "6.2.12",
+    "@simplewebauthn/server": "13.3.0",
+    "@simplewebauthn/browser": "13.3.0"
+  }
+}

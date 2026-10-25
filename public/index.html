@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#071322">
+  <meta name="description" content="ALEPH SDP 학생 판정, 탐지, 회수, 복구의 실측 증적을 확인하는 탈환 작전실">
+  <title>탈환 작전실 — BYTE BACK</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="stylesheet" href="/operations.css">
+  <link rel="stylesheet" href="/observatory-theme.css">
+</head>
+<body>
+  <a class="skip" href="#main">본문으로 이동</a>
+  <header class="topbar">
+    <a class="brand" href="#overview" aria-label="BYTE BACK 작전실 홈">
+      <span class="brand-icon" aria-hidden="true">B/</span>
+      <span class="brand-title">BYTE BACK <span class="brand-subtitle">ALEPH / STUDENT DEFENSE</span></span>
+    </a>
+    <nav class="mainnav" aria-label="주 메뉴">
+      <a href="#overview">개요</a>
+      <a href="#evidence">증적 원장</a>
+      <a href="#vault">자료실</a>
+      <a href="#runbook">재현 절차</a>
+    </nav>
+    <div class="topmeta"><span class="signal" aria-hidden="true"></span>OFFICIAL JUDGE UNVERIFIED</div>
+  </header>
+  <div class="layout">
+    <aside class="rail" aria-label="작전실 탐색">
+      <p class="rail-title">OPERATIONS / 12</p>
+      <a class="rail-link active" href="#overview">지휘 개요 <small>01</small></a>
+      <a class="rail-link" href="#telemetry">탐지 관측 <small>02</small></a>
+      <a class="rail-link" href="#evidence">검증 원장 <small>03</small></a>
+      <a class="rail-link" href="#redacted">가린 API 기록 <small>04</small></a>
+      <a class="rail-link" href="#vault">기존 자료실 <small>05</small></a>
+      <div class="rail-foot">
+        <p><strong>판정 원칙</strong><br>미실행 시험은 통과로 바꾸지 않습니다. 현행 HTTP 응답은 과거 단계나 공식 심판 결과를 대신하지 않습니다.</p>
+        <p>12 stages / 41 attack types<br>Engine: ALEPH SDP</p>
+      </div>
+    </aside>
+    <main class="maincol" id="main">
+      <section id="overview" aria-labelledby="overview-title">
+        <div class="hero">
+          <div>
+            <p class="section-kicker">SECURITY OPERATIONS / STAGE 12</p>
+            <h1 id="overview-title">탈환 작전실</h1>
+            <p class="lead">판정 규칙, 탐지, 회수, 복구를 하나의 증적 원장에서 확인합니다. 서버가 관측한 응답과 실행하지 않은 검사를 구별하며, 표시된 성공 문구는 통과 근거로 쓰지 않습니다.</p>
+          </div>
+          <div class="hero-orbit" aria-hidden="true"><span></span></div>
+          <div class="hero-actions">
+            <button id="ops-refresh" class="primary" type="button">API 증적 갱신 ↗</button>
+            <button id="ops-export" class="secondary" type="button">가린 JSON 내려받기</button>
+            <span class="micro" id="ops-state" role="status" aria-live="polite">API 관측 전 · 통과 미판정</span>
+          </div>
+        </div>
+        <div class="evidence-note" aria-live="polite">
+          <span>검사 배포 <strong id="ops-target">미확인</strong></span>
+          <span>배포 커밋 <strong id="ops-commit">미확인</strong></span>
+          <span>마지막 HTTP 확인 <strong id="ops-time">미기록</strong></span>
+        </div>
+        <div class="dash-metrics" aria-label="증적 요약">
+          <div class="metric">
+            <div class="metric-head"><span class="metric-label">관측된 HTTP 요청</span><button class="hint" type="button" aria-label="관측된 요청 정보" data-tip="현재 배포에서 서버가 실제 HTTP 응답을 받은 요청 수입니다. 심판 테스트나 방어 성공 수와는 다릅니다.">?</button></div>
+            <div class="metric-value" id="metric-observed">—</div>
+            <div class="metric-desc">서버 응답이 기록된 요청</div>
+          </div>
+          <div class="metric">
+            <div class="metric-head"><span class="metric-label">기대 응답 일치</span><button class="hint" type="button" aria-label="HTTP 일치 정보" data-tip="응답 코드와 안전한 헤더 또는 오류 코드가 자체 점검 기대값과 일치한 건수입니다. 전체 단계 통과로 환산하지 않습니다.">?</button></div>
+            <div class="metric-value" id="metric-verified">—</div>
+            <div class="metric-desc">HTTP 자체 검사 · 공식 점수 아님</div>
+          </div>
+          <div class="metric">
+            <div class="metric-head"><span class="metric-label">공식 단계 검증</span><button class="hint" type="button" aria-label="단계 판정 정보" data-tip="12개 단계 모두의 공식 증거가 필요합니다. 현재 작전실은 공식 판정서를 수집하거나 검증하지 않아 0건으로 보수적으로 표시합니다.">?</button></div>
+            <div class="metric-value"><span id="metric-stages">0</span><span> / 12</span></div>
+            <div class="metric-desc">공식 판정 증거 미연결</div>
+          </div>
+          <div class="metric">
+            <div class="metric-head"><span class="metric-label">41종 공격 방어</span><button class="hint" type="button" aria-label="41종 시험 정보" data-tip="실제 엔진이 수행한 각 공격 유형별 방어 결과만 인정합니다. 자체 테스트와 미실행 항목은 모두 제외합니다.">?</button></div>
+            <div class="metric-value"><span id="metric-attacks">0</span><span> / 41</span></div>
+            <div class="metric-desc">미실행을 통과로 계산하지 않음</div>
+          </div>
+        </div>
+      </section>
+      <section id="telemetry" aria-labelledby="telemetry-title">
+        <div class="section-row"><h2 class="section-title" id="telemetry-title">관측 및 방어 계층</h2><span class="section-note" id="ops-info">실측 기록을 연결하는 중</span></div>
+        <div class="analysis-grid">
+          <div class="panel">
+            <div class="panel-head"><div><h3>HTTP 응답 검증 분포</h3><p>가린 서버 응답만으로 계산 · 각 막대를 선택하면 원장을 필터링합니다.</p></div><span class="badge">LIVE HTTP</span></div>
+            <div class="panel-content">
+              <svg id="outcomes-chart" viewBox="0 0 580 240" role="img" aria-label="API 결과를 불러오기 전"></svg>
+              <div class="chart-key"><i class="square"></i><span>자체 HTTP 일치 ≠ 공식 12단계 통과</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div><h3>규칙 및 실행 상태</h3><p>학생 구현과 운영 엔진의 집행 사실을 구분합니다.</p></div></div>
+            <div class="panel-content">
+              <div class="system-item"><span class="system-name">판정기 규칙</span><div><div class="system-value">학생 모듈에 정의됨 / 엔진 실판정 미검증</div><div class="chips" id="ops-rules"></div></div></div>
+              <div class="system-item"><span class="system-name">탐지 조건</span><div><div class="system-value" id="ops-detection">미확인</div><div class="system-sub">실시간 검증 사건 스트림 연결 증거 없음</div></div></div>
+              <div class="system-item"><span class="system-name">접속 회수</span><div><div class="system-value status-inconclusive" id="ops-revocation">실제 집행 미검증</div><div class="system-sub">propose_revocation은 엔진 회수 성공을 뜻하지 않음</div></div></div>
+              <div class="system-item"><span class="system-name">복구 버전</span><div><div class="system-value" id="ops-recovery">운영 복구 버전 미검증</div><div class="system-sub">합성 safe_v1은 운영 복원 버전으로 인정하지 않음</div></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="strip"><p><strong>최종 총공세 클리어:</strong> 공식 12단계 통과 <strong>AND</strong> 실제 41종 공격 방어. 차별화 과제는 가산점이며, 통과 조건을 대신하지 못합니다.</p><span class="badge">NOT VERIFIED</span></div>
+      </section>
+      <section id="evidence" aria-labelledby="evidence-title">
+        <div class="section-row"><h2 class="section-title" id="evidence-title">1–11단계 검증 원장</h2><span class="section-note">NORMAL / FORBIDDEN · 22 CASES</span></div>
+        <div class="panel">
+          <div class="panel-head"><div><h3>요청·기대 결과·API 실측</h3><p>실제 HTTP 응답이 있으면 수치와 요청 ID를 보여줍니다. 이전 단계 통과 판정은 별도 공식 기록이 필요합니다.</p></div></div>
+          <div class="table-bar">
+            <label for="filter-stage">단계
+              <select id="filter-stage"><option value="all">전체 단계</option><option value="1">01단계</option><option value="2">02단계</option><option value="3">03단계</option><option value="4">04단계</option><option value="5">05단계</option><option value="6">06단계</option><option value="7">07단계</option><option value="8">08단계</option><option value="9">09단계</option><option value="10">10단계</option><option value="11">11단계</option></select>
+            </label>
+            <label for="filter-kind">요청
+              <select id="filter-kind"><option value="all">전체 유형</option><option value="normal">정상</option><option value="forbidden">금지</option></select>
+            </label>
+            <label for="filter-state">관측
+              <select id="filter-state"><option value="all">모든 상태</option><option value="verified">HTTP 일치</option><option value="failed">응답 불일치</option><option value="inconclusive">판정 보류</option><option value="unrun">미실행</option></select>
+            </label>
+            <button id="ops-reset" type="button" class="secondary">초기화</button><span class="count" id="table-count">22개 항목</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th scope="col">단계</th><th scope="col">종류</th><th scope="col">요청</th><th scope="col">기대 결과</th><th scope="col">실제 API</th><th scope="col">분류</th><th scope="col">요청 ID</th><th scope="col">확인 시각 (KST)</th></tr></thead>
+              <tbody id="evidence-body"><tr><td colspan="8">실측 증적을 조회하고 있습니다. 미실행 시험은 미실행으로 남습니다.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      <div class="lower-grid">
+        <section class="panel" id="redacted" aria-labelledby="redacted-title">
+          <div class="panel-head"><div><h3 id="redacted-title">가린 서버 기록</h3><p>메모 본문·비밀번호·접속 토큰·사용자 식별자는 수집하지 않습니다.</p></div><span class="badge">REDACTED</span></div>
+          <div class="panel-content"><div id="ops-records" class="records"><p class="micro">아직 HTTP 응답 기록 없음</p></div></div>
+        </section>
+        <section class="panel" id="runbook" aria-labelledby="runbook-title">
+          <div class="panel-head"><div><h3 id="runbook-title">재현 및 심판 제출 절차</h3><p>관측 사실과 학습용 로컬 시험을 구별합니다.</p></div></div>
+          <div class="panel-content">
+            <ol class="instructions">
+              <li>로그인 전 작전실을 갱신하여 금지 요청의 실제 거부 상태를 관측합니다.</li>
+              <li>공식 계정으로 로그인한 뒤 다시 갱신하여 정상 메모 조회의 허용 여부를 확인합니다.</li>
+              <li>각 행의 기대값·실제 HTTP 코드·요청 ID·시간을 독립 서버 기록과 대조합니다.</li>
+              <li>엔진 판정·탐지·회수·복구와 41종 시험은 공식 결과를 확보하기 전까지 미실행입니다.</li>
+            </ol>
+            <p class="code-line">npm run test:operations && npm run bundle</p>
+            <p class="status">상세 증적 매핑: docs/STAGE12_EVIDENCE.md</p>
+          </div>
+        </section>
+      </div>
+      <section class="vault-section" id="vault" aria-labelledby="vault-title">
+        <div class="vault-top"><div><h2 class="section-title" id="vault-title">기존 학생 자료실</h2><p class="micro">보존된 인증 메모 CRUD · 작전실 기록과 논리적으로 분리</p></div><span class="badge">AUTHENTICATED</span></div>
+        <section class="panel install-panel" aria-label="웹앱 설치 정보">
+          <span id="pwa-state">설치 여부는 기기 승인과 무관합니다.</span>
+          <button class="secondary" id="pwa-install" type="button" hidden>웹앱 설치</button>
+        </section>
+        <section id="device-panel" class="panel device-panel" hidden aria-labelledby="device-heading">
+          <div class="device-heading">
+            <div><h3 id="device-heading">이 기기에서 자료실 열기</h3>
+              <p>로그인과 별도의 인증기 서명이 필요합니다.</p></div>
+            <span class="badge" id="device-state" role="status" aria-live="polite">확인 전</span>
+          </div>
+          <p class="device-detail" id="device-detail">서버의 승인 결과를 확인하기 전에는 보호 자료가 보이지 않습니다.</p>
+          <div class="device-actions">
+            <button class="primary" id="device-enroll" type="button">기기 등록 요청</button>
+            <button class="primary" id="device-unlock" type="button" hidden>승인된 기기로 열기</button>
+            <button class="secondary" id="device-refresh" type="button">서버 승인 다시 확인</button>
+          </div>
+          <p class="device-note">WebAuthn 인증기에서 기기 확인을 완료해야 합니다. 앱 설치 버튼만으로는 승인이 되지 않습니다.</p>
+        </section>
+        <div class="vault-grid">
+          <section id="signed-out" class="panel">
+            <h3>학생 로그인</h3>
+            <form id="login-form">
+              <div class="form-grid">
+                <label for="email">이메일<input id="email" type="email" autocomplete="email" required></label>
+                <label for="password">비밀번호<input id="password" type="password" autocomplete="current-password" required></label>
+              </div>
+              <div class="form-actions"><button class="primary" type="submit">로그인</button></div>
+            </form>
+            <div id="login-status" class="status" aria-live="polite"></div>
+            <div class="notice">로그인 정보는 기존 <code>/api/auth</code> 경로에서 처리합니다. 작전실 자체는 입력한 비밀값을 기록하지 않습니다.</div>
+          </section>
+          <section id="signed-in" class="panel" hidden>
+            <div class="session"><div><strong id="session-label">로그인됨</strong><span class="micro">소유자 검증은 서버에서 수행됩니다.</span></div><button class="secondary" id="logout" type="button">로그아웃</button></div>
+          </section>
+          <section class="panel">
+            <h3>자료 경계</h3>
+            <p class="micro" style="font-family:var(--font);font-size:12px;line-height:1.9">이 영역은 이전 단계에서 만든 본인 메모 편집 기능을 보존합니다. 작전실의 그래프와 증적 표는 메모 제목·본문을 읽거나 출력하지 않습니다. 운영 엔진의 방어 성공 여부는 별도입니다.</p>
+          </section>
+        </div>
+        <section id="workspace" class="panel" hidden style="padding:22px;margin-top:15px">
+          <h3 style="margin:0 0 15px;font-size:14px">내 메모 편집</h3>
+          <form id="create-form" class="composer">
+            <label for="new-title">제목<input id="new-title" maxlength="120" required></label>
+            <label for="new-body">본문<textarea id="new-body" maxlength="2000" required></textarea></label>
+            <button class="primary" type="submit">메모 추가</button>
+          </form>
+          <div id="workspace-status" class="status" aria-live="polite"></div>
+          <div id="notes"></div>
+        </section>
+      </section>
+      <footer class="footer"><span>BYTE BACK / ALEPH SDP ENGINE — STUDENT IMPLEMENTATION</span><span>API evidence is not official grading · No simulated PASS</span></footer>
+    </main>
+  </div>
+  <script src="/vendor/simplewebauthn.umd.min.js"></script>
+  <script>
+
+    const signedOut = document.querySelector('#signed-out');
+    const signedIn = document.querySelector('#signed-in');
+    const workspace = document.querySelector('#workspace');
+    const loginForm = document.querySelector('#login-form');
+    const logoutButton = document.querySelector('#logout');
+    const loginStatus = document.querySelector('#login-status');
+    const workspaceStatus = document.querySelector('#workspace-status');
+    const sessionLabel = document.querySelector('#session-label');
+    const notesRoot = document.querySelector('#notes');
+    const createForm = document.querySelector('#create-form');
+    let session = null;
+    let deviceProof = null;
+    let deviceAccess = null;
+    let deviceTimer = null;
+    let vaultEpoch = 0;
+    const lockVault = () => {
+      vaultEpoch += 1;
+      deviceProof = null;
+      if (deviceTimer !== null) clearTimeout(deviceTimer);
+      deviceTimer = null;
+      notesRoot.replaceChildren();
+      workspace.hidden = true;
+    };
+    const verifiedVault = (proof, expiresInSeconds) => {
+      lockVault();
+      deviceProof = proof;
+      renderAuth();
+      const remainingMs = Number.isFinite(Number(session?.expires_at))
+        && Number(session.expires_at) > 0
+        ? Number(session.expires_at) * 1000 - Date.now() : Infinity;
+      deviceTimer = setTimeout(() => {
+        lockVault(); renderAuth(); void deviceAccess?.status();
+      }, Math.max(1000, Math.min(expiresInSeconds*1000, remainingMs) - 5000));
+      void loadNotes();
+    };
+
+    const setStatus = (element, message = '', error = false) => {
+      element.textContent = message;
+      element.classList.toggle('error', error);
+    };
+
+    const parseJson = async (response) => {
+      try { return await response.json(); } catch { return null; }
+    };
+
+    const applySession = (data) => {
+      if (!data?.accessToken) {
+        lockVault();
+        session = null;
+        return false;
+      }
+      lockVault();
+      session = {
+        access_token: data.accessToken,
+        expires_at: data.expiresAt ?? null,
+        user: data.user ?? null,
+      };
+      return true;
+    };
+
+    const authApi = async (action, body) => {
+      const headers = { Accept: 'application/json' };
+      const init = {
+        method: 'POST',
+        headers,
+        credentials: 'same-origin',
+        cache: 'no-store',
+        redirect: 'error',
+      };
+      if (body) {
+        headers['Content-Type'] = 'application/json';
+        init.body = JSON.stringify(body);
+      }
+      return fetch(`/api/auth/${action}`, init);
+    };
+
+    const restoreSession = async () => {
+      try {
+        const response = await authApi('session');
+        const data = await parseJson(response);
+        if (!response.ok || !applySession(data)) {
+          session = null;
+          return false;
+        }
+        return true;
+      } catch {
+        session = null;
+        return false;
+      }
+    };
+
+    const apiError = async (response, fallback) => {
+      const data = await parseJson(response);
+      return typeof data?.error === 'string' ? data.error : fallback;
+    };
+
+    const authFetch = async (path, init = {}, retry = true) => {
+      if (!session?.access_token && !(await restoreSession())) {
+        throw new Error('로그인이 필요합니다.');
+      }
+      const headers = new Headers(init.headers || {});
+      headers.set('Accept', 'application/json');
+      headers.set('Authorization', `Bearer ${session.access_token}`);
+      if (init.body) headers.set('Content-Type', 'application/json');
+      const isProtected = /^\/api\/(notes|announcements|restore)(?:\/|$)/u.test(path);
+      if (isProtected) {
+        if (!deviceProof) throw Error('기기 서명 인증이 필요합니다.');
+        headers.set('x-aleph-device-proof', deviceProof);
+      }
+      const response = await fetch(path, {
+        ...init,
+        headers,
+        cache: 'no-store',
+        credentials: 'omit',
+        redirect: 'error',
+      });
+      if (response.status === 403 && isProtected) {
+        const payload = await response.clone().json().catch(() => null);
+        if (payload?.error === 'DEVICE_NOT_VERIFIED') {
+          lockVault(); renderAuth(); void deviceAccess?.status();
+        }
+      }
+      if (response.status === 401 && retry && await restoreSession()) {
+        window.dispatchEvent(new Event('aleph:identity'));
+        return authFetch(path, init, false);
+      }
+      return response;
+    };
+
+    const renderAuth = () => {
+      const loggedIn = Boolean(session?.access_token);
+      signedOut.hidden = loggedIn;
+      signedIn.hidden = !loggedIn;
+      workspace.hidden = !(loggedIn && Boolean(deviceProof));
+      sessionLabel.textContent = loggedIn
+        ? `로그인됨 · ${session.user?.email || 'Supabase 계정'}`
+        : '로그아웃됨';
+      if (!loggedIn) {
+        lockVault();
+        notesRoot.replaceChildren();
+        setStatus(workspaceStatus);
+      }
+      window.dispatchEvent(new Event('aleph:session'));
+    };
+
+    const noteEditor = (note) => {
+      const article = document.createElement('article');
+      article.className = 'note';
+      const grid = document.createElement('div');
+      grid.className = 'note-grid';
+
+      const titleLabel = document.createElement('label');
+      titleLabel.textContent = '제목';
+      const title = document.createElement('input');
+      title.maxLength = 120;
+      title.value = note.title;
+      titleLabel.append(title);
+
+      const bodyLabel = document.createElement('label');
+      bodyLabel.textContent = '본문';
+      const body = document.createElement('textarea');
+      body.maxLength = 2000;
+      body.value = note.body;
+      bodyLabel.append(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'note-actions';
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'secondary';
+      save.textContent = '수정 저장';
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'danger';
+      remove.textContent = '삭제';
+      actions.append(save, remove);
+      grid.append(titleLabel, bodyLabel, actions);
+      article.append(grid);
+
+      save.addEventListener('click', async () => {
+        try {
+          setStatus(workspaceStatus, '수정 중…');
+          const response = await authFetch(`/api/notes/${encodeURIComponent(note.id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ title: title.value, body: body.value }),
+          });
+          if (!response.ok) {
+            setStatus(workspaceStatus, await apiError(response, '수정에 실패했습니다.'), true);
+            return;
+          }
+          setStatus(workspaceStatus, '수정했습니다.');
+          await loadNotes();
+        } catch (error) {
+          setStatus(workspaceStatus, error.message, true);
+        }
+      });
+
+      remove.addEventListener('click', async () => {
+        if (!window.confirm('이 가상 메모를 삭제할까요?')) return;
+        try {
+          setStatus(workspaceStatus, '삭제 중…');
+          const response = await authFetch(`/api/notes/${encodeURIComponent(note.id)}`, { method: 'DELETE' });
+          if (!response.ok) {
+            setStatus(workspaceStatus, await apiError(response, '삭제에 실패했습니다.'), true);
+            return;
+          }
+          setStatus(workspaceStatus, '삭제했습니다.');
+          await loadNotes();
+        } catch (error) {
+          setStatus(workspaceStatus, error.message, true);
+        }
+      });
+
+      return article;
+    };
+
+    async function loadNotes() {
+      if (!session?.access_token || !deviceProof) return;
+      const epoch = vaultEpoch;
+      try {
+        const response = await authFetch('/api/notes');
+        if (epoch !== vaultEpoch || !deviceProof) return;
+        if (!response.ok) {
+          const message = await apiError(response, '자료를 읽을 수 없습니다.');
+          if (epoch !== vaultEpoch || !deviceProof) return;
+          setStatus(workspaceStatus, message, true);
+          notesRoot.replaceChildren();
+          return;
+        }
+        const notes = await response.json();
+        if (epoch !== vaultEpoch || !deviceProof) return;
+        if (!Array.isArray(notes)) {
+          setStatus(workspaceStatus, '자료 형식이 맞지 않습니다.', true);
+          return;
+        }
+        notesRoot.replaceChildren(...notes.map(noteEditor));
+        if (!notes.length) setStatus(workspaceStatus, '메모가 없습니다.');
+      } catch (error) {
+        if (epoch !== vaultEpoch) return;
+        setStatus(workspaceStatus, error.message, true);
+        session = null;
+        renderAuth();
+      }
+    }
+
+    loginForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      setStatus(loginStatus, '로그인 중…');
+      try {
+        const response = await authApi('login', {
+          email: document.querySelector('#email').value,
+          password: document.querySelector('#password').value,
+        });
+        const data = await parseJson(response);
+        document.querySelector('#password').value = '';
+        if (!response.ok || !applySession(data)) {
+          setStatus(loginStatus, response.status === 429
+            ? '로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.'
+            : response.status === 503 && data?.error === 'AUTH_RISK_GUARD_UNAVAILABLE'
+              ? '로그인 보안 확인이 불가능하여 접근을 일시 중단했습니다.'
+              : data?.error === 'LOGIN_FAILED'
+                ? '로그인 정보가 일치하지 않습니다.'
+                : data?.error || '로그인에 실패했습니다.', true);
+          return;
+        }
+        setStatus(loginStatus);
+        renderAuth();
+        window.dispatchEvent(new Event('aleph:identity'));
+      } catch {
+        setStatus(loginStatus, '로그인 서버에 연결할 수 없습니다.', true);
+      }
+    });
+
+    logoutButton.addEventListener('click', async () => {
+      try { await authApi('logout'); } catch {}
+      session = null;
+      lockVault();
+      renderAuth();
+      window.dispatchEvent(new Event('aleph:identity'));
+    });
+
+    createForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const title = document.querySelector('#new-title');
+      const body = document.querySelector('#new-body');
+      try {
+        setStatus(workspaceStatus, '추가 중…');
+        const response = await authFetch('/api/notes', {
+          method: 'POST',
+          body: JSON.stringify({ title: title.value, body: body.value }),
+        });
+        if (!response.ok) {
+          setStatus(workspaceStatus, await apiError(response, '추가에 실패했습니다.'), true);
+          return;
+        }
+        title.value = '';
+        body.value = '';
+        setStatus(workspaceStatus, '추가했습니다.');
+        await loadNotes();
+      } catch (error) {
+        setStatus(workspaceStatus, error.message, true);
+      }
+    });
+
+    (async () => {
+      await restoreSession();
+      renderAuth();
+      window.dispatchEvent(new Event('aleph:identity'));
+    })();
+
+    import('/device.mjs').then(({initDeviceAccess}) => {
+      deviceAccess = initDeviceAccess({
+        getAccessToken: () => session?.access_token ?? null,
+        onAuthorized: verifiedVault,
+        onLocked: () => { lockVault(); renderAuth(); }
+      });
+    }).catch(() => {
+      const status = document.querySelector('#device-state');
+      if (status) status.textContent = '기기 검증 구성 오류';
+    });
+    import('/operations.mjs').then(({ initOperations }) => {
+      initOperations({getToken: () => session?.access_token ?? null, getDeviceProof: () => deviceProof});
+    }).catch(() => { const el = document.querySelector('#ops-state'); if (el) el.textContent = '동적 화면을 불러오지 못했습니다.'; });
+
+  </script>
+</body>
+</html>
