@@ -90,3 +90,10 @@ flowchart LR
 - **CLCO 앱 AI**: 학생 앱별 승인 모델·이용 권한·사건 설명의 게이트. 개발 지원 AI 또는 공식 판정 AI와 다르다.
 
 **검증 기록:** 파일·메서드·값은 GitHub 소스에서 대조함. 실제 Windows 실행·SDP 실계정·AI 게이트 접속·OSV 원격 응답·원천 조치 효과·공식 21단계 제출은 **미실행·미확인(UNV)**.
+
+## 6. Linux 실행과 비밀 설정의 경계
+
+- **Linux 기본 실행 경로:** `on-client/package.json`의 `npm start`가 `node src/server.mjs`를 호출한다. 서버는 `127.0.0.1:5189`에만 바인딩한다. 이는 코드상 지원 경로이며 실제 Linux 브라우저 실증은 미확인이다.
+- **Windows 전용 인증:** `on-client/src/connection/native-context.mjs`와 `on-client/src/ai/credential-vault.mjs`에 Windows 플랫폼 검사가 있다. Linux에서 Native Host 실계정 승인, 자격 저장소·유료 AI 연결 성공으로 오인하지 않는다.
+- **설정 견본:** `on-client/.env.example`은 `ON_PORT=5189` 및 `ON_APPROVED_PUBLIC_PACKAGES=[]`의 공개 기본값만 기록한다. 실제 비밀 설정은 포함하지 않고 자동으로 로드되지 않는다. `.gitignore`는 `.env`를 제외하되 `.env.example`만 포함한다.
+- 실제 계정·SDP·AI·OSV·원천 집행은 계속 미확인(UNV)이며, 원천이 제공하지 않은 자격을 만들지 않는다.

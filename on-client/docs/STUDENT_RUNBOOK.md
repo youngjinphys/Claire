@@ -2,7 +2,7 @@
 
 **대상:** `youngjinphys/Claire` 저장소의 `on-client/` 앱. 이 문서는 제공 코드를 덮어쓰지 않은 별도 학생 문서다. 앱의 제공 UI에 기본 이름 **케셰브(KESHEV)**가 나타날 수 있지만 사용자 지정 Agent 이름은 **Claire**이며 실행 파일명은 그대로 사용한다.
 
-**증거 구분:** 아래 경로·명령·출력 문구는 GitHub의 `on-client/package.json`, `on-client/tools/start-alekov.ps1`, `on-client/src/server.mjs`, `on-client/public/index.html` 등 **원문 소스에서 확인**했다. 이 문서를 작성하면서 Windows PC에서 실행하거나 실제 SDP·AI·OSV·조치를 요청한 사실은 **없다(미확인)**. '예상 출력'은 성공 실측 결과가 아니다.
+**증거 구분:** 아래 경로·명령·출력 문구는 GitHub의 `on-client/package.json`, `on-client/tools/start-alekov.ps1`, `on-client/src/server.mjs`, `on-client/public/index.html` 등 **원문 소스에서 확인**했다. 이 문서를 작성하면서 Windows PowerShell 또는 사용자의 Linux PC에서 앱을 실제 실행하거나, 운영 SDP·AI·OSV·조치를 요청한 사실은 **없다(미확인)**. '예상 출력'은 성공 실측 결과가 아니다.
 
 ## 1. 목적과 관측 범위
 
@@ -23,7 +23,8 @@ Claire는 본인 계정·기기·현재 세션, 업무 앱 접근 판정, 본인
 |---|---|---|
 | Node.js | `on-client/package.json`: `engines.node=24.19.0`; `start-alekov.ps1`은 **22~24 허용**, 권장 **24.19.0** | `node --version` 출력 미확인 |
 | npm | `on-client/package.json`: `start`, `demo`, `check`. 앱 패키지에 외부 npm `dependencies` 선언 없음 | `npm --version` 미확인 |
-| Windows PowerShell | 공식 실행 도구 `on-client/tools/start-alekov.ps1` | Windows 실제 실행 미확인 |
+| Linux 터미널 | `on-client/package.json`의 `npm start`(Node.js 서버), 기본·예제 경로 | Linux 실제 실행 미확인 |
+| Windows PowerShell | 공식 실행 도구 `on-client/tools/start-alekov.ps1` | Windows PC가 없어 미실행 |
 | Git | 40자리 제출 SHA·기존 작업 보존 | 현재 PC의 `git status` 미확인 |
 | 앱 시작 틀 | `on-client/package.json` `version=0.2.11` | 파일 값 확인; 실제 실행 버전 미확인 |
 
@@ -34,6 +35,7 @@ Claire/                               <- Git 최상위, 커밋/21단계 제출 �
 ├── package.json                      <- 기존 방어전 루트 앱(학생 앱과 별도)
 ├── on-client/                        <- Claire 앱 / PowerShell 실행 위치
 │   ├── package.json                  <- 0.2.11: start, demo, check
+│   ├── .env.example                  <- 공개 기본값만 있는 설정 견본
 │   ├── tools/start-alekov.ps1        <- 제공 실행 도구
 │   ├── public/index.html             <- 제공 화면·메뉴
 │   ├── public/app.js                 <- 제공 버튼·API 요청·학생 훅 호출
@@ -55,9 +57,49 @@ Claire/                               <- Git 최상위, 커밋/21단계 제출 �
 
 **중요:** 17~20단계 검사 당시 만들었던 **250KB 이하 경량화 커밋**은 `tools/start-alekov.ps1`과 서버 의존 모듈 등 파일 209개가 없어 **전체 앱 실행에 사용할 수 없다**. 아래 절차는 이 파일들을 보존·복원한 **완전한 트리**에만 적용한다. 파일이 없다면 임의 구현·덮어쓰기·`git reset --hard`를 하지 않는다.
 
-## 3. 새 PowerShell 창에서 실행할 순서
+## 3. Linux 및 Windows 실행 순서
 
-### 3.1 Git 최상위 `Claire` 폴더에서 확인
+### Linux 터미널 — 현재 사용 환경(코드 기준, 실제 실행 미확인)
+
+Windows PowerShell은 필요 없다. **Git 저장소 최상위 `Claire/`**에서 Bash 등 Linux 터미널을 열고 아래 명령으로 현재 소스와 실제 설치 버전을 확인한다. 이 문서는 명령의 소스 정합성을 점검했지만, 사용자의 Linux PC에서 실행한 결과는 아직 없다.
+
+~~~bash
+pwd
+git status --short
+git rev-parse --show-toplevel
+git rev-parse HEAD
+node --version
+npm --version
+test -f on-client/package.json
+test -f on-client/public/index.html
+test -f on-client/src/server.mjs
+test -f on-client/src/ai/service.mjs
+test -f on-client/student/extension.mjs
+~~~
+
+`test -f`는 파일이 있으면 종료 코드 0이고 출력이 없는 것이 정상이다. 파일이 누락되면 판정용 경량화 커밋일 수 있다. 기존 파일이나 미커밋 작업을 덮어쓰지 말고 전체 프로젝트인지 확인한다. 앱 `package.json`에는 외부 npm 의존성 설치 단계가 없으며, 기준 Node 버전은 **24.19.0**이다. 실제 Linux의 버전은 `node --version` 출력으로만 확인한다.
+
+~~~bash
+cd on-client
+npm run check
+npm start
+~~~
+
+`npm run check`는 학생 JavaScript의 **문법 검사만** 수행한다. `npm start`는 `node src/server.mjs`이며, 기본 포트는 서버 소스의 `ON_PORT` 기본값 **5189**, 바인딩은 `127.0.0.1`이다. 코드상 예상되는 시작 메시지는 아래와 같으나 **현재 실제 실행은 미확인**이다.
+
+~~~text
+케셰브 연결 확인: http://127.0.0.1:5189
+~~~
+
+Linux 브라우저에서 **http://127.0.0.1:5189/**를 열고 「보호 현황」·「업무 앱」·「보안 기록」이 보이는지 확인한다. 기본 실행 `disconnected`는 실제 SDP·AI 연결을 뜻하지 않는다. 예제만 볼 때의 `npm run demo`는 `--demo`를 사용하는 별도 실행이며 실계정·공식 판정 성공의 증거가 아니다.
+
+서버 **종료**는 실행 터미널에서 `Ctrl+C`, **재실행**은 같은 `on-client` 폴더에서 `npm start`를 다시 수행한다. 포트가 충돌하면 다른 프로그램을 임의 종료하지 말고 점유 프로그램을 확인한다. 공개 설정 견본 `on-client/.env.example`의 `ON_PORT`는 **자동 로드되지 않으므로** 파일만 수정해 포트가 바뀌었다고 판단하지 않는다.
+
+**Linux의 기능 경계:** `on-client/src/connection/native-context.mjs` 및 `on-client/src/ai/credential-vault.mjs`는 Windows 전용 플랫폼 검사를 포함한다. 따라서 Linux에서 가능한 **기본/예제 로컬 표시 경로**를 Windows Native Host 계정 승인·보호된 앱 자격 저장소 또는 실제 AI 설명 성공과 동일시하지 않는다. 이 운영 기능은 Linux에서 **미지원 또는 미확인(UNV)**이며 보호 장치를 우회하지 않는다.
+
+---
+
+### 3.1 Windows PowerShell(참고): Git 최상위 `Claire` 폴더에서 확인
 
 파일 탐색기에서 **`Claire` 폴더(`on-client` 바로 위)**를 열고 주소 표시줄에 `powershell`을 입력한다. 새 PowerShell에서 다음을 **조회만** 한다.
 
@@ -125,7 +167,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1 -Po
 | 계정·AI 앱 승인 | `-NativeHostConfig`; `docs/AI_SETUP_GUIDE.md` 계약 | 비밀 토큰·앱 허용 모델·인증서·자격 저장소 |
 | OSV 조회 | 서버의 `ON_PROJECT_DIRECTORY`와 `ON_APPROVED_PUBLIC_PACKAGES` | 조회 대상 프로젝트와 허용 공개 npm 목록 |
 
-개인 설정·인증서·비밀값은 **프로젝트·Git·제출물 밖**에 보관하고, 경로와 값은 운영자 안내를 받는다. Workbench 키를 복사하거나 학생 설명서에 비밀번호·토큰을 적지 않는다. 기존 `on-client/README.md`가 `.env.example`을 언급하지만 **확인한 전체 Git 트리에는 `on-client/.env.example`이 없다**. 존재하지 않는 설정 견본을 만들거나 실제 설정인 것처럼 제시하지 않는다.
+개인 설정·인증서·실제 비밀값은 **프로젝트·Git·제출물 밖** 또는 승인된 보호 저장소에 보관하고, 발급·보관 방법은 운영자 안내를 따른다. Workbench 키를 복사하거나 설명서·Git·도움정보에 비밀번호·토큰을 기록하지 않는다. **`on-client/.env.example`은 실계정 값이 전혀 없는 공개 설정 견본**으로 기본 루프백 포트와 비어 있는 공개 패키지 허용 목록만 담는다. 실제 `.env`와 `.env.*`는 Git에서 제외하며, `.env.example`만 예외적으로 추적한다. 이 견본은 `npm start`에서 **자동으로 적용되지 않는다**.
+
+**Linux에서 제출 전 파일명만 확인(값은 읽거나 출력하지 않음):** Git 최상위 폴더에서 아래 명령을 실행한다.
+
+~~~bash
+git ls-files -- 'on-client/.env' 'on-client/.env.local'
+git ls-files -- 'on-client/.env.example'
+~~~
+
+첫 명령은 출력이 **없어야** 한다. 두 번째는 `on-client/.env.example` 경로만 보여야 한다. 실제 비밀파일이 추적되고 있으면 제출을 중단하고 운영자와 안전한 제거·자격 교체를 협의한다. **Git의 현재 작업 트리가 깨끗해도 이전 커밋에 노출된 실제 자격이 있다면 새 커밋만으로 유출이 취소되지 않는다.**
+
 
 ## 5. 구현 함수와 제공 코드 경계
 
@@ -182,7 +234,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1 -Po
 | 확인 대상 | 현재 증거 | 다음 수동 확인 |
 |---|---|---|
 | 소스 파일·스크립트·함수·버전 | **GitHub 원문 대조** | `git rev-parse HEAD`와 파일 존재 여부 |
-| Windows Node/npm 버전·실행 | **미확인** | 새 PowerShell에서 `node --version`·`npm run check`·시작 신호 |
+| Linux Node/npm 버전·기본 앱 실행 | **미확인** | Linux에서 `node --version`·`npm run check`·`npm start` 시작 신호 |
+| Windows PowerShell 실행 | **미확인(사용 가능한 Windows PC 없음)** | Windows 환경이 확보될 때에만 확인 |
 | 브라우저 메뉴와 버튼 | **소스 확인·실제 브라우저 미확인** | 3개 탭·상태·버튼 문구 |
 | SDP 실계정·XDR 연결 | **미확인(UNV)** | 허가된 계정 연결에서만 실증 |
 | 실제 AI 앱 승인·생성 모델 호출 | **미확인(UNV)** | 운영자 권한 준비 후 별도 확인. 유료 호출 반복 금지 |
@@ -194,6 +247,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1 -Po
 
 최신 과제 안내에 따라 **워크벤치의 「포털 제출 준비」는 13~20단계만 지원**한다. 21·22단계는 과제 화면에 **저장소 URL과 `git rev-parse HEAD`가 출력하는 40자리 SHA**를 직접 입력한다. 제출 전 `git status --short`로 다른 작업이 섞이지 않았는지 살펴본다.
 
-비공개 저장소라면 포털의 `비공개 저장소 원문 준비 방법` → `원문 전달 도구 받기`를 사용한다. ZIP과 결과 JSON 경로는 모두 프로젝트 밖의 별도 폴더로 정한다. 공식 `student-source-cli.mjs` 명령은 **저장소 최상위** PowerShell에서 실행하고, `--commit`에 그 단계의 40자리 SHA를 지정한다. **해당 CLI의 완전한 실행 명령은 현재 소스에 없으므로 플래그를 지어내지 않는다**. 과제 화면에 표시된 실제 명령을 사용한다.
+비공개 저장소라면 포털의 `비공개 저장소 원문 준비 방법` → `원문 전달 도구 받기`를 사용한다. ZIP과 결과 JSON 경로는 모두 프로젝트 밖의 별도 폴더로 정한다. 공식 `student-source-cli.mjs` 원문 전달 명령은 **저장소 최상위**에서 실행하고, `--commit`에 그 단계의 40자리 SHA를 지정한다. **사용자는 Linux 환경이므로 PowerShell 전용 명령을 그대로 실행하지 않는다.** Linux 터미널에서 해당 단계 과제 화면의 공식 도구 안내와 실제 다운로드한 CLI 원문을 확인한 뒤 Node.js 실행 명령 및 파일 경로만 환경에 맞춘다. 도구 자체의 Linux 호환 여부와 전체 플래그·경로는 이 소스에 없으므로 **미확인**이며, CLI 사용법을 추측하거나 실제 원문 업로드를 수행하지 않는다. 공식 원문 준비 명령을 받은 후에만 실행한다.
 
 포털의 `비공개 저장소 원문 묶음`에 JSON을 골라 저장소·커밋·단계를 재확인해 제출한다. 원문 전송 성공은 AI 판정 통과가 아니며, 전송만 실패할 때는 포털의 `원문만 다시 보내기` 안내를 따른다. 22단계 새 환경 재현과 `v1.0` 완료 선언은 21단계 문서 작성과 별개다.
