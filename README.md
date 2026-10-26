@@ -1,3 +1,12 @@
+## 2026-10-26 · 저장소 품질 게이트 및 Claire 로컬 에이전트 유지보수
+
+- 누락된 기존 방어전 회귀 테스트 26개를 기존 Git 이력에서 복구하고 `npm test` 진입점과 GitHub Actions CI를 추가합니다. 테스트의 예시 자격정보는 실제 계정 비밀이 아닌 가상 fixture이며 운영 인증정보를 넣지 않습니다.
+- Claire AI 오류의 `retryable` 표시를 일시적 네트워크/서버 장애와 권한·설정 오류로 구분하고, 진단 버전을 `on-client/package.json`에서 읽어 자동 동기화합니다. 로컬 시작 표시도 Claire로 통일합니다.
+- 검증 명령: 루트에서 `npm ci && npm test && npm run build -- --local`, 이후 `npm --prefix on-client run check && npm --prefix on-client test`. GitHub Actions는 동일한 비운영 검증을 별도로 수행합니다.
+- **검증 범위:** 이 저장소의 mock/unit/로컬 HTTP 검증은 실제 SDP·CLCO·Windows 기기 인증·공식 심판 통과나 배포 성공의 증거가 아닙니다. 변경 근거 및 미해결 항목은 [품질 감사 기록](docs/QUALITY_AUDIT_2026-10-26.md)을 참조하세요.
+
+---
+
 ## 2026-10-26 · Claire (on-client 22단계) 렌더러 리팩토링 및 명칭 정비
 
 - **작동하는 기능**: `on-client/` 보안 에이전트(Claire)의 8개 학생 렌더링 뷰(`renderIdentity`, `renderDecision`, `renderEvents`, `renderStatus`, `renderVulnerabilities`, `renderAiConnection`, `renderExplanation`, `renderAction`) UI 개선 및 방어적 유틸리티 함수 분리. 제품 개요 및 최종 설명서의 에이전트 기본 명칭(`케셰브` -> `Claire`) 정비.

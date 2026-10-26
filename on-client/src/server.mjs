@@ -1,4 +1,5 @@
 import http from 'node:http';
+import packageManifest from '../package.json' with { type: 'json' };
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
@@ -120,7 +121,7 @@ function assertAiBinding(binding,source) {
 }
 function aiFailure(output) {
   const code=Object.hasOwn(aiErrorMessages,output?.error?.code)?output.error.code:'WB_CLCO_REQUEST_FAILED';
-  return {code,message:aiErrorMessages[code],retryable:true};
+  return {code,message:aiErrorMessages[code],retryable:AI_RETRYABLE.has(code)};
 }
 function aiHelp(output) {
   const value=output?.help;
@@ -511,7 +512,7 @@ export function createOnServer(serverOptions={}) {
           if(raw===null||typeof raw!=='object'||types.isProxy(raw))throw engineError('SERVICE_UNAVAILABLE','');
           const ok=Object.getOwnPropertyDescriptor(raw,'ok');if(!ok||!Object.hasOwn(ok,'value')||typeof ok.value!=='boolean')throw engineError('SERVICE_UNAVAILABLE','');
           if(ok.value===false){const output=capture(raw,['ok','error','help']),error=capture(output.error,['code','message']);
-            const code=Object.hasOwn(aiErrorMessages,error.code)?error.code:'WB_CLCO_REQUEST_FAILED';assertAlive();send(503,{ok:false,error:{code,message:aiErrorMessages[code],retryable:true}});return;}
+            const code=Object.hasOwn(aiErrorMessages,error.code)?error.code:'WB_CLCO_REQUEST_FAILED';assertAlive();send(503,{ok:false,error:{code,message:aiErrorMessages[code],retryable:AI_RETRYABLE.has(code)}});return;}
           const output=capture(raw,['ok','transportChecked','audienceAuthorization','explanation','authorizationValidUntilMs','help']);
           if(output.transportChecked!==true||output.audienceAuthorization!=='verified'||!Number.isSafeInteger(output.authorizationValidUntilMs)||output.authorizationValidUntilMs<=Date.now())throw engineError('ON_AI_PROVISIONING_PENDING','');
           aiHelp({audienceAuthorization:'verified',help:capture(output.help,['component','code','appCredentialsConfigured','provisioning','automaticRetries','workbenchRequiredAtRuntime'])});
@@ -663,7 +664,7 @@ export function createOnServer(serverOptions={}) {
           const errorFields=Object.getOwnPropertyDescriptors(error);
           if(Reflect.ownKeys(errorFields).length!==2||['code','message'].some(key=>!Object.hasOwn(errorFields,key)||!Object.hasOwn(errorFields[key],'value')))throw engineError('SERVICE_UNAVAILABLE','');
           const code=Object.hasOwn(aiErrorMessages,errorFields.code.value)?errorFields.code.value:'WB_CLCO_REQUEST_FAILED';
-          send(503,{ok:false,error:{code,message:aiErrorMessages[code],retryable:true}});return;
+          send(503,{ok:false,error:{code,message:aiErrorMessages[code],retryable:AI_RETRYABLE.has(code)}});return;
         }
         const keys=['ok','transportChecked','audienceAuthorization','guide','help','authorizationValidUntilMs'];
         if(Reflect.ownKeys(descriptors).length!==keys.length||keys.some(key=>!Object.hasOwn(descriptors,key))
@@ -684,7 +685,7 @@ export function createOnServer(serverOptions={}) {
       if(req.method==='GET'&&url.pathname==='/api/diagnostics'){
         // 자동 호출이나 비밀 원문·전체 설정 출력 없이 로컬 연결 상태만 진단한다.
         const info=(mappedAi??defaultAi).connectionInfo();
-        send(200,{ok:true,data:{requestId,component:'on-client',version:'0.1.0',engine:{mode,code:mode==='disconnected'?'ENGINE_NOT_CONNECTED':mode==='demo'?'DEMO_ONLY':'ADAPTER_CONFIGURED'},
+        send(200,{ok:true,data:{requestId,component:'on-client',version:packageManifest.version,engine:{mode,code:mode==='disconnected'?'ENGINE_NOT_CONNECTED':mode==='demo'?'DEMO_ONLY':'ADAPTER_CONFIGURED'},
           ai:{configured:info?.configured===true,authorized:false,authorizationRequired:true},checkedAt:clock().toISOString(),workbenchRequiredAtRuntime:false}});return;
       }
       if(req.method==='GET'&&url.pathname==='/api/vulnerabilities'){
@@ -741,5 +742,5 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
       ...(actionStartup?{sdpActionStartup:actionStartup.sdpActionStartup}:{})});
   }catch(error){sdpHost?.close();throw error;}
   if(sdpHost){server.once('close',()=>sdpHost.close());server.once('error',()=>sdpHost.close());}
-  server.listen(port,'127.0.0.1',()=>console.log(`케셰브 ${demo?'예제':'연결 확인'}: http://127.0.0.1:${port}`));
+  server.listen(port,'127.0.0.1',()=>console.log(`Claire ${demo?'예제':'연결 확인'}: http://127.0.0.1:${port}`));
 }
