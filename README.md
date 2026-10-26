@@ -1,3 +1,17 @@
+## 2026-10-26 · Claire (on-client 22단계) 렌더러 리팩토링 및 명칭 정비
+
+- **작동하는 기능**: `on-client/` 보안 에이전트(Claire)의 8개 학생 렌더링 뷰(`renderIdentity`, `renderDecision`, `renderEvents`, `renderStatus`, `renderVulnerabilities`, `renderAiConnection`, `renderExplanation`, `renderAction`) UI 개선 및 방어적 유틸리티 함수 분리. 제품 개요 및 최종 설명서의 에이전트 기본 명칭(`케셰브` -> `Claire`) 정비.
+- **다시 실행하는 방법**:
+  ```bash
+  cd on-client
+  npm run check
+  npm run demo
+  ```
+  브라우저에서 `http://127.0.0.1:5189/` 접속하여 보호 현황, 업무 앱, 보안 기록 탭 및 Claire Agent UI 확인.
+- **검증 및 지문**: `student/extension.mjs` blob `52aa5c662fbfb5a0fd8cb07fba9b2bf7ce9383ef`, 런타임 트리 SHA-256 `2dd9358da1c80aa43dfe061d0f49a8a894c69da515edc0e5ce8f88098cac65a0`을 `STUDENT_RELEASE_RECORD.md` 및 `STUDENT_REPRO_EVIDENCE.json`에 결속 기록.
+
+---
+
 ## 2026-10-16 · Observatory 관제 UI 시각 레이어 (12단계 평가 이후)
 
 - **평가용 저장점**: 12단계 단일 커밋 `304bbf199bbf832dd38ada4cfebf5ed3828d177b`은 보존됩니다. 아래 원본 문서의 'main HEAD가 11단계의 직접 자식' 조건은 **평가용 커밋**에만 해당합니다. 이번 후속 UI 커밋은 별도이며 공식 평가 대상 저장점이라고 주장하지 않습니다.

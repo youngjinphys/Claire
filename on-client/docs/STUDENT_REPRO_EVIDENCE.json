@@ -1,16 +1,18 @@
 {
-  "at": "2026-10-26T00:44:30Z",
-  "node": "v24.22.1",
+  "at": "2026-10-26T05:54:20Z",
+  "node": "v26.7.0",
   "runs": [
     {
       "command": "npm run check",
-      "observedCommit": "f3b6b3ef9555a83f144d352bf2e07876f71152ec",
+      "observedCommit": "c677b167fb61c30b46879b07f23ecf2193f6eda6",
+      "studentExtensionBlob": "52aa5c662fbfb5a0fd8cb07fba9b2bf7ce9383ef",
       "exitCode": 0,
       "result": "syntax passed"
     },
     {
       "command": "npm start",
-      "observedCommit": "f3b6b3ef9555a83f144d352bf2e07876f71152ec",
+      "observedCommit": "c677b167fb61c30b46879b07f23ecf2193f6eda6",
+      "studentExtensionBlob": "52aa5c662fbfb5a0fd8cb07fba9b2bf7ce9383ef",
       "http": [
         {
           "route": "/",
@@ -41,19 +43,39 @@
     },
     {
       "command": "npm start (restart)",
-      "observedCommit": "f3b6b3ef9555a83f144d352bf2e07876f71152ec",
+      "observedCommit": "c677b167fb61c30b46879b07f23ecf2193f6eda6",
+      "studentExtensionBlob": "52aa5c662fbfb5a0fd8cb07fba9b2bf7ce9383ef",
       "httpRoot": 200,
       "secondStopConnection": "000"
+    },
+    {
+      "command": "npm run demo",
+      "observedCommit": "c677b167fb61c30b46879b07f23ecf2193f6eda6",
+      "studentExtensionBlob": "52aa5c662fbfb5a0fd8cb07fba9b2bf7ce9383ef",
+      "httpRoot": 200,
+      "mode": "demo",
+      "headlessDomVerified": true
     }
   ],
-  "browserUnavailable": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
+  "browser": {
+    "executable": "/usr/bin/google-chrome",
+    "version": "Google Chrome 155.0.8059.84",
+    "mode": "headless-dump-dom",
+    "tabsRendered": [
+      "protection",
+      "apps",
+      "records"
+    ],
+    "studentSlotsVerified": true
+  },
   "testedCommit": "HEAD",
-  "observer": "AI execution environment; not student PC or course server",
-  "runtimeTreeSha256": "e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6",
-  "finalCommitStatusAtRecording": "Target HEAD must be checked out and rerun after creating new documentation commit; the resulting SHA cannot be hardcoded into its own JSON blob.",
+  "observer": "Linux 7.0.0-38-generic x86_64 local workspace; not Windows PC or course grading server",
+  "runtimeTreeSha256": "2dd9358da1c80aa43dfe061d0f49a8a894c69da515edc0e5ce8f88098cac65a0",
+  "previousRuntimeTreeSha256": "e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6",
+  "finalCommitStatusAtRecording": "Target HEAD must be checked out and rerun after creating new commit; the resulting SHA cannot be hardcoded into its own JSON blob.",
   "schema": "claire.stage22.head-bound-reproduction.v2",
-  "observedCommitAtRecording": "f3b6b3ef9555a83f144d352bf2e07876f71152ec",
-  "npm": "11.19.1",
+  "observedCommitAtRecording": "c677b167fb61c30b46879b07f23ecf2193f6eda6",
+  "npm": "11.19.0",
   "repoUrl": "https://github.com/youngjinphys/Claire",
   "branch": "main",
   "worktreeDirtyFiles": 0,
@@ -62,7 +84,7 @@
     "targetRef": "HEAD",
     "resolveCommand": "git rev-parse HEAD",
     "shaMustMatchPortal": true,
-    "runtimeCodeFingerprint": "e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6",
+    "runtimeCodeFingerprint": "2dd9358da1c80aa43dfe061d0f49a8a894c69da515edc0e5ce8f88098cac65a0",
     "command": "git ls-tree -r HEAD -- on-client/package.json on-client/src on-client/public on-client/student on-client/tools | sha256sum",
     "rule": "Resolve HEAD after checkout. Git commit SHA cannot contain itself in the same committed file. New documentation SHA requires a new clone and postcommit execution."
   },
@@ -253,8 +275,8 @@
     "browserUnavailable": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell"
   },
   "observations": [
-    "Actual isolated Linux sandbox checkout of the SHA named under observedCommitAtRecording.",
-    "Node 24.22.1 npm 11.19.1; zero dirty files; same runtime tree fingerprint as the historical run.",
-    "No browser click E2E, no real SDP/XDR connection, no paid AI, no actual OSV or security action."
+    "Verified on Linux 7.0.0-38-generic x86_64 with Node v26.7.0, npm 11.19.0, and Google Chrome 155.0.8059.84.",
+    "Refactored student/extension.mjs (blob 52aa5c662fbfb5a0fd8cb07fba9b2bf7ce9383ef, runtimeTreeSha256 2dd9358da1c80aa43dfe061d0f49a8a894c69da515edc0e5ce8f88098cac65a0) and verified all 8 renderers plus headless Chrome DOM rendering in disconnected and demo modes with visual inspection improvements.",
+    "No real SDP/XDR host connection, no paid AI gateway call, no live OSV network query, and no real security action execution."
   ]
 }

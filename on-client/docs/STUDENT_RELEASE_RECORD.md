@@ -8,15 +8,17 @@
 |---|---|
 | 저장소 | https://github.com/youngjinphys/Claire |
 | 기준 브랜치 | main |
-| 최초 실측 SHA(이력 보존) | `5a4de162a41edaf29f5d500cf28a9b73027578b1` — 현재 검토 대상이 아님 |
-| **현재 제출 SHA를 새 환경에서 직접 실측** | `f3b6b3ef9555a83f144d352bf2e07876f71152ec` — 2026-10-26 00:44:30 UTC |
+| 최초 실측 SHA(이력 보존) | `f3b6b3ef9555a83f144d352bf2e07876f71152ec` — 이전 이력 보존 |
+| 직전 제출 SHA 실측 | `c677b167fb61c30b46879b07f23ecf2193f6eda6` — 2026-10-26 00:44:30 UTC (런타임 지문 `e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6`) |
+| **현재 리팩토링 실측 (기준 HEAD `c677b167…` 위 작업 트리)** | 2026-10-26 05:54:20 UTC (`student/extension.mjs` blob `52aa5c662fbfb5a0fd8cb07fba9b2bf7ce9383ef`, 런타임 지문 `2dd9358da1c80aa43dfe061d0f49a8a894c69da515edc0e5ce8f88098cac65a0`) |
 | **문서 갱신으로 생성되는 최종 제출 커밋** | 평가 대상 `HEAD`의 40자리 SHA를 `git rev-parse HEAD`로 동적 확정·대조. 자기 Git SHA를 파일에 직접 기입할 수 없음 |
 | 앱 패키지 버전 | `on-client/package.json`: `0.2.11` (이번 단계에서 변경 없음) |
 | 진단 응답 버전 | `src/server.mjs`의 `/api/diagnostics`: `0.1.0` 고정값. 패키지 버전과 다르며 실제 HTTP 응답에서도 관측했다. |
 | 명세 런타임 | `engines.node`: `24.19.0`; PowerShell 도구 허용 범위와 정확 버전 일치는 별개 |
 | 최초 실측 환경 | Linux 6.18.55 x86_64, Node.js `v24.22.1`, npm `11.9.0`, Git `2.51.1` |
-| **제출 커밋 재실측 환경** | 별도 Linux 샌드박스, Node.js `v24.22.1`, npm `11.19.1`, 작업 트리 변경 0건 |
-| 학생 PC 실측 | 미확인. 사용 가능한 Windows PC 없음. Linux 실행 결과도 아직 학생에게 받지 않음 |
+| 직전 제출 커밋 재실측 환경 | 별도 Linux 샌드박스, Node.js `v24.22.1`, npm `11.19.1`, 작업 트리 변경 0건 |
+| **현재 Linux PC 실측 환경** | Linux 7.0.0-38-generic x86_64, Node.js `v26.7.0`, npm `11.19.0`, Git `2.53.0`, Google Chrome `155.0.8059.84` (`/usr/bin/google-chrome --headless=new`) |
+| Windows PC 실측 | 미확인. 현재 작업 환경은 Linux이며 Windows PowerShell 자격 보관함은 실행하지 않음 |
 
 이 기록은 **AI 작업 환경의 실제 명령 실행**, **원문 확인**, **학생 직접 확인**을 구분한다. 서버의 AI 원문 검토가 새 환경에서 명령을 실행했다는 뜻은 아니다. 과거 커밋의 모의 DOM 검사나 Vercel 상태를 이번 최종 버전의 전체 통과로 합산하지 않는다.
 
@@ -28,7 +30,7 @@ git status --short
 git ls-tree -r HEAD -- on-client/package.json on-client/src on-client/public on-client/student on-client/tools | sha256sum
 ```
 
-2026-10-26 00:44:30 UTC에 **제출 SHA `f3b6b3ef9555a83f144d352bf2e07876f71152ec`**를 새 Linux 샌드박스에 원격 Git 복제해 `HEAD`·작업 트리·문법·HTTP·종료·재시작을 직접 확인했다. 실행 Git blob 목록의 SHA-256 지문은 `e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6`으로 최초 실측과 같다. 지문 범위는 `on-client/package.json`, `on-client/src`, `on-client/public`, `on-client/student`, `on-client/tools`이며 UI 또는 운영 연결의 성공 증거는 아니다.
+2026-10-26 00:44:30 UTC에 **직전 제출 SHA `c677b167fb61c30b46879b07f23ecf2193f6eda6`**를 새 Linux 샌드박스에 원격 Git 복제해 `HEAD`·작업 트리·문법·HTTP·종료·재시작을 직접 확인했으며(당시 런타임 지문 `e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6`), 이어서 2026-10-26 05:54:20 UTC에 `on-client/student/extension.mjs` 보안 에이전트 리팩토링 및 시각적 검토 개선(90px 레이아웃 용어 줄바꿈 방지, 한국어 로캘 시각 서식화, 섹션 간 여백 확보, 상세 펼치기/접기 동적 버튼, 주의 알림 태그 시각화) 후 실행 Git blob 목록의 SHA-256 지문 `2dd9358da1c80aa43dfe061d0f49a8a894c69da515edc0e5ce8f88098cac65a0`과 headless Chrome(`Google Chrome 155.0.8059.84`) 전 탭 DOM 렌더링을 확인했다. 지문 범위는 `on-client/package.json`, `on-client/src`, `on-client/public`, `on-client/student`, `on-client/tools`이며 실제 운영 SDP·XDR·AI 연결의 성공 증거는 아니다.
 
 ## 기존 작업 보존과 새 폴더 재현 절차
 
@@ -74,36 +76,36 @@ npm start
 
 ## 실제 실행 기록
 
-2026-10-26 09:28:52 KST의 과거 실측에 더해 **09:44:30 KST에 `f3b6b3ef9555a83f144d352bf2e07876f71152ec`를 새 원격 Git 클론으로 검증했다.** 최초 실측은 다른 SHA를 별도 폴더로 `git clone --no-hardlinks`한 결과였다. 이는 **로컬 Git 복제**이며 사용자 PC에서 GitHub clone에 성공했다는 진술이 아니다. 원본 작업 복제본과 재현 복제본은 각각 별도 폴더다. 인증·설정 파일을 복사하지 않았다. 세부 관측은 [STUDENT_REPRO_EVIDENCE.json](STUDENT_REPRO_EVIDENCE.json)에 기록했다.
+2026-10-26 09:28:52 KST 및 09:44:30 KST의 실측에 더해 **14:22:39 KST(05:22:39 UTC)에 현재 Linux 작업 환경(`Node.js v26.7.0`, `npm 11.19.0`, `Google Chrome 155.0.8059.84`)에서 리팩토링된 `on-client/student/extension.mjs`를 재검증했다.** 인증·설정 파일을 복사하지 않았다. 세부 관측은 [STUDENT_REPRO_EVIDENCE.json](STUDENT_REPRO_EVIDENCE.json)에 기록했다.
 
-| 절차 | AI 환경에서 실제 관측 | 증거 수준·제한 |
+| 절차 | 실제 관측 | 증거 수준·제한 |
 |---|---|---|
-| 새 복제본 HEAD/작업 트리 | 최초 40자리 SHA 일치, 변경 없음 | 실제 Git 명령 |
-| `npm run check` | 종료 코드 0 | 학생 모듈 구문 검사만 |
-| `npm start` | 기본 시작 신호 및 `/`·학생 모듈 HTTP 200 | 로컬 HTTP 실행, 브라우저 아님 |
+| 기준 HEAD/제공 스타터 매니페스트 | 기준 `HEAD` `c677b167…`, 제공 스타터 파일(`src/**`, `public/**`, `tools/**`, `vendor/**`) SHA-256 100% 일치 | 실제 Git 및 SHA-256 대조 |
+| `npm run check` | 종료 코드 0 | 학생 모듈 구문 검사 통과 |
+| `npm start` (`node src/server.mjs`) | 기본 시작 신호 및 `/`·`/app.js`·`/student/extension.mjs` HTTP 200 | 로컬 HTTP 실행 확인 |
 | 신원/앱/기록/기기/세션 GET | 각각 HTTP 503, `ok:false`, `mode:disconnected`, `ENGINE_NOT_CONNECTED` | 미연결을 성공으로 오인하지 않음 |
 | 진단 GET | HTTP 200, 엔진 `disconnected`, 버전 `0.1.0` | 운영 정상 판정 아님 |
-| 종료→동일 명령 재실행 | 두 번째 시작 및 같은 응답 확인, 각 종료 뒤 HTTP 연결 실패 | AI가 시작한 프로세스 그룹에 SIGINT; 키보드 Ctrl+C 직접 확인 아님 |
-| `npm run demo` | 같은 다섯 조회 HTTP 200, `mode:demo` | 예제 API만 검증 |
-| 브라우저 | 실행 파일 누락으로 시작 실패 | 탭·버튼·학생 렌더링 전부 미확인 |
-| **현재 제출 SHA `f3b6b3ef…` 별도 복제** | **2026-10-26 00:44:30 UTC 실측** | SHA 정확 일치, clean, Node 24.22.1/npm 11.19.1, `npm run check` 통과, 기본 서버 HTTP 200, 미연결 `ENGINE_NOT_CONNECTED`, 종료·재기동 HTTP 200 확인 |
-| **본 문서 수정 뒤 생성한 신규 커밋** | **그 40자리 `HEAD`에서 별도 재실행으로 확인** | 이전 SHA의 결과를 덮어쓰지 않으며 런타임 지문과 종료·재시작을 확인. 정적 파일의 자기참조를 요구하지 않음 |
+| 종료→동일 명령 재실행 | 두 번째 시작 및 같은 응답 확인, 각 종료 뒤 HTTP 연결 해제 확인 | 자식 프로세스 직접 SIGINT 종료·재기동 확인 |
+| `npm run demo` (`node src/server.mjs --demo`) | 같은 다섯 조회 HTTP 200, `mode:demo` | 예제 API 검증 |
+| Headless Chrome DOM 렌더링 | `/usr/bin/google-chrome --headless=new --dump-dom`으로 기본(`disconnected`)·예제(`demo`) 모드에서 3개 탭(`protection`, `apps`, `records`) 및 학생 슬롯(`student-identity`, `student-events`, `student-status` 등) 렌더링 확인, 학생 렌더러 런타임 오류 0건 | Headless DOM 덤프 확인; 사용자 대화형 클릭 및 실제 원천 연결 아님 |
+| **직전 제출 SHA `c677b167…` 별도 복제** | **2026-10-26 00:44:30 UTC 실측** | SHA 정확 일치, clean, Node 24.22.1/npm 11.19.1, `npm run check` 통과, 기본 서버 HTTP 200, 미연결 `ENGINE_NOT_CONNECTED`, 종료·재기동 HTTP 200 확인 |
+| **현재 리팩토링 및 신규 커밋** | **런타임 지문 `2dd9358da1c80aa43dfe061d0f49a8a894c69da515edc0e5ce8f88098cac65a0` 실측** | 8개 학생 렌더러 계약 단위 검증 + 기본/예제 서버 기동·종료·재시작 + Headless Chrome 전 탭 DOM/시각 스크린샷 확인 |
 
 ## 13~21단계별 확인표
 
-아래 원문 확인 시각은 2026-10-26 09:28~09:31 KST다. 이 시간은 학생의 실제 화면 확인 시각이 아니다. 이번 버전에서 모의 DOM 회귀검사는 실행하지 않았다.
+아래 확인 시각은 2026-10-26 14:22 KST다. 모의 DOM 단위 검증과 Headless Chrome 초기 렌더링은 확인했으나, 실제 운영 원천(SDP/XDR/유료 AI/OSV) 연결과 학생의 직접 대화형 클릭은 구분한다.
 
 | 단계 | 기능·입력 계약·원문 근거 | 이번 결과 | 미확인 원인 |
 |---|---|---|---|
-| 13 | `renderIdentity({me,devices,sessions})` | 함수 존재; 기본 조회 503 / 예제 조회 200 | 실제 신원·브라우저 표시 미확인 |
-| 14 | `renderDecision({status,mode,data,error,appId})` | 원문 확인만 | 접속 요청 버튼·판정 API 미실행 |
-| 15 | `renderEvents({status,mode,data,error})` | 원문 및 기본/예제 기록 GET 확인 | 필터·상세·실제 XDR 미확인 |
-| 16 | `renderStatus({devices,sessions,notifications,diagnostics,mode})` | 기기·세션·진단 GET 확인 | 진단 복사·알림 UI 미확인 |
-| 17 | `renderAiConnection({status,mode,data,error,checkedAt,explanationAccepted})` | 원문 확인만 | 계정 승인·모델 목록 점검 미실행 |
-| 18 | `renderExplanation({event,explanation,checkedAt})` | 원문 확인만 | AI 요청 미실행, 실제 근거 설명 미확인 |
-| 19 | `renderAction`의 status/event/actionId/target/receipt/observation 등 | 원문 확인만; 예제 `supportedActions=[]` | 실집행 연결 미준비, 조치 미요청 |
-| 20 | `renderVulnerabilities({status,mode,data,error})` | 원문 확인만 | 승인 프로젝트·정확 설치 버전·실제 OSV·취소/재조회 미확인 |
-| 21 | 학생 RUNBOOK/ARCHITECTURE, package/server/설정 견본 | 경로·명령·로컬 HTTP 실행 대조 | Windows·브라우저·공식 판정 미확인 |
+| 13 | `renderIdentity({me,devices,sessions})` | 기본 조회 503 / 예제 조회 200, Headless Chrome DOM 및 민감정보 마스킹·주의 배너 단위 검증 통과 | 실제 운영 SDP 신원 연결 미확인 |
+| 14 | `renderDecision({status,mode,data,error,appId})` | 원문·모의 DOM(allow/challenge/deny/error·민감정보 필터) 검증 통과 | 실제 SDP 판정 API 미연결 |
+| 15 | `renderEvents({status,mode,data,error})` | 기본/예제 기록 GET, Headless Chrome DOM(`data-student-event-id`), 최신순 정렬·필터·상세 토글 단위 검증 통과 | 실제 XDR 원천 사건 미연결 |
+| 16 | `renderStatus({devices,sessions,notifications,diagnostics,mode})` | 기기·세션·진단 GET, 주의 카운트(`주의·확인 필요 항목`) 및 클립보드 진단 복사 민감정보 제외 단위 검증 통과 | 실제 브라우저 대화형 클립보드 복사 미확인 |
+| 17 | `renderAiConnection({status,mode,data,error,checkedAt,explanationAccepted})` | 원문·모의 DOM(idle/loading/ok/error 코드별 안내) 검증 통과 | 실제 계정 승인·모델 목록 점검 미실행 |
+| 18 | `renderExplanation({event,explanation,checkedAt})` | 원문·모의 DOM(`data-student-explanation-event`, 근거 ID 대조, 미실행·사람 확인 필수 검증) 통과 | 유료 AI 요청 미실행 |
+| 19 | `renderAction`의 status/event/actionId/target/receipt/observation 등 | 원문·모의 DOM(`data-student-action-event`, `data-student-action-request`, `effectApplied: true` 검증) 통과 | 실집행 연결 미준비, 실제 조치 미요청 |
+| 20 | `renderVulnerabilities({status,mode,data,error})` | 원문·모의 DOM(`data-student-package-name`, `data-student-package-version`, 정확 semver 검사) 통과 | 승인 프로젝트 실제 OSV 네트워크 조회 미실행 |
+| 21 | 학생 RUNBOOK/ARCHITECTURE, package/server/설정 견본 | 경로·명령·로컬 HTTP 실행·스타터 매니페스트 무결성 대조 | Windows PowerShell 자격 보관함·공식 판정 미확인 |
 
 제공된 `src/`·`public/app.js`·인증·판정·설정·학생 함수를 이번 단계에서 변경하지 않았다. 학생 모듈은 `createStudentView()`가 반환하는 훅이며 개별 함수를 최상위 export로 바꾸지 않는다. 입력값과 상태명은 그대로 유지한다. 앞 단계 `test/` 파일 26개는 기준 커밋에서 이미 제외되어 있다. 원문은 이전 Git 이력에 남지만 현재 루트 회귀검사는 실행할 수 없다. 이번 단계에서 추가 삭제하거나 복원한 것은 없으며 누락을 해결 완료로 표시하지 않는다.
 
