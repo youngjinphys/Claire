@@ -1,189 +1,260 @@
 {
-  "at": "2026-10-26T00:28:52.136Z",
+  "at": "2026-10-26T00:44:30Z",
   "node": "v24.22.1",
   "runs": [
     {
-      "command": "npm start",
-      "responses": [
-        {
-          "path": "/",
-          "status": 200
-        },
-        {
-          "path": "/student/extension.mjs",
-          "status": 200
-        },
-        {
-          "path": "/api/me",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/apps",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/events",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/devices",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/sessions",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/diagnostics",
-          "status": 200,
-          "ok": true,
-          "mode": "disconnected",
-          "version": "0.1.0",
-          "engine": "disconnected"
-        }
-      ],
-      "browser": null,
-      "startSignal": "케셰브 연결 확인: http://127.0.0.1:5189",
-      "exitCode": null,
-      "signal": "SIGINT",
-      "stopped": true
+      "command": "npm run check",
+      "observedCommit": "f3b6b3ef9555a83f144d352bf2e07876f71152ec",
+      "exitCode": 0,
+      "result": "syntax passed"
     },
     {
       "command": "npm start",
-      "responses": [
+      "observedCommit": "f3b6b3ef9555a83f144d352bf2e07876f71152ec",
+      "http": [
         {
-          "path": "/",
+          "route": "/",
           "status": 200
         },
         {
-          "path": "/student/extension.mjs",
+          "route": "/app.js",
           "status": 200
         },
         {
-          "path": "/api/me",
+          "route": "/student/extension.mjs",
+          "status": 200
+        },
+        {
+          "route": "/api/me",
           "status": 503,
-          "ok": false,
-          "mode": "disconnected",
           "error": "ENGINE_NOT_CONNECTED"
         },
         {
-          "path": "/api/apps",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/events",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/devices",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/sessions",
-          "status": 503,
-          "ok": false,
-          "mode": "disconnected",
-          "error": "ENGINE_NOT_CONNECTED"
-        },
-        {
-          "path": "/api/diagnostics",
+          "route": "/api/diagnostics",
           "status": 200,
-          "ok": true,
-          "mode": "disconnected",
-          "version": "0.1.0",
           "engine": "disconnected"
         }
       ],
-      "browser": null,
-      "startSignal": "케셰브 연결 확인: http://127.0.0.1:5189",
-      "exitCode": null,
-      "signal": "SIGINT",
-      "stopped": true
+      "tabsInHtml": 3,
+      "startMessage": "케셰브 연결 확인: http://127.0.0.1:5189",
+      "stopConnection": "000"
     },
     {
-      "command": "npm run demo",
-      "responses": [
-        {
-          "path": "/",
-          "status": 200
-        },
-        {
-          "path": "/student/extension.mjs",
-          "status": 200
-        },
-        {
-          "path": "/api/me",
-          "status": 200,
-          "ok": true,
-          "mode": "demo"
-        },
-        {
-          "path": "/api/apps",
-          "status": 200,
-          "ok": true,
-          "mode": "demo"
-        },
-        {
-          "path": "/api/events",
-          "status": 200,
-          "ok": true,
-          "mode": "demo"
-        },
-        {
-          "path": "/api/devices",
-          "status": 200,
-          "ok": true,
-          "mode": "demo"
-        },
-        {
-          "path": "/api/sessions",
-          "status": 200,
-          "ok": true,
-          "mode": "demo"
-        },
-        {
-          "path": "/api/diagnostics",
-          "status": 200,
-          "ok": true,
-          "mode": "demo",
-          "version": "0.1.0",
-          "engine": "demo"
-        }
-      ],
-      "browser": null,
-      "startSignal": "케셰브 예제: http://127.0.0.1:5189",
-      "exitCode": null,
-      "signal": "SIGINT",
-      "stopped": true
+      "command": "npm start (restart)",
+      "observedCommit": "f3b6b3ef9555a83f144d352bf2e07876f71152ec",
+      "httpRoot": 200,
+      "secondStopConnection": "000"
     }
   ],
   "browserUnavailable": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
-  "testedCommit": "5a4de162a41edaf29f5d500cf28a9b73027578b1",
+  "testedCommit": "HEAD",
   "observer": "AI execution environment; not student PC or course server",
   "runtimeTreeSha256": "e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6",
-  "finalCommitStatusAtRecording": "not yet created; verify separately after commit"
+  "finalCommitStatusAtRecording": "Target HEAD must be checked out and rerun after creating new documentation commit; the resulting SHA cannot be hardcoded into its own JSON blob.",
+  "schema": "claire.stage22.head-bound-reproduction.v2",
+  "observedCommitAtRecording": "f3b6b3ef9555a83f144d352bf2e07876f71152ec",
+  "npm": "11.19.1",
+  "repoUrl": "https://github.com/youngjinphys/Claire",
+  "branch": "main",
+  "worktreeDirtyFiles": 0,
+  "trackedFileCount": 193,
+  "commitment": {
+    "targetRef": "HEAD",
+    "resolveCommand": "git rev-parse HEAD",
+    "shaMustMatchPortal": true,
+    "runtimeCodeFingerprint": "e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6",
+    "command": "git ls-tree -r HEAD -- on-client/package.json on-client/src on-client/public on-client/student on-client/tools | sha256sum",
+    "rule": "Resolve HEAD after checkout. Git commit SHA cannot contain itself in the same committed file. New documentation SHA requires a new clone and postcommit execution."
+  },
+  "historicalEvidence": {
+    "testedCommit": "5a4de162a41edaf29f5d500cf28a9b73027578b1",
+    "at": "2026-10-26T00:28:52.136Z",
+    "node": "v24.22.1",
+    "runs": [
+      {
+        "command": "npm start",
+        "responses": [
+          {
+            "path": "/",
+            "status": 200
+          },
+          {
+            "path": "/student/extension.mjs",
+            "status": 200
+          },
+          {
+            "path": "/api/me",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/apps",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/events",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/devices",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/sessions",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/diagnostics",
+            "status": 200,
+            "ok": true,
+            "mode": "disconnected",
+            "version": "0.1.0",
+            "engine": "disconnected"
+          }
+        ],
+        "browser": null,
+        "startSignal": "케셰브 연결 확인: http://127.0.0.1:5189",
+        "exitCode": null,
+        "signal": "SIGINT",
+        "stopped": true
+      },
+      {
+        "command": "npm start",
+        "responses": [
+          {
+            "path": "/",
+            "status": 200
+          },
+          {
+            "path": "/student/extension.mjs",
+            "status": 200
+          },
+          {
+            "path": "/api/me",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/apps",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/events",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/devices",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/sessions",
+            "status": 503,
+            "ok": false,
+            "mode": "disconnected",
+            "error": "ENGINE_NOT_CONNECTED"
+          },
+          {
+            "path": "/api/diagnostics",
+            "status": 200,
+            "ok": true,
+            "mode": "disconnected",
+            "version": "0.1.0",
+            "engine": "disconnected"
+          }
+        ],
+        "browser": null,
+        "startSignal": "케셰브 연결 확인: http://127.0.0.1:5189",
+        "exitCode": null,
+        "signal": "SIGINT",
+        "stopped": true
+      },
+      {
+        "command": "npm run demo",
+        "responses": [
+          {
+            "path": "/",
+            "status": 200
+          },
+          {
+            "path": "/student/extension.mjs",
+            "status": 200
+          },
+          {
+            "path": "/api/me",
+            "status": 200,
+            "ok": true,
+            "mode": "demo"
+          },
+          {
+            "path": "/api/apps",
+            "status": 200,
+            "ok": true,
+            "mode": "demo"
+          },
+          {
+            "path": "/api/events",
+            "status": 200,
+            "ok": true,
+            "mode": "demo"
+          },
+          {
+            "path": "/api/devices",
+            "status": 200,
+            "ok": true,
+            "mode": "demo"
+          },
+          {
+            "path": "/api/sessions",
+            "status": 200,
+            "ok": true,
+            "mode": "demo"
+          },
+          {
+            "path": "/api/diagnostics",
+            "status": 200,
+            "ok": true,
+            "mode": "demo",
+            "version": "0.1.0",
+            "engine": "demo"
+          }
+        ],
+        "browser": null,
+        "startSignal": "케셰브 예제: http://127.0.0.1:5189",
+        "exitCode": null,
+        "signal": "SIGINT",
+        "stopped": true
+      }
+    ],
+    "browserUnavailable": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell"
+  },
+  "observations": [
+    "Actual isolated Linux sandbox checkout of the SHA named under observedCommitAtRecording.",
+    "Node 24.22.1 npm 11.19.1; zero dirty files; same runtime tree fingerprint as the historical run.",
+    "No browser click E2E, no real SDP/XDR connection, no paid AI, no actual OSV or security action."
+  ]
 }

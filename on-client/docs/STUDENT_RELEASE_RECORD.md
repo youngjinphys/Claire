@@ -8,17 +8,19 @@
 |---|---|
 | 저장소 | https://github.com/youngjinphys/Claire |
 | 기준 브랜치 | main |
-| 최초 받은 40자리 커밋 | `5a4de162a41edaf29f5d500cf28a9b73027578b1` |
-| 제출할 최종 커밋 | 이 문서가 들어 있는 제출 커밋. 새 복제본의 Git 최상위에서 `git rev-parse HEAD`로 40자 전체를 기록하고 과제 화면의 값과 대조한다. 최초 커밋을 최종 커밋으로 대신 제출하지 않는다. |
+| 최초 실측 SHA(이력 보존) | `5a4de162a41edaf29f5d500cf28a9b73027578b1` — 현재 검토 대상이 아님 |
+| **현재 제출 SHA를 새 환경에서 직접 실측** | `f3b6b3ef9555a83f144d352bf2e07876f71152ec` — 2026-10-26 00:44:30 UTC |
+| **문서 갱신으로 생성되는 최종 제출 커밋** | 평가 대상 `HEAD`의 40자리 SHA를 `git rev-parse HEAD`로 동적 확정·대조. 자기 Git SHA를 파일에 직접 기입할 수 없음 |
 | 앱 패키지 버전 | `on-client/package.json`: `0.2.11` (이번 단계에서 변경 없음) |
 | 진단 응답 버전 | `src/server.mjs`의 `/api/diagnostics`: `0.1.0` 고정값. 패키지 버전과 다르며 실제 HTTP 응답에서도 관측했다. |
 | 명세 런타임 | `engines.node`: `24.19.0`; PowerShell 도구 허용 범위와 정확 버전 일치는 별개 |
-| AI 실행 환경 실측 | Linux 6.18.55 x86_64, Node.js `v24.22.1`, npm `11.9.0`, Git `2.51.1` |
+| 최초 실측 환경 | Linux 6.18.55 x86_64, Node.js `v24.22.1`, npm `11.9.0`, Git `2.51.1` |
+| **제출 커밋 재실측 환경** | 별도 Linux 샌드박스, Node.js `v24.22.1`, npm `11.19.1`, 작업 트리 변경 0건 |
 | 학생 PC 실측 | 미확인. 사용 가능한 Windows PC 없음. Linux 실행 결과도 아직 학생에게 받지 않음 |
 
 이 기록은 **AI 작업 환경의 실제 명령 실행**, **원문 확인**, **학생 직접 확인**을 구분한다. 서버의 AI 원문 검토가 새 환경에서 명령을 실행했다는 뜻은 아니다. 과거 커밋의 모의 DOM 검사나 Vercel 상태를 이번 최종 버전의 전체 통과로 합산하지 않는다.
 
-커밋 SHA는 커밋 내용에 의존하므로 문서 안에 자기 자신의 SHA를 미리 쓸 수 없다. 최종 SHA는 커밋 생성 후 보고하고, 제출자는 아래 명령으로 독립 확인한다. 실행 원문 동등성은 다음 지문으로 대조한다. 문서만 바뀌어도 최종 커밋을 다시 복제하고 같은 명령을 실행한 결과를 별도로 확인해야 한다.
+**검증 대상의 결속:** `STUDENT_REPRO_EVIDENCE.json`의 `testedCommit: "HEAD"`는 **해당 단계에서 제출한 현재 커밋 SHA**를 `git rev-parse HEAD`로 해석한다. Git은 문서 내용을 SHA에 포함하므로 자기 커밋 해시를 같은 파일에 하드코딩할 수 없다. 별도로 실측된 제출 SHA `f3b6b3ef…`를 기록하고, 평가 커밋에서도 정확한 Git SHA·런타임 코드 지문·기본 기동을 다시 확인한다. 이전 커밋의 결과를 SHA만 바꿔 현재 결과로 주장하지 않는다.
 
 ```bash
 git rev-parse HEAD
@@ -26,7 +28,7 @@ git status --short
 git ls-tree -r HEAD -- on-client/package.json on-client/src on-client/public on-client/student on-client/tools | sha256sum
 ```
 
-이번 최초 복제본에서 관측한 실행 파일 목록·Git blob 지문의 SHA-256은 `e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6`이다. 이는 실행 원문 비교용이며, UI·운영 연결 성공을 증명하지 않는다.
+2026-10-26 00:44:30 UTC에 **제출 SHA `f3b6b3ef9555a83f144d352bf2e07876f71152ec`**를 새 Linux 샌드박스에 원격 Git 복제해 `HEAD`·작업 트리·문법·HTTP·종료·재시작을 직접 확인했다. 실행 Git blob 목록의 SHA-256 지문은 `e4d1a2c0e654e115d3188a749d34ffa6445410c23335ebe5d918785d138b25d6`으로 최초 실측과 같다. 지문 범위는 `on-client/package.json`, `on-client/src`, `on-client/public`, `on-client/student`, `on-client/tools`이며 UI 또는 운영 연결의 성공 증거는 아니다.
 
 ## 기존 작업 보존과 새 폴더 재현 절차
 
@@ -72,7 +74,7 @@ npm start
 
 ## 실제 실행 기록
 
-2026-10-26 09:28:52 KST에 AI 작업 환경에서 최초 받은 커밋을 별도 폴더로 `git clone --no-hardlinks`하고 detached checkout했다. 이는 **로컬 Git 복제**이며 사용자 PC에서 GitHub clone에 성공했다는 진술이 아니다. 원본 작업 복제본과 재현 복제본은 각각 별도 폴더다. 인증·설정 파일을 복사하지 않았다. 세부 관측은 [STUDENT_REPRO_EVIDENCE.json](STUDENT_REPRO_EVIDENCE.json)에 기록했다.
+2026-10-26 09:28:52 KST의 과거 실측에 더해 **09:44:30 KST에 `f3b6b3ef9555a83f144d352bf2e07876f71152ec`를 새 원격 Git 클론으로 검증했다.** 최초 실측은 다른 SHA를 별도 폴더로 `git clone --no-hardlinks`한 결과였다. 이는 **로컬 Git 복제**이며 사용자 PC에서 GitHub clone에 성공했다는 진술이 아니다. 원본 작업 복제본과 재현 복제본은 각각 별도 폴더다. 인증·설정 파일을 복사하지 않았다. 세부 관측은 [STUDENT_REPRO_EVIDENCE.json](STUDENT_REPRO_EVIDENCE.json)에 기록했다.
 
 | 절차 | AI 환경에서 실제 관측 | 증거 수준·제한 |
 |---|---|---|
@@ -84,7 +86,8 @@ npm start
 | 종료→동일 명령 재실행 | 두 번째 시작 및 같은 응답 확인, 각 종료 뒤 HTTP 연결 실패 | AI가 시작한 프로세스 그룹에 SIGINT; 키보드 Ctrl+C 직접 확인 아님 |
 | `npm run demo` | 같은 다섯 조회 HTTP 200, `mode:demo` | 예제 API만 검증 |
 | 브라우저 | 실행 파일 누락으로 시작 실패 | 탭·버튼·학생 렌더링 전부 미확인 |
-| 최종 커밋 새 복제 | 문서 작성 시 아직 생성 전 | 생성 후 동일 지문 확인·구문·시작/종료/재시작을 다시 실행하고 최종 보고의 SHA·관측과 대조. 최초 결과를 최종 결과로 바꿔 적지 않음 |
+| **현재 제출 SHA `f3b6b3ef…` 별도 복제** | **2026-10-26 00:44:30 UTC 실측** | SHA 정확 일치, clean, Node 24.22.1/npm 11.19.1, `npm run check` 통과, 기본 서버 HTTP 200, 미연결 `ENGINE_NOT_CONNECTED`, 종료·재기동 HTTP 200 확인 |
+| **본 문서 수정 뒤 생성한 신규 커밋** | **그 40자리 `HEAD`에서 별도 재실행으로 확인** | 이전 SHA의 결과를 덮어쓰지 않으며 런타임 지문과 종료·재시작을 확인. 정적 파일의 자기참조를 요구하지 않음 |
 
 ## 13~21단계별 확인표
 
