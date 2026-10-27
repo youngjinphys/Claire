@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { PROBES, operationsSnapshot, summarizeObservations } from '../src/operations.mjs';
 import { createOperationsHandler } from '../api/ops.js';
+import config from '../aleph.config.json' with { type: 'json' };
 
 function fakeResponse(status, body, extra={}) {
   const headers = new Map(Object.entries({
@@ -36,7 +37,7 @@ test('only redacted actual HTTP data, no note bodies or bearer secrets',async()=
       calls.push({url:String(url),options:opts});
       if(String(url).endsWith('/aleph.json')) return fakeResponse(200,{
         schema:'aleph.defense.deployment.v1',step:12,
-        repoUrl:'https://github.com/youngjinphys/choi-bujang-secret-vault'});
+        repoUrl:config.repoUrl});
       if(String(url).endsWith('/data.json')) return fakeResponse(200,{notes:[]});
       if(String(url).includes('/restore/')) return fakeResponse(503,{error:'RESTORE_DISABLED'});
       if(opts.headers.Authorization) return fakeResponse(200,{title:'SENSITIVE',body:'DONOTSHOW'},

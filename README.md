@@ -1,3 +1,13 @@
+# Claire — SKT ALEPH 보안 에이전트 및 방어전
+
+**현재 GitHub 정본:** https://github.com/youngjinphys/Claire (`main`). `aleph.config.json.repoUrl`, 배포 `/aleph.json.repoUrl`, 12단계 제출 JSON의 저장소 URL은 이 주소를 동일하게 사용합니다. Vercel 프로젝트 리소스명 `choi-bujang-secret-vault`와 공개 주소 `https://skt-aleph-defense.vercel.app`은 Git 저장소 이름이 아닌 별개의 배포 식별자입니다.
+
+**구성 구분:** 루트는 기존 1–12단계 방어전 앱(`aleph.config.json.step=12`)이고, `on-client/`는 13–22단계 Claire 학생용 로컬 앱입니다. `alekov` 내부 파일·패키지 이름은 기존 연동 호환성을 위해 유지합니다. 아래의 이전 12단계 HEAD·부모 커밋 주장은 해당 날짜의 **역사적 평가 기록**이며 현재 main에 적용되지 않습니다.
+
+**일관성 검사:** `npm ci --ignore-scripts && npm test && npm run build -- --local && npm --prefix on-client run check && npm --prefix on-client test`. 자세한 원인 분석과 배포/제출 정체성 검증은 [식별자 정합성 감사](docs/IDENTITY_CONSISTENCY_2026-10-27.md)를 참고하세요.
+
+---
+
 ## 2026-10-26 · 저장소 품질 게이트 및 Claire 로컬 에이전트 유지보수
 
 - 누락된 기존 방어전 회귀 테스트 26개를 기존 Git 이력에서 복구하고 `npm test` 진입점과 GitHub Actions CI를 추가합니다. 테스트의 예시 자격정보는 실제 계정 비밀이 아닌 가상 fixture이며 운영 인증정보를 넣지 않습니다.

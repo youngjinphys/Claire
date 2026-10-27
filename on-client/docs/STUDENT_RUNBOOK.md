@@ -1,8 +1,10 @@
-> **2026-10-26 현재 브랜치 업데이트:** 2026-10-25에 임시 제외한 기존 26개 테스트를 Git 이력에서 복원했습니다. 루트의 `npm test`와 `on-client`의 `npm test`는 서로 다른 범위를 검증합니다. 로컬 진단 버전은 앱 `package.json`에서 읽으며, 실행 안내는 `Claire 연결 확인`으로 바뀌었습니다. 아래의 21단계 기록은 당시 상태의 역사적 설명입니다.
+> **2026-10-27 식별자 정합성 보완:** 현재 표시명과 PowerShell 실행 성공 메시지는 `Claire`로 통일했습니다. `alekov-client-starter` 및 `start-alekov.ps1`은 레거시 실행 계약으로 유지합니다. 2026-10-26에 실측한 기록의 이전 명칭·SHA는 당시 증거로 보존합니다.
+
+> **2026-10-26 브랜치 업데이트:** 2026-10-25에 임시 제외한 기존 26개 테스트를 Git 이력에서 복원했습니다. 루트의 `npm test`와 `on-client`의 `npm test`는 서로 다른 범위를 검증합니다. 로컬 진단 버전은 앱 `package.json`에서 읽으며, 실행 안내는 `Claire 연결 확인`으로 바뀌었습니다. 아래의 21단계 기록은 당시 상태의 역사적 설명입니다.
 
 # Claire — 학생 실행 설명서 (21단계)
 
-**대상:** `youngjinphys/Claire` 저장소의 `on-client/` 앱. 이 문서는 제공 코드를 덮어쓰지 않은 별도 학생 문서다. 앱의 제공 UI에 기본 이름 **케셰브(KESHEV)**가 나타날 수 있지만 사용자 지정 Agent 이름은 **Claire**이며 실행 파일명은 그대로 사용한다.
+**대상:** `youngjinphys/Claire` 저장소의 `on-client/` 앱. 이 문서는 제공 코드를 덮어쓰지 않은 별도 학생 문서다. 현재 앱 UI 표시명은 **Claire**이며 원본 시작 틀의 이름은 **케셰브(KESHEV)**였다. 실행 파일명·내부 식별자는 호환성을 위해 그대로 사용한다.
 
 **증거 구분:** 아래 경로·명령·출력 문구는 GitHub의 `on-client/package.json`, `on-client/tools/start-alekov.ps1`, `on-client/src/server.mjs`, `on-client/public/index.html` 등 **원문 소스에서 확인**했다. 이 문서를 작성하면서 Windows PowerShell 또는 사용자의 Linux PC에서 앱을 실제 실행하거나, 운영 SDP·AI·OSV·조치를 요청한 사실은 **없다(미확인)**. '예상 출력'은 성공 실측 결과가 아니다.
 
@@ -24,7 +26,7 @@ Claire는 본인 계정·기기·현재 세션, 업무 앱 접근 판정, 본인
 | 대상 | 소스에서 확인한 버전·계약 | 사용자 PC 실제 상태 |
 |---|---|---|
 | Node.js | `on-client/package.json`: `engines.node=24.19.0`; `start-alekov.ps1`은 **22~24 허용**, 권장 **24.19.0** | `node --version` 출력 미확인 |
-| npm | `on-client/package.json`: `start`, `demo`, `check`. 앱 패키지에 외부 npm `dependencies` 선언 없음 | `npm --version` 미확인 |
+| npm | `on-client/package.json`: `start`, `demo`, `check`, `test`. 앱 패키지에 외부 npm `dependencies` 선언 없음 | `npm --version` 미확인 |
 | Linux 터미널 | `on-client/package.json`의 `npm start`(Node.js 서버), 기본·예제 경로 | Linux 실제 실행 미확인 |
 | Windows PowerShell | 공식 실행 도구 `on-client/tools/start-alekov.ps1` | Windows PC가 없어 미실행 |
 | Git | 40자리 제출 SHA·기존 작업 보존 | 현재 PC의 `git status` 미확인 |
@@ -36,7 +38,7 @@ Claire는 본인 계정·기기·현재 세션, 업무 앱 접근 판정, 본인
 Claire/                               <- Git 최상위, 커밋/21단계 제출 위치
 ├── package.json                      <- 기존 방어전 루트 앱(학생 앱과 별도)
 ├── on-client/                        <- Claire 앱 / PowerShell 실행 위치
-│   ├── package.json                  <- 0.2.11: start, demo, check
+│   ├── package.json                  <- 0.2.11: start, demo, check, test
 │   ├── .env.example                  <- 공개 기본값만 있는 설정 견본
 │   ├── tools/start-alekov.ps1        <- 제공 실행 도구
 │   ├── public/index.html             <- 제공 화면·메뉴
@@ -87,7 +89,7 @@ npm run check
 npm start
 ~~~
 
-`npm run check`는 학생 JavaScript의 **문법 검사만** 수행한다. `npm start`는 `node src/server.mjs`이며, 기본 포트는 서버 소스의 `ON_PORT` 기본값 **5189**, 바인딩은 `127.0.0.1`이다. 코드상 예상되는 시작 메시지는 아래와 같으나 **현재 실제 실행은 미확인**이다.
+`npm run check`는 `student/extension.mjs`와 `src/server.mjs`의 **구문만 검사**한다. `npm start`는 `node src/server.mjs`이며, 기본 포트는 서버 소스의 `ON_PORT` 기본값 **5189**, 바인딩은 `127.0.0.1`이다. 코드상 예상되는 시작 메시지는 아래와 같으나 **현재 실제 실행은 미확인**이다.
 
 ~~~text
 Claire 연결 확인: http://127.0.0.1:5189
@@ -131,7 +133,7 @@ npm --version
 npm run check
 ~~~
 
-`npm run check`는 `node --check student/extension.mjs`로 **문법만** 검사한다. 결과가 정상이더라도 로그인·AI·브라우저·원천 처리가 검증됐다는 뜻은 아니다. 실제 PC 버전·명령 종료 코드는 위 명령 실행 뒤 별도로 기록한다.
+`npm run check`는 `node --check student/extension.mjs && node --check src/server.mjs`로 **구문만** 검사한다. 결과가 정상이더라도 로그인·AI·브라우저·원천 처리가 검증됐다는 뜻은 아니다. 실제 PC 버전·명령 종료 코드는 위 명령 실행 뒤 별도로 기록한다.
 
 ### 3.3 정식 시작과 브라우저 접속
 
@@ -142,7 +144,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 `tools/start-alekov.ps1`은 Node 버전, 앱 폴더, 포트 충돌, 서버의 HTTP 200 응답을 검사한다. 성공했을 때 **소스상 예상되는 두 출력**은 다음과 같다.
 
 ~~~text
-케셰브가 켜졌습니다. 브라우저에서 http://127.0.0.1:5189/ 을 여세요.
+Claire가 켜졌습니다. 브라우저에서 http://127.0.0.1:5189/ 을 여세요.
 서버가 응답한 것만 확인했습니다. AI 연결 상태는 화면에서 따로 확인해 주세요.
 ~~~
 

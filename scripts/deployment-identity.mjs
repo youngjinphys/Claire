@@ -5,6 +5,8 @@ const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const REPO = /^[A-Za-z0-9._-]{1,100}$/u;
 const SHA = /^[a-f0-9]{40}$/iu;
 const HOST = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.vercel\.app$/iu;
+// Stage 12 must bind the checked-in repository identity to Vercel's verified Git source.
+const REPOSITORY_URL = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/iu;
 
 export function deploymentIdentity(env, config) {
   const owner = env.VERCEL_GIT_REPO_OWNER;
@@ -50,10 +52,23 @@ export function deploymentIdentity(env, config) {
       || stepOneMarkerInvalid) {
     throw new Error('배포 식별 정보를 확인할 수 없습니다. Vercel 시스템 환경변수와 현재 단계 설정을 확인하세요.');
   }
+  // Stage 1-11 retain their original system-environment identity contract.
+  // Stage 12 must never publish a plausible manifest for a different GitHub repo.
+  const declaredRepo = step === 12 && typeof config?.repoUrl === 'string'
+    ? REPOSITORY_URL.exec(config.repoUrl) : null;
+  if (step === 12 && (!declaredRepo
+      || ['.', '..', '.git'].includes(declaredRepo[2].toLowerCase())
+      || declaredRepo[2].toLowerCase().endsWith('.git')
+      || config.repoUrl !== `https://github.com/${declaredRepo[1]}/${declaredRepo[2]}`
+      || declaredRepo[1].toLowerCase() !== owner.toLowerCase()
+      || declaredRepo[2].toLowerCase() !== repo.toLowerCase())) {
+    throw new Error('배포 GitHub 저장소가 aleph.config.json.repoUrl과 일치하지 않습니다.');
+  }
   const identity = {
     schema: 'aleph.defense.deployment.v1',
     step,
-    repoUrl: `https://github.com/${owner.toLowerCase()}/${repo.toLowerCase()}`,
+    repoUrl: step === 12 ? config.repoUrl
+      : `https://github.com/${owner.toLowerCase()}/${repo.toLowerCase()}`,
     commit: commit.toLowerCase(),
     publicAppUrl: step === 12 ? publicUrl : `https://${host.toLowerCase()}`,
     judgeIssuer: config.judgeIssuer,

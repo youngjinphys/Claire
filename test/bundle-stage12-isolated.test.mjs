@@ -332,6 +332,8 @@ test('entire Stage12 bundle works with structuredClone unavailable and network b
     "if (process.exitCode) throw Error('BUNDLE_FAILED');",
     "const fs = await import('node:fs');",
     "const result = JSON.parse(fs.readFileSync('artifacts/submission.json', 'utf8'));",
+    "const config=JSON.parse(fs.readFileSync('aleph.config.json','utf8'));",
+    "if (result.repoUrl !== config.repoUrl) throw Error('BUNDLE_REPOSITORY_MISMATCH');",
     "if (result.step !== 12 || result.attackAttempts.length !== 20)",
     "  throw Error('INVALID_BUNDLE');",
     "if (result.attackAttempts.some(a => a.observed !== 'not_run'))",
@@ -389,13 +391,18 @@ test('deployment identity reports configured production alias, not transient VER
   const meta={
     VERCEL_GIT_PROVIDER:'github',
     VERCEL_GIT_REPO_OWNER:'youngjinphys',
-    VERCEL_GIT_REPO_SLUG:'choi-bujang-secret-vault',
+    VERCEL_GIT_REPO_SLUG:'Claire',
     VERCEL_GIT_COMMIT_SHA:'a'.repeat(40),
     VERCEL_URL:'choi-bujang-secret-vault-unique.vercel.app',
   };
   const manifest=deploymentIdentity(meta,config);
   assert.equal(manifest.publicAppUrl,config.publicAppUrl);
+  assert.equal(manifest.repoUrl,config.repoUrl);
   assert.notEqual(manifest.publicAppUrl,'https://'+meta.VERCEL_URL);
+  assert.throws(()=>deploymentIdentity({...meta,VERCEL_GIT_REPO_SLUG:'choi-bujang-secret-vault'},config),
+    /배포 GitHub 저장소/u);
+  assert.throws(()=>deploymentIdentity(meta,{...config,repoUrl:'https://github.com/youngjinphys/other-project'}),
+    /배포 GitHub 저장소/u);
   assert.equal(manifest.originalApiUrl,config.originalApiUrl);
   assert.throws(()=>deploymentIdentity(meta,{...config,publicAppUrl:'https://untrusted.example/'}),
     /배포 식별 정보/u);

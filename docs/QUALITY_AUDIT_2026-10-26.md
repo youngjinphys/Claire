@@ -1,3 +1,5 @@
+> **2026-10-27 후속 조치:** 이 문서에서 확인했던 `aleph.config.json.repoUrl`의 이전 저장소 문제는 [식별자 정합성 감사](IDENTITY_CONSISTENCY_2026-10-27.md)에 따라 수정했습니다. `main`에 반영된 새 변경과 별개로, 아래는 2026-10-26 시점의 감사 기록입니다.
+
 # Claire repository audit — 2026-10-26
 
 ## Baseline and verified findings

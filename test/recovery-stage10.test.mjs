@@ -454,14 +454,14 @@ test('복원 라우트는 node_modules 없는 격리 프로젝트에서도 모�
   }
 });
 
-test('활성 10단계 배포 계약은 restoreRoute를 명시하고 준비 전 실복원으로 간주하지 않음', async () => {
+test('활성 12단계 배포 계약은 10단계 restoreRoute를 유지하고 준비 전 실복원으로 간주하지 않음', async () => {
   const {deploymentIdentity} = await import('../scripts/deployment-identity.mjs');
   const cfg = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url),'utf8'));
   assert.equal(cfg.step,12);
   const identity = deploymentIdentity({
     VERCEL_GIT_PROVIDER: 'github',
-    VERCEL_GIT_REPO_OWNER: 'Student-A',
-    VERCEL_GIT_REPO_SLUG: 'aleph-defense',
+    VERCEL_GIT_REPO_OWNER: 'youngjinphys',
+    VERCEL_GIT_REPO_SLUG: 'Claire',
     VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40),
     VERCEL_URL: 'example.vercel.app',
   },cfg);

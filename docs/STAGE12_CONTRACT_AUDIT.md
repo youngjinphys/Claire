@@ -1,3 +1,5 @@
+> **2026-10-27 정오표:** 아래의 `youngjinphys/choi-bujang-secret-vault`는 **2026-10-16에 검토한 예전 저장소 기록**입니다. 현재 정본은 `youngjinphys/Claire`이며 `aleph.config.json.repoUrl`·배포 메타데이터·제출 URL의 일치 여부는 [현재 감사](IDENTITY_CONSISTENCY_2026-10-27.md)를 따릅니다. 역사적 공식 심판 결과를 소급 변경한 것은 아닙니다.
+
 # ALEPH Stage12 공식 심판·학생 계약 전수 검토 (2026-10-16)
 
 ## 범위 및 증거의 권한

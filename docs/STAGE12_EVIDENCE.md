@@ -1,3 +1,5 @@
+> **2026-10-27 정오표:** 아래의 최초 검사 대상 `youngjinphys/choi-bujang-secret-vault`는 당시 기록이며 현재 `main`의 정본 저장소는 `youngjinphys/Claire`입니다. 저장소 설정과 Vercel Git-source 정합성 조정은 [현재 감사](IDENTITY_CONSISTENCY_2026-10-27.md)에 분리해 기록했습니다.
+
 # 12단계 | 탈환 작전실 증적 절차
 
 기준 저장소: `youngjinphys/choi-bujang-secret-vault`, 기본 브랜치 `main`. 최초 검사 HEAD `a873b334f6fe910745859d16a2fd965ece24270b` (`Production URL added`). 최초 검사 당시 README·`aleph.config.json`은 모두 **10단계**였습니다. 11단계 저장점의 소스/통과 기록을 해당 HEAD에서 확인하지 못했습니다. 이 불일치를 숨기지 않습니다.

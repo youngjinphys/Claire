@@ -13,11 +13,13 @@ const repository = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-
 const normalizedRepo = value => {
   const match = typeof value === 'string' && value.length <= 250 && repository.exec(value);
   if (!match) fail('GitHub HTTPS 저장소 주소를 origin으로 등록해 주세요.');
-  const repo = match[2].toLowerCase().replace(/\.git$/u, '');
+  const repo = match[2].replace(/\.git$/iu, '');
   if (repo === '.' || repo === '..' || repo === '.git' || repo.endsWith('.git')) {
     fail('GitHub HTTPS 저장소 주소를 origin으로 등록해 주세요.');
   }
-  return `https://github.com/${match[1].toLowerCase()}/${repo}`;
+  // Preserve the GitHub repository's real spelling (Claire, not claire).
+  // The submitted URL must agree with the checked-in Stage-12 deployment manifest.
+  return `https://github.com/${match[1]}/${repo}`;
 };
 
 try {

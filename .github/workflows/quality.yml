@@ -29,6 +29,16 @@ jobs:
         run: npm test
       - name: Non-production local build
         run: npm run build -- --local
+      - name: Offline production identity manifest contract
+        env:
+          VERCEL_GIT_PROVIDER: github
+          VERCEL_GIT_REPO_OWNER: youngjinphys
+          VERCEL_GIT_REPO_SLUG: Claire
+          VERCEL_GIT_COMMIT_SHA: ${{ github.sha }}
+          VERCEL_URL: claire-ci-fixture.vercel.app
+        run: |
+          npm run build
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; const config=JSON.parse(readFileSync("aleph.config.json")); const identity=JSON.parse(readFileSync("public/aleph.json")); if(identity.repoUrl!==config.repoUrl||identity.publicAppUrl!==config.publicAppUrl||identity.commit!==process.env.VERCEL_GIT_COMMIT_SHA)process.exit(1);'
       - name: Claire syntax checks
         run: npm --prefix on-client run check
       - name: Claire loopback HTTP integration tests

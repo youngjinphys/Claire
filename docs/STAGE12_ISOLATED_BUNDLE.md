@@ -1,3 +1,5 @@
+> **현행 구현 정오표(2026-10-27):** 아래의 예전 Git subprocess 설명은 역사적 구현에 관한 것입니다. 현재 `scripts/bundle.mjs`는 Git subprocess를 사용하지 않고 `scripts/bundle-commit-metadata.mjs`로 체크아웃 메타데이터를 읽습니다. 현재 저장소 `repoUrl`은 대소문자를 보존해 `Claire`로 기록합니다. [현재 감사](IDENTITY_CONSISTENCY_2026-10-27.md) 참조.
+
 # Stage 12 · 제출 생성기의 격리 환경 적합성
 
 ## 현재 단일 커밋 제출 기준 (2026-10-16)

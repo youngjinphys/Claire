@@ -1,6 +1,6 @@
 {
   "step": 12,
-  "repoUrl": "https://github.com/youngjinphys/choi-bujang-secret-vault",
+  "repoUrl": "https://github.com/youngjinphys/Claire",
   "publicAppUrl": "https://skt-aleph-defense.vercel.app",
   "judgeIssuer": "https://aleph-judge-production.up.railway.app/defense/judge",
   "identityProvider": {

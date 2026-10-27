@@ -1,4 +1,4 @@
-# 내 보안 Agent 시작 틀 0.2.11
+# Claire 보안 Agent · 로컬 실행 앱 0.2.11
 
 이 보안 Agent는 회사 직원이 자기 로그인 상태, 업무 앱 접속 결과, 최근 접속 기록과 보안 경보를 보는 보안 앱입니다. 13단계부터 22단계까지 이 프로젝트 하나로 화면을 채워 가며 완성합니다. 처음이라면 docs/GETTING_STARTED_STUDENT.md부터 읽습니다. 무엇을 왜 만드는지와 단계별 순서가 그 문서에 있습니다.
 
@@ -10,7 +10,7 @@
 
     powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 
-npm start도 같은 서버를 켭니다. 기본 실행은 실제 회사 시스템(기존 엔진)에 연결되지 않은 상태입니다. npm run demo는 예제 자료로 화면을 보여 줄 뿐이며 실제 연결이나 성취가 아닙니다. npm run check는 student/extension.mjs의 문법만 확인합니다.
+npm start도 같은 서버를 켭니다. 기본 실행은 실제 회사 시스템(기존 엔진)에 연결되지 않은 상태입니다. npm run demo는 예제 자료로 화면을 보여 줄 뿐이며 실제 연결이나 성취가 아닙니다. npm run check는 `student/extension.mjs`와 `src/server.mjs`의 구문을 확인하고, `npm test`는 로컬 HTTP·신원/출처 제한·AI 오류 처리를 검증합니다. 기존 `alekov` 파일·패키지 식별자는 외부 연동 계약을 유지하기 위해 그대로 사용합니다.
 
 ## 지킬 것
 

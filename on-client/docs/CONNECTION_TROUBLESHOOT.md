@@ -1,4 +1,4 @@
-# 케셰브 연결과 문제 해결 안내
+# Claire 연결과 문제 해결 안내
 
 이 문서는 실행 도구(`tools/start-alekov.ps1`), 계정 연결 확인, AI 앱 승인·점검, 기록 조회에서 만나는 메시지와 오류 코드별로 원인과 할 일을 모은 학생용 안내입니다. 설치·실행 순서는 [STUDENT_LAUNCH_GUIDE.md](STUDENT_LAUNCH_GUIDE.md), SDP 연결의 기술 계약은 [SDP_HOST_CONNECTION.md](SDP_HOST_CONNECTION.md)를 봅니다.
 

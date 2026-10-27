@@ -34,10 +34,10 @@ test('fresh checkout uses a tracked, truthful three-line fallback',()=>{
 
 test('resource zone configuration persists and stays validated in stages 8-10',()=>{
   const env={
-    VERCEL_GIT_PROVIDER:'github',VERCEL_GIT_REPO_OWNER:'student-a',
-    VERCEL_GIT_REPO_SLUG:'aleph-defense',
+    VERCEL_GIT_PROVIDER:'github',VERCEL_GIT_REPO_OWNER:'youngjinphys',
+    VERCEL_GIT_REPO_SLUG:'Claire',
     VERCEL_GIT_COMMIT_SHA:'a'.repeat(40),
-    VERCEL_URL:'student-defense-123.vercel.app',
+    VERCEL_URL:'claire-fixture-123.vercel.app',
   };
   for(const step of [8,9,10,12]){
     const cfg={...config,step};

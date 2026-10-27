@@ -1,4 +1,4 @@
-# 케셰브 조치 모듈 — 로컬 준비
+# Claire 조치 모듈 — 로컬 준비
 
 `createActionService`는 기존 애플리케이션 SQLite 경로와 서버 소유 신원·조치 엔진 hook을 명시적으로 받아 prepare/execute/readResult를 제공한다. 로컬 HTTP와 PC의 사람 확인·결과 조회 화면에 연결했고 독립 검수했다. 기본 실행은 조치 미지원이며 실제 원천 권한·공식19단계 완료를 부여하지 않는다. AI service는 이 모듈을 호출하지 않는다.
 
