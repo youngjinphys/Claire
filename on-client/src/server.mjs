@@ -17,6 +17,7 @@ import {prepareLearnerSupportRequest} from './ai/learner-support-contract.mjs';
 import {createVaultOnAiService} from './ai/vault-service.mjs';
 import {createConnectionManager} from './connection/manager.mjs';
 import {createProjectScanner} from './vulnerabilities/project-scan.mjs';
+import {sampleLocalPc} from './local-pc-metrics.mjs';
 import {buildLocalLearnerSupportGuide,isLearnerSupportProblemKind,readLocalLearnerSupportObservation} from './learner-support/service.mjs';
 import {nativeOwn,nativePublicError} from './connection/native-login.mjs';
 import {createNativeHostContext,captureNativeHostConfiguration,readNativeHostConfiguration,openNativeHostOperation,readNativeHostOperation,assertNativeHostOperation,createNativeOperationVault,closeNativeHostOperation} from './connection/native-context.mjs';
@@ -27,6 +28,10 @@ const record=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)
 const text=value=>typeof value==='string'&&value.length<=2000;
 const files=new Map([['/','public/index.html'],['/index.html','public/index.html'],['/app.js','public/app.js'],['/style.css','public/style.css'],['/vulnerabilities-view.mjs','public/vulnerabilities-view.mjs'],['/student/extension.mjs','student/extension.mjs'],
   ['/ai-connect.mjs','public/ai-connect.mjs'],
+  ['/dashboard.html','public/dashboard.html'],
+  ['/dashboard.css','public/dashboard.css'],
+  ['/dashboard.mjs','public/dashboard.mjs'],
+  ['/dashboard-model.mjs','public/dashboard-model.mjs'],
   ...['alekov-ai-explain','alekov-app-icon','alekov-connect-approval','alekov-connection-unknown','alekov-empty-records'].map(name=>[`/assets/alekov/${name}.webp`,`public/assets/alekov/${name}.webp`])]);
 const connectionRoutes=new Map(['start','finish','status','cancel'].map(kind=>[`/api/ai/connect/${kind}`,kind]));
 const safeErrors=Object.freeze({
@@ -233,6 +238,22 @@ export function createOnServer(serverOptions={}) {
   const aiSecrets=!appCredentialVault&&typeof aiEnv.ON_AI_APP_KEY==='string'?[aiEnv.ON_AI_APP_KEY]:[];
   const mappedService=()=>mappedAi??(mappedAi=createOnAiService({env:aiEnv,allowLoopbackHttp:allowLoopbackAiHttp,timeoutMs:aiTimeoutMs,appAuthorization:{}}));
   const mode=['connected','demo','disconnected'].includes(engine.evidenceMode)?engine.evidenceMode:'disconnected';
+  // Bound repeated localhost reads: share an in-flight sampling operation and reuse its
+  // timestamped result briefly. Cached values keep their original measuredAt, never claim
+  // a fresh reading, and no body, secret or identity data is collected.
+  let pendingLocalPc = null;
+  let lastLocalPc = null;
+  let lastLocalPcAt = 0;
+  function readLocalPc() {
+    if (lastLocalPc && Date.now() - lastLocalPcAt < 1000) return Promise.resolve(lastLocalPc);
+    if (pendingLocalPc) return pendingLocalPc;
+    pendingLocalPc = sampleLocalPc().then(data => {
+      lastLocalPc = data;
+      lastLocalPcAt = Date.now();
+      return data;
+    }).finally(() => { pendingLocalPc = null; });
+    return pendingLocalPc;
+  }
   const connectionConfigKeys=['enabled','fetchImpl','clock','startTimeoutMs','scopeTimeoutMs','finishTimeoutMs','pollIntervalMs','maxFlows','retainMs'];
   if(!Number.isSafeInteger(readTimeoutMs)||readTimeoutMs<=0||readTimeoutMs>120000
     || aiConnectionConfiguration!==undefined&&(!record(aiConnectionConfiguration)||Object.keys(aiConnectionConfiguration).some(key=>!connectionConfigKeys.includes(key))
@@ -681,6 +702,11 @@ export function createOnServer(serverOptions={}) {
         assertAlive();
         send(200,{ok:true,data:guide});return;
         }finally{closeNativeHostOperation(nativeOperation);}
+      }
+      // Observes only this local OS; no credentials, privilege elevation, persistence, or remote action.
+      if(req.method==='GET'&&url.pathname==='/api/local-pc'){
+        const data=await bounded(()=>readLocalPc());
+        assertAlive();send(200,{ok:true,data});return;
       }
       if(req.method==='GET'&&url.pathname==='/api/diagnostics'){
         // 자동 호출이나 비밀 원문·전체 설정 출력 없이 로컬 연결 상태만 진단한다.

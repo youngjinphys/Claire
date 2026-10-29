@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="theme-color" content="#0b1224">
+  <title>Claire / Local Observatory</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script type="module" src="/dashboard.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#dashboard">본문으로 이동</a>
+  <div class="shell">
+    <aside class="rail" aria-label="관제 메뉴">
+      <div class="identity">
+        <div class="logo-mark" aria-hidden="true">C<span>.</span></div>
+        <div><strong>Claire</strong><small>LOCAL OBSERVATORY</small></div>
+      </div>
+      <div class="rail-section">WORKSPACE</div>
+      <nav class="rail-nav" aria-label="화면 전환">
+        <a class="active" href="/dashboard.html" aria-current="page"><span class="nav-mark" aria-hidden="true">◈</span> 관제 대시보드</a>
+        <a href="/"><span class="nav-mark" aria-hidden="true">▤</span> 기존 Claire 화면</a>
+        <a href="#records-panel"><span class="nav-mark" aria-hidden="true">≡</span> 보안 기록</a>
+        <a href="#source-panel"><span class="nav-mark" aria-hidden="true">◎</span> 데이터 출처</a>
+      </nav>
+      <div class="rail-bottom">
+        <div class="rail-rule"></div>
+        <p>LOCAL · READ ONLY</p>
+        <span>관리자 권한 불필요</span>
+        <span>외부 전송 · 자동 조치 없음</span>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="masthead">
+        <div class="path">WORKSPACE <span>/</span> LOCAL OBSERVATORY</div>
+        <div class="masthead-right">
+          <span class="status-led" aria-hidden="true"></span>
+          <span id="live-state" role="status" aria-live="polite">관측 대기</span>
+          <time id="header-clock" aria-label="현재 PC 시각">—</time>
+        </div>
+      </header>
+
+      <main id="dashboard">
+        <div class="heading-row">
+          <div>
+            <p class="section-index">01 / SYSTEM OVERVIEW</p>
+            <h1>내 PC 관제 현황<span class="heading-dot">.</span></h1>
+            <p class="lede">운영체제 자원 실측과 기존 SDP 보안 조회를 분리한 로컬 대시보드</p>
+          </div>
+          <div class="toolbar" aria-label="관측 제어">
+            <button id="sample-once" class="button ghost" type="button">한 번 측정</button>
+            <button id="stop" class="button ghost" type="button" disabled>관측 중지</button>
+            <button id="start" class="button primary" type="button">관측 시작 <span aria-hidden="true">↗</span></button>
+          </div>
+        </div>
+
+        <div id="page-notice" class="page-notice" role="status" aria-live="polite">측정을 시작하면 CPU·메모리·디스크의 실제 로컬 관측값이 표시됩니다. 측정 전에는 예시 수치를 넣지 않습니다.</div>
+
+        <section class="metrics-grid" aria-label="주요 상태 카드">
+          <article class="metric-card" id="cpu-card" data-state="unavailable">
+            <div class="metric-top"><h2>CPU 사용률</h2><span class="metric-icon" aria-hidden="true">01</span></div>
+            <div class="metric-reading"><strong id="cpu-value">확인 불가</strong><span id="cpu-unit">%</span></div>
+            <p class="metric-detail" id="cpu-detail">두 시점의 OS 누적 시간 차이</p>
+            <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="cpu-time">미측정</span></div>
+            <p class="metric-reason" id="cpu-reason">관측 시작 전</p>
+          </article>
+          <article class="metric-card" id="memory-card" data-state="unavailable">
+            <div class="metric-top"><h2>메모리 사용률</h2><span class="metric-icon" aria-hidden="true">02</span></div>
+            <div class="metric-reading"><strong id="memory-value">확인 불가</strong><span id="memory-unit">%</span></div>
+            <p class="metric-detail" id="memory-detail">os.freemem 기준 · OS별 캐시 처리 상이</p>
+            <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="memory-time">미측정</span></div>
+            <p class="metric-reason" id="memory-reason">관측 시작 전</p>
+          </article>
+          <article class="metric-card" id="disk-card" data-state="unavailable">
+            <div class="metric-top"><h2>디스크 여유 공간</h2><span class="metric-icon" aria-hidden="true">03</span></div>
+            <div class="metric-reading"><strong id="disk-value">확인 불가</strong><span id="disk-unit">GiB</span></div>
+            <p class="metric-detail" id="disk-detail">앱 폴더가 위치한 파일시스템 기준</p>
+            <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="disk-time">미측정</span></div>
+            <p class="metric-reason" id="disk-reason">관측 시작 전</p>
+          </article>
+          <article class="metric-card security" id="security-card" data-state="unavailable">
+            <div class="metric-top"><h2>내 기기 보안 상태</h2><span class="metric-icon" aria-hidden="true">04</span></div>
+            <div class="metric-reading security-reading"><strong id="security-value">확인 불가</strong></div>
+            <p class="metric-detail" id="security-detail">SDP 원천 정책 결과 · 상태 코드</p>
+            <div class="metric-bottom"><span class="source-pill source-sdp" id="security-source">SDP 조회</span><span id="security-time">미조회</span></div>
+            <p class="metric-reason" id="security-reason">원천 조회 전</p>
+          </article>
+        </section>
+
+        <div class="insight-grid">
+          <section class="panel chart-panel" aria-labelledby="trend-title">
+            <div class="panel-heading">
+              <div>
+                <p class="section-index">02 / RESOURCE HISTORY</p>
+                <h2 id="trend-title">CPU · 메모리 사용률 추이</h2>
+                <p>실측 표본만 표시 · 최근 10분 · 5초 간격(관측 중)</p>
+              </div>
+              <div class="legend" aria-label="차트 계열"><span class="legend-cpu">CPU</span><span class="legend-memory">MEMORY</span></div>
+            </div>
+            <div class="chart-frame">
+              <svg id="resource-chart" viewBox="0 0 920 260" role="img" aria-label="최근 10분 CPU 및 메모리 사용률 차트" preserveAspectRatio="xMidYMid meet"></svg>
+              <div id="chart-empty" class="chart-empty">관측값이 없습니다. 추이를 비교하려면 유효한 표본이 두 개 이상 필요합니다.</div>
+            </div>
+            <div class="chart-footer"><span>10분 전</span><span>관측값 단위: % · 세로축 0–100</span><span>현재</span></div>
+          </section>
+
+          <aside class="panel insight-panel" aria-labelledby="insight-title">
+            <div class="panel-heading">
+              <div><p class="section-index">03 / OBSERVATION NOTES</p><h2 id="insight-title">변화 분석</h2></div>
+              <span class="small-label">수치 기반</span>
+            </div>
+            <div class="analysis-mark" aria-hidden="true">↗</div>
+            <p class="analysis-value" id="trend-headline">표본 대기</p>
+            <p class="analysis-copy" id="trend-copy">첫 번째 측정값부터 메모리에 축적됩니다. 두 개 이상의 유효한 관측값이 있어야 변화 폭을 계산할 수 있습니다.</p>
+            <div class="analysis-rule"></div>
+            <dl class="mini-stats">
+              <div><dt>유효 표본 수</dt><dd id="sample-count">0개</dd></div>
+              <div><dt>마지막 관측</dt><dd id="last-sample">없음</dd></div>
+              <div><dt>기록 위치</dt><dd>이 탭 메모리</dd></div>
+            </dl>
+            <p class="fine-print">변화량은 시작·마지막 표본의 차이(%p)입니다. 침해 여부나 원인 판정이 아닙니다.</p>
+          </aside>
+        </div>
+
+        <section class="panel records-panel" id="records-panel" aria-labelledby="records-title">
+          <div class="panel-heading">
+            <div><p class="section-index">04 / SECURITY EVENTS</p><h2 id="records-title">최근 접속 · XDR 기록</h2><p>기존 Claire의 본인 범위 조회 재사용 · 최대 40건</p></div>
+            <div class="record-tools">
+              <span class="record-origin" id="events-origin">원천 확인 중</span>
+              <label for="event-filter">종류</label>
+              <select id="event-filter"><option value="all">전체</option><option value="access">접속</option><option value="xdr">XDR</option></select>
+              <button type="button" class="button ghost compact" id="refresh-security">기록 재조회</button>
+            </div>
+          </div>
+          <p id="events-note" class="records-note" role="status" aria-live="polite">조회 전입니다.</p>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th scope="col">발생 시각</th><th scope="col">종류</th><th scope="col">사건 ID</th><th scope="col">요약</th><th scope="col">업무 앱</th></tr></thead>
+              <tbody id="events-body"><tr><td colspan="5">조회 중이거나 연결 상태를 확인할 수 없습니다.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="provenance" id="source-panel" aria-label="측정 범위와 데이터 출처">
+          <div><span class="provenance-label">DATA INTEGRITY</span><h2>값이 없으면, 없다고 표시합니다.</h2></div>
+          <div class="provenance-grid">
+            <p><strong>PC 실측</strong> Node.js OS·파일시스템 표준 API의 현재 결과. 관리자 권한이나 별도 에이전트 불필요.</p>
+            <p><strong>SDP 원천</strong> 기존 서버가 검증한 기기·기록. 연결 실패는 정상 판정이 아닙니다.</p>
+            <p><strong>예제 DEMO</strong> 서버의 가상 보안 자료에만 적용. 실제 PC 자원 관측값과 절대 합산하지 않습니다.</p>
+          </div>
+        </section>
+        <footer>Claire Local Observatory · 측정은 이 PC의 127.0.0.1에서 수행 · 원본 제출물 및 기존 화면 보존</footer>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
