@@ -43,3 +43,77 @@ jobs:
         run: npm --prefix on-client run check
       - name: Claire loopback HTTP integration tests
         run: npm --prefix on-client test
+      - name: Claire headless browser dashboard smoke test
+        env:
+          CLAIRE_QA_CAPTURE_DIR: ${{ runner.temp }}/claire-observatory-qa
+        run: node on-client/tools/dashboard-browser-smoke.mjs
+      - name: Upload synthetic-browser QA screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: claire-observatory-browser-${{ github.sha }}
+          path: ${{ runner.temp }}/claire-observatory-qa/*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+  windows-client:
+    name: Claire Windows user-mode verification
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout same source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Use exact course runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.19.0
+      - name: Windows Claire source and HTTP tests
+        run: |
+          npm --prefix on-client run check
+          npm --prefix on-client test
+      - name: Normal PowerShell launcher and local PC API
+        shell: pwsh
+        run: |
+          Push-Location on-client
+          $launchedPid = $null
+          try {
+            # Never pipe the output of a launcher that creates a persistent background
+            # Node child: inherited pipe handles can keep PowerShell waiting for EOF.
+            $launcher = Start-Process -FilePath powershell.exe -ArgumentList @(
+              '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+              '.\tools\start-alekov.ps1', '-Port', '55189', '-Background'
+            ) -WorkingDirectory (Get-Location).Path -PassThru -WindowStyle Hidden
+            if (-not $launcher.WaitForExit(20000) -or $launcher.ExitCode -ne 0) {
+              throw "Background launcher did not finish successfully"
+            }
+            $listener = Get-NetTCPConnection -LocalPort 55189 -State Listen -ErrorAction Stop |
+              Where-Object { $_.LocalAddress -eq '127.0.0.1' } |
+              Select-Object -First 1
+            if (-not $listener -or -not $listener.OwningProcess) {
+              throw "Expected localhost listener is absent"
+            }
+            $launchedPid = [int]$listener.OwningProcess
+            $data = Invoke-RestMethod 'http://127.0.0.1:55189/api/local-pc'
+            if ($data.ok -ne $true -or $data.data.schema -ne 'claire.local-pc.v1') {
+              throw "Invalid sample schema"
+            }
+            foreach ($metric in @('cpu','memory','disk')) {
+              $value = $data.data.metrics.$metric
+              # A runner-level sensor failure must not be reported as successful
+              # Windows measurement coverage. The product itself still handles
+              # an unavailable sensor safely on a restricted student PC.
+              if ($value.status -ne 'ok' -or $null -eq $value.value) {
+                throw "Windows CI sensor not measured: $metric ($($value.reason))"
+              }
+              if (-not $value.unit -or -not $value.source -or -not $value.measuredAt) {
+                throw "Missing provenance: $metric"
+              }
+              if ($value.status -eq 'unavailable' -and ($null -ne $value.value -or -not $value.reason)) {
+                throw "Invalid unavailable state: $metric"
+              }
+            }
+            Write-Host "PASS Windows PowerShell launcher and read-only local OS metrics (CI runner, not student PC)"
+          } finally {
+            if ($launchedPid) { Stop-Process -Id $launchedPid -Force -ErrorAction SilentlyContinue }
+            Pop-Location
+          }
