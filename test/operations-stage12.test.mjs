@@ -5,12 +5,13 @@ import { createOperationsHandler } from '../api/ops.js';
 import config from '../aleph.config.json' with { type: 'json' };
 
 function fakeResponse(status, body, extra={}) {
-  const headers = new Map(Object.entries({
-    'content-type':'application/json','cache-control':'no-store',
-    'x-vercel-id':'icn1::example-req',...extra,
-  }));
-  return {status,headers:{get:x=>headers.get(x.toLowerCase()) ?? null},
-    text:async()=>JSON.stringify(body)};
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'content-type':'application/json','cache-control':'no-store',
+      'x-vercel-id':'icn1::example-req',...extra,
+    },
+  });
 }
 const req = (auth) => ({method:'GET',headers:auth?{authorization:auth}:{}});
 const commit='a'.repeat(40);
@@ -108,4 +109,36 @@ test('deployment observation is inconclusive without server-provided build SHA',
   });
   const result=await serve(handler,req());
   assert.equal(result.json.records.find(x=>x.id==='deployment_manifest').outcome,'inconclusive');
+});
+
+test('the operations reader enforces a byte bound even without Content-Length',async()=>{
+  const badBody=new Response(new ReadableStream({
+    start(controller){controller.enqueue(new Uint8Array(4096));controller.close();}
+  }),{status:200,headers:{'content-type':'application/json','cache-control':'no-store'}});
+  const handler=createOperationsHandler({
+    env:{VERCEL_URL:'claire-test.vercel.app',VERCEL_GIT_COMMIT_SHA:commit},
+    fetchImpl:async(url)=>String(url).endsWith('/aleph.json')
+      ?badBody:fakeResponse(503,{error:'NOTES_BACKEND_NOT_CONFIGURED'}),
+  });
+  const response=await serve(handler,req());
+  assert.equal(response.code,200);
+  assert.equal(response.json.records.find(row=>row.id==='deployment_manifest').outcome,'failed');
+  assert.equal(response.json.verdict.complete,false);
+});
+
+test('bogus Content-Length and cacheable restore denial never count as verified',async()=>{
+  const handler=createOperationsHandler({
+    env:{VERCEL_URL:'claire-test.vercel.app',VERCEL_GIT_COMMIT_SHA:commit},
+    fetchImpl:async(url)=>{
+      if(String(url).endsWith('/aleph.json'))return fakeResponse(200,identity(),
+        {'content-length':'999999'});
+      if(String(url).includes('/restore/'))return fakeResponse(403,{error:'UNAUTHORIZED'},
+        {'cache-control':'public, max-age=600'});
+      return fakeResponse(503,{error:'NOTES_BACKEND_NOT_CONFIGURED'});
+    },
+  });
+  const response=await serve(handler,req());
+  assert.equal(response.json.records.find(row=>row.id==='deployment_manifest').outcome,'failed');
+  assert.equal(response.json.records.find(row=>row.id==='anonymous_restore').outcome,'failed');
+  assert.equal(response.json.summary.verified,0);
 });

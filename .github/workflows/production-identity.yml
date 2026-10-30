@@ -1,0 +1,32 @@
+name: Public deployment identity drift
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every day near 10:15 KST; independent from code-only CI success.
+    - cron: '15 1 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-identity-drift
+  cancel-in-progress: true
+
+jobs:
+  live-identity:
+    name: Verify published main SHA and repository identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout default-branch HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install audited Node runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Check canonical alias (read-only, no credentials)
+        run: npm run identity:live
