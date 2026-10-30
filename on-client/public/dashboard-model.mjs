@@ -39,6 +39,14 @@ function parseMetric(metric, key, checkedAt) {
   if (metric.status !== 'ok' || !finite(metric.value) || metric.value < 0
       || (key !== 'disk' && metric.value > 100)) return invalid(key, 'MEASUREMENT_INVALID', metric.measuredAt);
   if (key === 'memory') {
+    const hasBytes = Object.hasOwn(metric, 'usedBytes') || Object.hasOwn(metric, 'totalBytes');
+    if (hasBytes && (!int(metric.usedBytes) || !int(metric.totalBytes) || metric.totalBytes <= 0
+      || metric.usedBytes < 0 || metric.usedBytes > metric.totalBytes
+      || Math.abs(metric.usedBytes / metric.totalBytes * 100 - metric.value) > 0.011
+      || Math.abs(metric.usedBytes / 1024 ** 3 - metric.usedGiB) > 0.00501
+      || Math.abs(metric.totalBytes / 1024 ** 3 - metric.totalGiB) > 0.00501)) {
+      return invalid(key, 'MEMORY_INVALID', metric.measuredAt);
+    }
     if (!finite(metric.usedGiB) || !finite(metric.totalGiB) || metric.totalGiB <= 0
       || metric.usedGiB < 0 || metric.usedGiB > metric.totalGiB
       || Math.abs(metric.usedGiB / metric.totalGiB * 100 - metric.value) > 3) {
@@ -53,17 +61,26 @@ function parseMetric(metric, key, checkedAt) {
   if (key === 'disk' && metric.scope !== 'project-filesystem') return invalid(key, 'DISK_SCOPE_UNVERIFIED', metric.measuredAt);
   return {
     status: 'ok', value: metric.value, unit: METRIC_UNITS[key], source: SOURCES[key], measuredAt: metric.measuredAt,
-    ...(key === 'memory' ? { usedGiB: metric.usedGiB, totalGiB: metric.totalGiB } : {}),
+    ...(key === 'memory' ? { usedGiB: metric.usedGiB, totalGiB: metric.totalGiB,
+      ...(int(metric.usedBytes) && int(metric.totalBytes) ? { usedBytes: metric.usedBytes, totalBytes: metric.totalBytes } : {}) } : {}),
+    ...(key === 'disk' ? { scope: 'project-filesystem' } : {}),
     ...(key === 'cpu' ? { measuredFrom: metric.measuredFrom, windowMs: metric.windowMs } : {}),
   };
 }
 
-export function normalizeSnapshot(response) {
+// Optional HTTP timing is supplied by the live view, not invented for stored tests.
+export function normalizeSnapshot(response, timing = null) {
   const data = response?.data;
   if (response?.ok !== true || data?.schema !== 'claire.local-pc.v1'
     || data?.scope !== 'local-machine' || !isIso(data.checkedAt)
     || !data.metrics || typeof data.metrics !== 'object' || Array.isArray(data.metrics)) {
     return { status: 'error', reason: 'PC_MEASUREMENT_RESPONSE_INVALID' };
+  }
+  if (timing && (!finite(timing.requestedAt) || !finite(timing.receivedAt)
+    || timing.receivedAt < timing.requestedAt
+    || Date.parse(data.checkedAt) > timing.receivedAt + 1000
+    || timing.receivedAt - Date.parse(data.checkedAt) > MAX_MEASUREMENT_AGE_MS)) {
+    return { status: 'error', reason: 'MEASUREMENT_TIME_INVALID' };
   }
   const metrics = Object.fromEntries(Object.keys(METRIC_UNITS)
     .map(key => [key, parseMetric(data.metrics[key], key, data.checkedAt)]));
@@ -74,12 +91,12 @@ const withinAge = (stamp, now) => isIso(stamp) && Date.parse(stamp) <= now + 100
 function trimHistory(history, now) {
   return (Array.isArray(history) ? history : [])
     .filter(point => finite(point?.time) && point.time > now - HISTORY_WINDOW_MS && point.time <= now + 1000)
-    .slice(-(MAX_SAMPLES - 1));
+    .slice(-MAX_SAMPLES);
 }
 export function appendGap(history, now = Date.now()) {
   const recent = trimHistory(history, now);
-  if (recent.length && recent[recent.length - 1].time >= now) return recent;
-  return [...recent, { time: now, cpu: null, memory: null }];
+  if (recent.length && recent.at(-1).cpu === null && recent.at(-1).memory === null && recent.at(-1).time === now) return recent;
+  return [...recent, { time: now, cpu: null, memory: null }].slice(-MAX_SAMPLES);
 }
 export function appendSample(history, snapshot, now = Date.now()) {
   const recent = trimHistory(history, now);
@@ -90,7 +107,8 @@ export function appendSample(history, snapshot, now = Date.now()) {
     const metric = snapshot.metrics?.[key];
     return metric?.status === 'ok' && withinAge(metric.measuredAt, now) ? metric.value : null;
   };
-  return [...recent, { time, cpu: percent('cpu'), memory: percent('memory') }];
+  return [...recent, { time, cpu: percent('cpu'), memory: percent('memory'),
+    metrics: structuredClone(snapshot.metrics) }].slice(-MAX_SAMPLES);
 }
 // Keep rendering segments consistent with change-analysis baselines: never connect
 // samples across failures, clock reversals or extended data-collection gaps.
@@ -174,9 +192,9 @@ export function securityCardState(info, now = Date.now()) {
 }
 
 function coverageValid(coverage, expected, checkedAt, timing) {
-  if (!coverage) return true;
+  if (coverage === undefined) return true;
   const keys = ['schema','kind','scope','limit','total','returned','truncated','observedAtMs'];
-  if (typeof coverage !== 'object' || Array.isArray(coverage) || Object.keys(coverage).length !== keys.length || keys.some(k => !Object.hasOwn(coverage,k))) return false;
+  if (coverage === null || typeof coverage !== 'object' || Array.isArray(coverage) || Object.keys(coverage).length !== keys.length || keys.some(k => !Object.hasOwn(coverage,k))) return false;
   if (coverage.schema !== 'alekov.sdp.coverage.v1' || coverage.kind !== 'events' || coverage.scope !== 'own-recorded-events'
     || coverage.limit !== 40 || !int(coverage.total) || !int(coverage.returned) || coverage.returned !== expected
     || coverage.total < expected || coverage.total < 0 || typeof coverage.truncated !== 'boolean'
@@ -222,4 +240,85 @@ export function normalizeEvents(response, timing = null) {
   events.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   return { status: 'ok', checkedAt, mode, events,
     total: response.coverage?.total ?? null, truncated: response.coverage?.truncated === true };
+}
+
+
+// Only OS observations leave the page, and only after an explicit user gesture.
+// Re-project each metric rather than serializing arbitrary objects from UI state.
+export function exportMeasurements(history, generatedAt = new Date().toISOString()) {
+  if (!isIso(generatedAt)) throw new TypeError('EXPORT_TIME_INVALID');
+  const now = Date.parse(generatedAt);
+  const records = trimHistory(history, now).map(point => {
+    const checkedAt = new Date(point.time).toISOString();
+    if (!point.metrics) return { type: 'gap', checkedAt, reason: 'OBSERVATION_GAP' };
+    const normalized = normalizeSnapshot({ ok: true, data: {
+      schema: 'claire.local-pc.v1', scope: 'local-machine', checkedAt, metrics: point.metrics,
+    } });
+    return normalized.status === 'ok'
+      ? { type: 'sample', checkedAt, metrics: normalized.metrics }
+      : { type: 'gap', checkedAt, reason: 'MEASUREMENT_CONTRACT_INVALID' };
+  });
+  return {
+    schema: 'claire.measurements.v1', generatedAt, windowMs: HISTORY_WINDOW_MS,
+    source: 'Node.js OS APIs on the server execution environment',
+    note: 'Virtual machines, WSL and containers may report that runtime environment, not the physical PC.',
+    includesSecurityRecords: false, records,
+  };
+}
+
+// Same-origin, bounded transport shared by all dashboard reads. No redirects,
+// cookies to external origins, automatic retries, unbounded JSON, or leaked errors.
+export async function requestDashboardJson(path, {
+  signal, fetchImpl = globalThis.fetch, timeoutMs = 12000, maxBytes = 262144,
+} = {}) {
+  if (!['/api/local-pc', '/api/me', '/api/events'].includes(path)) throw Error('PATH_NOT_ALLOWED');
+  if (!int(timeoutMs) || timeoutMs < 10 || timeoutMs > 30000
+    || !int(maxBytes) || maxBytes < 64 || maxBytes > 1048576) throw Error('REQUEST_LIMIT_INVALID');
+  if (signal?.aborted) throw Error('REQUEST_CANCELLED');
+  const local = new AbortController();
+  let timer, cancel, reader;
+  const stopped = new Promise((_, reject) => {
+    const end = code => { local.abort(); reject(Error(code)); };
+    cancel = () => end('REQUEST_CANCELLED');
+    signal?.addEventListener('abort', cancel, { once: true });
+    timer = setTimeout(() => end('LOCAL_FETCH_FAILED'), timeoutMs);
+  });
+  const work = async () => {
+    const response = await fetchImpl(path, {
+      cache: 'no-store', credentials: 'same-origin', mode: 'same-origin', redirect: 'error',
+      headers: { Accept: 'application/json' }, signal: local.signal,
+    });
+    if (local.signal.aborted) throw Error('REQUEST_CANCELLED');
+    const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (type !== 'application/json' || response.redirected) throw Error('RESPONSE_CONTRACT_INVALID');
+    const declared = response.headers.get('content-length');
+    if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw Error('RESPONSE_TOO_LARGE');
+    if (!response.body || typeof response.body.getReader !== 'function') throw Error('RESPONSE_CONTRACT_INVALID');
+    reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    let bytes = 0, text = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (local.signal.aborted) throw Error('REQUEST_CANCELLED');
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) throw Error('RESPONSE_TOO_LARGE');
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    const body = JSON.parse(text);
+    if (!isObject(body) || typeof body.ok !== 'boolean' || (!response.ok && body.ok !== false)) throw Error('RESPONSE_CONTRACT_INVALID');
+    return body;
+  };
+  try { return await Promise.race([stopped, work()]); }
+  catch (error) {
+    const code = ['REQUEST_CANCELLED', 'RESPONSE_TOO_LARGE', 'RESPONSE_CONTRACT_INVALID'].includes(error?.message)
+      ? error.message : 'LOCAL_FETCH_FAILED';
+    throw Error(code);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+    local.abort();
+    if (reader) void reader.cancel().catch(() => {});
+  }
 }

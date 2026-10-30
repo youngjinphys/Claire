@@ -1,3 +1,13 @@
+## 2026-10-30 · 최신 main 정합성 후속 점검
+
+- `aleph.config.json.repoUrl`은 이미 `https://github.com/youngjinphys/Claire`로 정렬되어 있습니다. 과거 `choi-bujang-secret-vault`는 Vercel **프로젝트 리소스명**이며 GitHub 저장소와 같을 필요가 없습니다.
+- 최근 Vercel `main` 배포는 `BLOCKED`이고 공개 alias는 이전 `READY` SHA를 제공하는 상태입니다. 이 문제는 GitHub CI 성공과 독립적인 **운영 배포 정합성 실패**입니다.
+- `npm run identity:live` 기반 GitHub Actions 별도 예약·수동 점검을 추가하여 배포 불일치를 실패로 표기합니다. CI/단위 테스트의 녹색 상태를 실제 운영 배포 성공으로 해석하지 않습니다.
+- `/api/ops`의 내부 HTTP 증적 본문은 실제 수신 바이트로 한도를 강제하고 인증된 자료의 2xx 본문은 읽지 않으며, 캐시 가능한 복구 거부 응답을 정식 검증으로 간주하지 않습니다.
+- 자세한 근거와 운영자 조치 순서는 [배포 정합성 후속 점검](docs/DEPLOYMENT_DRIFT_RUNBOOK_2026-10-30.md)을 참고하세요.
+
+---
+
 ## 2026-10-30 · 저장소·배포·제출 증적 재감사
 
 현재 Git 정본은 `youngjinphys/Claire`입니다. `aleph.config.json.repoUrl`은 이미 이 주소이며 `choi-bujang-secret-vault`는 **Vercel 프로젝트 자원명**으로 보존합니다. 2026-10-30 실측에서 공개 Vercel alias는 `b1918ce5…` 배포를 가리켰고, 당시 최신 `main`의 `505f32bf…` 배포는 `BLOCKED`였습니다. **GitHub CI 성공은 운영 배포 완료가 아닙니다.**

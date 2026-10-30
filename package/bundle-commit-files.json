@@ -1,19 +1,20 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    ".github/workflows/quality.yml",
+    ".github/workflows/production-identity.yml",
     "README.md",
     "api/ops.js",
-    "docs/IDENTITY_CONSISTENCY_2026-10-30.md",
-    "package.json",
+    "docs/DEPLOYMENT_DRIFT_RUNBOOK_2026-10-30.md",
+    "on-client/docs/OBSERVATORY_AUDIT_2026-10-30.md",
+    "on-client/public/dashboard-model.mjs",
+    "on-client/public/dashboard.css",
+    "on-client/public/dashboard.html",
+    "on-client/public/dashboard.mjs",
+    "on-client/src/local-pc-metrics.mjs",
+    "on-client/test/dashboard-lifecycle.test.mjs",
+    "on-client/test/observatory-regression.test.mjs",
     "package/bundle-commit-files.json",
-    "scripts/bundle.mjs",
-    "scripts/verify-live-identity.mjs",
-    "src/deployment-evidence.mjs",
-    "src/operations.mjs",
-    "test/bundle-stage12-isolated.test.mjs",
-    "test/deployment-evidence.test.mjs",
     "test/operations-stage12.test.mjs"
   ],
-  "releaseNote": "2026-10-30: Claire repo/deploy/submission identity, per-commit provenance, and read-only production freshness. Official ALEPH judge results remain unverified."
+  "releaseNote": "2026-10-30: consolidate prior audit and local observatory corrections; preserve production identity evidence and old submissions; exact parent-to-final changed paths, no packaging or deployment."
 }

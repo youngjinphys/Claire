@@ -29,7 +29,7 @@
         <div class="rail-rule"></div>
         <p>LOCAL · READ ONLY</p>
         <span>관리자 권한 불필요</span>
-        <span>외부 전송 · 자동 조치 없음</span>
+        <span>자원 실측값 외부 전송 없음</span><span>자동 조치 없음</span>
       </div>
     </aside>
 
@@ -49,6 +49,7 @@
             <p class="section-index">01 / SYSTEM OVERVIEW</p>
             <h1>내 PC 관제 현황<span class="heading-dot">.</span></h1>
             <p class="lede">운영체제 자원 실측과 기존 SDP 보안 조회를 분리한 로컬 대시보드</p>
+            <p class="runtime-note">측정 대상: Node 서버 실행 환경. WSL·컨테이너·가상 머신에서는 물리 PC 전체와 다를 수 있습니다.</p>
           </div>
           <div class="toolbar" aria-label="관측 제어">
             <button id="sample-once" class="button ghost" type="button">한 번 측정</button>
@@ -96,12 +97,12 @@
               <div>
                 <p class="section-index">02 / RESOURCE HISTORY</p>
                 <h2 id="trend-title">CPU · 메모리 사용률 추이</h2>
-                <p>실측 표본만 표시 · 최근 10분 · 5초 간격(관측 중)</p>
+                <p>실측 표본만 표시 · 최근 10분 · 목표 간격 5초 · 실패 시 수동 재개</p>
               </div>
               <div class="legend" aria-label="차트 계열"><span class="legend-cpu">CPU</span><span class="legend-memory">MEMORY</span></div>
             </div>
             <div class="chart-frame">
-              <svg id="resource-chart" viewBox="0 0 920 260" role="img" aria-label="최근 10분 CPU 및 메모리 사용률 차트" preserveAspectRatio="xMidYMid meet"></svg>
+              <svg id="resource-chart" viewBox="0 0 920 260" role="img" aria-label="최근 10분 CPU 실선·메모리 점선 사용률 차트. 수치·시각은 아래 측정 기록에서 확인." preserveAspectRatio="xMidYMid meet"></svg>
               <div id="chart-empty" class="chart-empty">관측값이 없습니다. 추이를 비교하려면 유효한 표본이 두 개 이상 필요합니다.</div>
             </div>
             <div class="chart-footer"><span>10분 전</span><span>관측값 단위: % · 세로축 0–100</span><span>현재</span></div>
@@ -125,9 +126,27 @@
           </aside>
         </div>
 
+        <section class="panel records-panel measurement-log" aria-labelledby="measurement-title">
+          <div class="panel-heading">
+            <div><p class="section-index">04 / MEASURED EVIDENCE</p><h2 id="measurement-title">추이의 근거 · 측정 기록</h2><p>센서별 시각·단위·실패 이유를 그대로 확인합니다.</p></div>
+            <button type="button" class="button ghost" id="export-measurements" disabled>측정 기록 JSON 저장</button>
+          </div>
+          <p id="measurement-note" class="records-note">관측 기록 없음 · 계정/보안 로그는 내보내지 않습니다.</p>
+          <details>
+            <summary>최근 20개 측정 기록 펼치기</summary>
+            <div class="table-scroll" tabindex="0" role="region" aria-label="센서 측정 기록 표">
+              <table>
+                <caption>PC 실측 · 실패 시각은 측정 성공이 아니라 조회 시도 시각입니다.</caption>
+                <thead><tr><th scope="col">응답 완료 시각</th><th scope="col">CPU (%)</th><th scope="col">메모리 (%)</th><th scope="col">디스크 (GiB)</th><th scope="col">출처</th></tr></thead>
+                <tbody id="measurement-body"><tr><td colspan="5">관측 기록 없음</td></tr></tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
         <section class="panel records-panel" id="records-panel" aria-labelledby="records-title">
           <div class="panel-heading">
-            <div><p class="section-index">04 / SECURITY EVENTS</p><h2 id="records-title">최근 접속 · XDR 기록</h2><p>기존 Claire의 본인 범위 조회 재사용 · 최대 40건</p></div>
+            <div><p class="section-index">05 / SECURITY EVENTS</p><h2 id="records-title">최근 접속 · XDR 기록</h2><p>기존 Claire의 본인 범위 조회 재사용 · 최대 40건</p></div>
             <div class="record-tools">
               <span class="record-origin" id="events-origin">원천 확인 중</span>
               <label for="event-filter">종류</label>
@@ -147,12 +166,12 @@
         <section class="provenance" id="source-panel" aria-label="측정 범위와 데이터 출처">
           <div><span class="provenance-label">DATA INTEGRITY</span><h2>값이 없으면, 없다고 표시합니다.</h2></div>
           <div class="provenance-grid">
-            <p><strong>PC 실측</strong> Node.js OS·파일시스템 표준 API의 현재 결과. 관리자 권한이나 별도 에이전트 불필요.</p>
+            <p><strong>PC 실측</strong> Node 서버 실행 환경의 OS·파일시스템 실측. 일반 권한만 사용하며 가상 환경에서는 물리 PC 전체의 값이라고 보장하지 않습니다.</p>
             <p><strong>SDP 원천</strong> 기존 서버가 검증한 기기·기록. 연결 실패는 정상 판정이 아닙니다.</p>
             <p><strong>예제 DEMO</strong> 서버의 가상 보안 자료에만 적용. 실제 PC 자원 관측값과 절대 합산하지 않습니다.</p>
           </div>
         </section>
-        <footer>Claire Local Observatory · 측정은 이 PC의 127.0.0.1에서 수행 · 원본 제출물 및 기존 화면 보존</footer>
+        <footer>Claire Local Observatory · 측정은 로컬 Node 서버 환경에서 수행 · 원본 제출물 및 기존 화면 보존</footer>
       </main>
     </div>
   </div>

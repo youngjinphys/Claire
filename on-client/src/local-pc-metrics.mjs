@@ -22,7 +22,7 @@ export function calculateCpuUsage(before, after) {
     if (!left || !right) return null;
     let sum = 0;
     for (const key of ['user', 'nice', 'sys', 'idle', 'irq']) {
-      if (!Number.isFinite(left[key]) || !Number.isFinite(right[key])) return null;
+      if (!Number.isSafeInteger(left[key]) || !Number.isSafeInteger(right[key]) || left[key] < 0 || right[key] < 0) return null;
       const diff = right[key] - left[key];
       if (diff < 0) return null;
       sum += diff;
@@ -46,8 +46,26 @@ export function createLocalPcSampler({
   monotonic = () => performance.now(),
   wait = (ms, signal) => sleep(ms, undefined, { signal }),
   intervalMs = 400,
+  sensorTimeoutMs = 2000,
 } = {}) {
   if (!Number.isInteger(intervalMs) || intervalMs < 100 || intervalMs > 2000) throw new TypeError('Invalid CPU interval');
+  if (!Number.isInteger(sensorTimeoutMs) || sensorTimeoutMs < 25 || sensorTimeoutMs > 10000) throw new TypeError('Invalid sensor deadline');
+  // A timed-out statfs syscall cannot be cancelled by Node. Keep its single-flight
+  // slot until it settles so repeated manual retries never accumulate OS reads.
+  let pendingDisk = null;
+  const cancelled = () => Object.assign(new Error('MEASUREMENT_CANCELLED'), { code: 'MEASUREMENT_CANCELLED' });
+  function checkSignal(signal) { if (signal?.aborted) throw cancelled(); }
+  async function deadline(work, signal, code) {
+    checkSignal(signal);
+    let timer, onAbort;
+    const limit = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error(code), { code })), sensorTimeoutMs);
+      onAbort = () => reject(cancelled());
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+    try { return await Promise.race([work, limit]); }
+    finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); }
+  }
 
   async function cpu(signal) {
     const source = 'os.cpus';
@@ -56,7 +74,8 @@ export function createLocalPcSampler({
       started = stamp(clock);
       const startedMono = monotonic();
       const before = cpus();
-      await wait(intervalMs, signal);
+      await deadline(Promise.resolve().then(() => wait(intervalMs, signal)), signal, 'CPU_READ_TIMEOUT');
+      checkSignal(signal);
       const after = cpus();
       const elapsed = monotonic() - startedMono;
       const measuredAt = stamp(clock);
@@ -68,8 +87,9 @@ export function createLocalPcSampler({
       return value === null
         ? unavailable(source, '%', measuredAt, 'CPU_SAMPLE_UNAVAILABLE')
         : { status: 'ok', value, unit: '%', source, measuredAt, measuredFrom: started, windowMs: Math.round(elapsed) };
-    } catch {
-      return unavailable(source, '%', stamp(clock), 'CPU_READ_FAILED');
+    } catch (error) {
+      checkSignal(signal);
+      return unavailable(source, '%', stamp(clock), error?.code === 'CPU_READ_TIMEOUT' ? 'CPU_READ_TIMEOUT' : 'CPU_READ_FAILED');
     }
   }
 
@@ -83,6 +103,7 @@ export function createLocalPcSampler({
       return {
         status: 'ok', value: round((total - free) / total * 100), unit: '%', source, measuredAt,
         usedGiB: round((total - free) / GIB), totalGiB: round(total / GIB),
+        usedBytes: total - free, totalBytes: total,
         note: 'os.freemem 기준 사용률(운영체제별 캐시 포함 방식 차이)',
       };
     } catch {
@@ -90,11 +111,21 @@ export function createLocalPcSampler({
     }
   }
 
-  async function disk() {
+  async function disk(signal) {
     const source = 'fs.statfs';
     try {
-      const info = await statfsRead(projectPath);
-      const size = BigInt(info.bsize), available = BigInt(info.bavail);
+      checkSignal(signal);
+      if (pendingDisk) return unavailable(source, 'GiB', stamp(clock), 'DISK_READ_IN_PROGRESS');
+      const operation = Promise.resolve().then(() => { checkSignal(signal); return statfsRead(projectPath); });
+      pendingDisk = operation;
+      const clearPending = () => { if (pendingDisk === operation) pendingDisk = null; };
+      operation.then(clearPending, clearPending);
+      const info = await deadline(operation, signal, 'DISK_READ_TIMEOUT');
+      checkSignal(signal);
+      if (typeof info?.bsize !== 'bigint' || typeof info?.bavail !== 'bigint') {
+        return unavailable(source, 'GiB', stamp(clock), 'DISK_INVALID');
+      }
+      const size = info.bsize, available = info.bavail;
       const measuredAt = stamp(clock);
       if (size <= 0n || available < 0n) return unavailable(source, 'GiB', measuredAt, 'DISK_INVALID');
       const bytes = available * size;
@@ -104,16 +135,22 @@ export function createLocalPcSampler({
       return whole <= BigInt(Number.MAX_SAFE_INTEGER) && Number.isFinite(value) && value >= 0
         ? { status: 'ok', value: round(value), unit: 'GiB', source, measuredAt, scope: 'project-filesystem', note: '앱 폴더 파일시스템의 OS 보고 여유 공간. 사용자 할당량/네트워크 드라이브 예외는 별도 확인 필요' }
         : unavailable(source, 'GiB', measuredAt, 'DISK_INVALID');
-    } catch {
-      return unavailable(source, 'GiB', stamp(clock), 'DISK_READ_FAILED');
+    } catch (error) {
+      checkSignal(signal);
+      const reason = error?.code === 'DISK_READ_TIMEOUT' ? 'DISK_READ_TIMEOUT'
+        : ['EACCES', 'EPERM'].includes(error?.code) ? 'DISK_PERMISSION_DENIED'
+        : ['ENOSYS', 'ENOTSUP'].includes(error?.code) ? 'DISK_UNSUPPORTED' : 'DISK_READ_FAILED';
+      return unavailable(source, 'GiB', stamp(clock), reason);
     }
   }
 
   return Object.freeze({
     async sample({ signal } = {}) {
+      checkSignal(signal);
       // Record instantaneous memory before the CPU sampling delay instead of disguising a late reading as simultaneous.
       const memoryValue = memory();
-      const [cpuValue, diskValue] = await Promise.all([cpu(signal), disk()]);
+      const [cpuValue, diskValue] = await Promise.all([cpu(signal), disk(signal)]);
+      checkSignal(signal);
       return {
         schema: SCHEMA,
         scope: 'local-machine',

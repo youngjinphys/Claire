@@ -10,12 +10,35 @@ const isJson = value => /^application\/json(?:;|$)/iu.test(value || '');
 const hasNoStore = value => /\bno-store\b/iu.test(value || '');
 const RESTORE_ERRORS = new Set(['UNAUTHORIZED','RESTORE_NOT_AUTHORIZED','RESTORE_DISABLED','VERIFIED_BACKUP_NOT_CONFIGURED','UNVERIFIED_NOTE_BACKUP']);
 
+// Bound actual received bytes, not the untrusted Content-Length header or
+// JavaScript string length. Never buffer arbitrary upstream response bodies.
 async function smallBody(response, limit = 3500) {
   const declared = response.headers.get('content-length');
-  if (declared !== null && Number(declared) > limit) return null;
-  const content = await response.text();
-  if (content.length > limit) return null;
-  try { return JSON.parse(content); } catch { return null; }
+  if (declared !== null && (!/^(?:0|[1-9]\d*)$/u.test(declared)
+    || !Number.isSafeInteger(Number(declared)) || Number(declared) > limit)) {
+    await response.body?.cancel?.().catch(() => {});
+    return null;
+  }
+  const reader = response.body?.getReader?.();
+  if (!reader) return null;
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      if (!(part.value instanceof Uint8Array)) return null;
+      bytes += part.value.byteLength;
+      if (bytes > limit) return null;
+      chunks.push(Buffer.from(part.value));
+    }
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+  } catch {
+    return null;
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 function outcomeFor(id, response, body, manifestStep, expectedCommit) {
   const status = response.status;
@@ -36,7 +59,7 @@ function outcomeFor(id, response, body, manifestStep, expectedCommit) {
       && (response.headers.get('www-authenticate') || '').trim() === 'Bearer'
       ? 'verified' : status === 503 ? 'inconclusive' : 'failed';
   if (id === 'anonymous_restore')
-    return (status === 401 || status === 403) && json
+    return (status === 401 || status === 403) && json && noStore
       && RESTORE_ERRORS.has(body?.error)
       ? 'verified' : status === 503 && RESTORE_ERRORS.has(body?.error)
         ? 'inconclusive' : 'failed';
@@ -85,6 +108,8 @@ export function createOperationsHandler({ fetchImpl = globalThis.fetch, env = pr
           || probe.id === 'static_redaction'
           || response.status >= 400;
         const body = safeToRead ? await smallBody(response) : null;
+        // Never consume authenticated or unexpected 2xx private note bodies.
+        if (!safeToRead) await response.body?.cancel?.().catch(() => {});
         const scrub = redactResponse(response,
           typeof body?.error === 'string' && SAFE_ERROR.test(body.error) ? body.error : null);
         return {id:probe.id,...scrub,checkedAt:clock(),
