@@ -13,6 +13,14 @@ function fakeResponse(status, body, extra={}) {
     text:async()=>JSON.stringify(body)};
 }
 const req = (auth) => ({method:'GET',headers:auth?{authorization:auth}:{}});
+const commit='a'.repeat(40);
+const identity=()=>({
+  schema:'aleph.defense.deployment.v1',step:config.step,commit,
+  repoUrl:config.repoUrl,publicAppUrl:config.publicAppUrl,
+  judgeIssuer:config.judgeIssuer,originalApiUrl:config.originalApiUrl,
+  restoreRoute:config.restoreRoute,allowedRoutes:[...config.allowedRoutes],
+  protectedService:{...config.protectedService},resourceZones:structuredClone(config.resourceZones),
+});
 async function serve(handler,input) {
   const h=new Map();let code;let json;
   await handler(input,{setHeader:(k,v)=>h.set(k,v),status:n=>{code=n;return {json:b=>{json=b;}}}});
@@ -31,13 +39,11 @@ test('zero official pass credit and 41 attacks remain unexecuted',()=>{
 test('only redacted actual HTTP data, no note bodies or bearer secrets',async()=>{
   const calls=[];
   const handler=createOperationsHandler({
-    env:{VERCEL_URL:'private-preview.vercel.app'},
+    env:{VERCEL_URL:'private-preview.vercel.app',VERCEL_GIT_COMMIT_SHA:commit},
     clock:()=> '2026-10-14T01:00:00.000Z',
     fetchImpl:async (url,opts)=>{
       calls.push({url:String(url),options:opts});
-      if(String(url).endsWith('/aleph.json')) return fakeResponse(200,{
-        schema:'aleph.defense.deployment.v1',step:12,
-        repoUrl:config.repoUrl});
+      if(String(url).endsWith('/aleph.json')) return fakeResponse(200,identity());
       if(String(url).endsWith('/data.json')) return fakeResponse(200,{notes:[]});
       if(String(url).includes('/restore/')) return fakeResponse(503,{error:'RESTORE_DISABLED'});
       if(opts.headers.Authorization) return fakeResponse(200,{title:'SENSITIVE',body:'DONOTSHOW'},
@@ -74,4 +80,32 @@ test('write methods never probe, reject before touching network',async()=>{
   const handler=createOperationsHandler({fetchImpl:()=>{throw Error('must not fetch');}});
   const result=await serve(handler,{method:'POST',headers:{}});
   assert.equal(result.code,405);
+});
+
+test('deployment observation rejects stale SHA and wrong public alias',async()=>{
+  for(const [variant,expected] of [
+    [{commit:'b'.repeat(40)},'failed'],
+    [{publicAppUrl:'https://other.vercel.app'},'failed'],
+    [{repoUrl:'https://github.com/another/repo'},'failed'],
+    [{allowedRoutes:[]},'failed'],
+    [{},'verified']
+  ]){
+    const manifest={...identity(),...variant};
+    const handler=createOperationsHandler({
+      env:{VERCEL_URL:'preview-ci.vercel.app',VERCEL_GIT_COMMIT_SHA:commit},
+      fetchImpl:async(url)=>String(url).endsWith('/aleph.json')
+        ?fakeResponse(200,manifest):fakeResponse(503,{error:'UNAVAILABLE'}),
+    });
+    const result=await serve(handler,req());
+    assert.equal(result.json.records.find(x=>x.id==='deployment_manifest').outcome,expected);
+  }
+});
+test('deployment observation is inconclusive without server-provided build SHA',async()=>{
+  const handler=createOperationsHandler({
+    env:{VERCEL_URL:'preview-ci.vercel.app'},
+    fetchImpl:async(url)=>String(url).endsWith('/aleph.json')
+      ?fakeResponse(200,identity()):fakeResponse(503,{error:'UNAVAILABLE'}),
+  });
+  const result=await serve(handler,req());
+  assert.equal(result.json.records.find(x=>x.id==='deployment_manifest').outcome,'inconclusive');
 });

@@ -1,3 +1,11 @@
+## 2026-10-30 · 저장소·배포·제출 증적 재감사
+
+현재 Git 정본은 `youngjinphys/Claire`입니다. `aleph.config.json.repoUrl`은 이미 이 주소이며 `choi-bujang-secret-vault`는 **Vercel 프로젝트 자원명**으로 보존합니다. 2026-10-30 실측에서 공개 Vercel alias는 `b1918ce5…` 배포를 가리켰고, 당시 최신 `main`의 `505f32bf…` 배포는 `BLOCKED`였습니다. **GitHub CI 성공은 운영 배포 완료가 아닙니다.**
+
+개선: 관제의 배포 manifest는 repo·공개 주소·배포 SHA·정책 식별자를 함께 비교하며, 커밋 파일 선언은 CI가 실제 commit diff와 교차 검증합니다. 현재 체크아웃과 공개 배포의 차이는 `npm run identity:live`에서 **익명 HTTPS GET 한 건**으로 확인합니다(접속 불가 시 미검증). [검증 범위 및 Vercel 미해결 상태](docs/IDENTITY_CONSISTENCY_2026-10-30.md).
+
+---
+
 # Claire — SKT ALEPH 보안 에이전트 및 방어전
 
 **현재 GitHub 정본:** https://github.com/youngjinphys/Claire (`main`). `aleph.config.json.repoUrl`, 배포 `/aleph.json.repoUrl`, 12단계 제출 JSON의 저장소 URL은 이 주소를 동일하게 사용합니다. Vercel 프로젝트 리소스명 `choi-bujang-secret-vault`와 공개 주소 `https://skt-aleph-defense.vercel.app`은 Git 저장소 이름이 아닌 별개의 배포 식별자입니다.

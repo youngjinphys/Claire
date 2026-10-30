@@ -1,4 +1,5 @@
 import config from '../aleph.config.json' with { type: 'json' };
+import { compareDeploymentIdentity } from '../src/deployment-evidence.mjs';
 import { PROBES, redactResponse, operationsSnapshot } from '../src/operations.mjs';
 
 // Read-only evidence adapter; it never returns a note body, token, email or person ID.
@@ -16,15 +17,16 @@ async function smallBody(response, limit = 3500) {
   if (content.length > limit) return null;
   try { return JSON.parse(content); } catch { return null; }
 }
-function outcomeFor(id, response, body, manifestStep) {
+function outcomeFor(id, response, body, manifestStep, expectedCommit) {
   const status = response.status;
   const json = isJson(response.headers.get('content-type'));
   const noStore = hasNoStore(response.headers.get('cache-control'));
-  if (id === 'deployment_manifest')
-    return status === 200 && json && noStore
-      && body?.schema === 'aleph.defense.deployment.v1'
-      && body?.step === manifestStep && body?.repoUrl === config.repoUrl
-      ? 'verified' : 'failed';
+  if (id === 'deployment_manifest') {
+    if (status !== 200 || !json || !noStore || manifestStep !== config.step) return 'failed';
+    // Self-consistency of THIS deployment only; latest main/production alias
+    // freshness must be verified independently.
+    return compareDeploymentIdentity(body, config, expectedCommit).outcome;
+  }
   if (id === 'static_redaction')
     return status === 200 && json && noStore && Array.isArray(body?.notes)
       && body.notes.length === 0 && !Object.hasOwn(body,'sampleMarker')
@@ -86,7 +88,7 @@ export function createOperationsHandler({ fetchImpl = globalThis.fetch, env = pr
         const scrub = redactResponse(response,
           typeof body?.error === 'string' && SAFE_ERROR.test(body.error) ? body.error : null);
         return {id:probe.id,...scrub,checkedAt:clock(),
-          outcome:outcomeFor(probe.id,response,body,config.step)};
+          outcome:outcomeFor(probe.id,response,body,config.step,env.VERCEL_GIT_COMMIT_SHA)};
       } catch {
         return {id:probe.id,httpStatus:null,requestId:null,errorCode:null,
           checkedAt:null,outcome:'inconclusive'};

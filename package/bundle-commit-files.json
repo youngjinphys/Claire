@@ -1,10 +1,19 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
+    ".github/workflows/quality.yml",
+    "README.md",
+    "api/ops.js",
+    "docs/IDENTITY_CONSISTENCY_2026-10-30.md",
+    "package.json",
     "package/bundle-commit-files.json",
-    "scripts/bundle-notes-validation.mjs",
-    "src/attack-check-stage12.mjs",
-    "test/bundle-stage12-isolated.test.mjs"
+    "scripts/bundle.mjs",
+    "scripts/verify-live-identity.mjs",
+    "src/deployment-evidence.mjs",
+    "src/operations.mjs",
+    "test/bundle-stage12-isolated.test.mjs",
+    "test/deployment-evidence.test.mjs",
+    "test/operations-stage12.test.mjs"
   ],
-  "releaseNote": "Stage12: preserve exactly three memo statements; record actual HTTP responses independently of optional judge case IDs. Official 41-type scores remain unverified."
+  "releaseNote": "2026-10-30: Claire repo/deploy/submission identity, per-commit provenance, and read-only production freshness. Official ALEPH judge results remain unverified."
 }

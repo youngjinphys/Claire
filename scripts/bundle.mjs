@@ -10,16 +10,20 @@ const root = resolve(import.meta.dirname, '..');
 const fail = (message) => { throw new Error(message); };
 const secretPattern = /-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/-]{16,}|\bsb_secret_[A-Za-z0-9_-]{12,}|\bsk-[A-Za-z0-9_-]{20,}|\beyJ[A-Za-z0-9_-]{12,}\.eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{8,}|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu;
 const repository = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})\/?$/iu;
-const normalizedRepo = value => {
+const normalizedRepo = (value, step) => {
   const match = typeof value === 'string' && value.length <= 250 && repository.exec(value);
   if (!match) fail('GitHub HTTPS 저장소 주소를 origin으로 등록해 주세요.');
   const repo = match[2].replace(/\.git$/iu, '');
   if (repo === '.' || repo === '..' || repo === '.git' || repo.endsWith('.git')) {
     fail('GitHub HTTPS 저장소 주소를 origin으로 등록해 주세요.');
   }
-  // Preserve the GitHub repository's real spelling (Claire, not claire).
-  // The submitted URL must agree with the checked-in Stage-12 deployment manifest.
-  return `https://github.com/${match[1]}/${repo}`;
+  // The legacy stages allowed a trailing slash or .git shorthand. Stage 12
+  // must publish the exact checked-in canonical URL, never silently rewrite it.
+  const canonical = `https://github.com/${match[1]}/${repo}`;
+  if (step === 12 && value !== canonical) {
+    fail('12단계 제출 저장소 URL은 aleph.config.json의 정규 HTTPS GitHub 주소와 정확히 같아야 합니다.');
+  }
+  return canonical;
 };
 
 try {
@@ -28,7 +32,7 @@ try {
   const commit = readCurrentCommit(root);
   const changedFiles = readSubmissionChangedFiles(root);
   const config = JSON.parse(readFileSync(join(root, 'aleph.config.json'), 'utf8'));
-  const repoUrl = normalizedRepo(config.repoUrl);
+  const repoUrl = normalizedRepo(config.repoUrl, config.step);
   // Stage 12 has an immutable, tracked three-line evidence template. Do not
   // attempt to read the intentionally ignored bundle-notes.json in a clean
   // checkout: the restricted grader may reject even the missing-file attempt.

@@ -598,3 +598,29 @@ test('Stage12 memo output preserves the three statements and strips only extra b
     explanation:original.explanation+'\n추가되거나 실제 검증하지 않은 사실을 기재하지 않습니다.'
   },12),/정확히 세 줄/u);
 });
+
+test('Stage12 bundle rejects noncanonical configured repository URLs before network',()=>{
+  const source=[
+    "import fs from 'node:fs';",
+    "import {syncBuiltinESMExports} from 'node:module';",
+    "const original=fs.readFileSync;",
+    "fs.readFileSync=(path,...args)=>{",
+    "  const data=original(path,...args);",
+    "  if(String(path).endsWith('/aleph.config.json')){",
+    "    const config=JSON.parse(data);config.repoUrl += '/';",
+    "    return JSON.stringify(config);",
+    "  }",
+    "  return data;",
+    "};",
+    "syncBuiltinESMExports();",
+    "globalThis.fetch=async()=>{throw Error('NETWORK_MUST_NOT_RUN');};",
+    "await import('./scripts/bundle.mjs');",
+    "if(process.exitCode!==1)throw Error('BUNDLE_MUST_REJECT_INVALID_REPO_URL');",
+  ].join('\n');
+  const child=spawnSync(process.execPath,['--input-type=module','-e',source],{
+    cwd:root,encoding:'utf8',timeout:30000
+  });
+  assert.equal(child.status,1,child.stderr||child.stdout);
+  assert.match(child.stderr,/12단계 제출 저장소 URL/u);
+  assert.doesNotMatch(child.stderr,/NETWORK_MUST_NOT_RUN/u);
+});

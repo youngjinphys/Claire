@@ -18,6 +18,9 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
       - name: Install pinned Node runtime
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -32,13 +35,18 @@ jobs:
       - name: Offline production identity manifest contract
         env:
           VERCEL_GIT_PROVIDER: github
-          VERCEL_GIT_REPO_OWNER: youngjinphys
-          VERCEL_GIT_REPO_SLUG: Claire
+          VERCEL_GIT_REPO_OWNER: ${{ github.repository_owner }}
+          VERCEL_GIT_REPO_SLUG: ${{ github.event.repository.name }}
           VERCEL_GIT_COMMIT_SHA: ${{ github.sha }}
           VERCEL_URL: claire-ci-fixture.vercel.app
         run: |
           npm run build
           node --input-type=module -e 'import {readFileSync} from "node:fs"; const config=JSON.parse(readFileSync("aleph.config.json")); const identity=JSON.parse(readFileSync("public/aleph.json")); if(identity.repoUrl!==config.repoUrl||identity.publicAppUrl!==config.publicAppUrl||identity.commit!==process.env.VERCEL_GIT_COMMIT_SHA)process.exit(1);'
+      - name: Verify declared Stage12 changed files match this Git commit
+        if: github.event_name == 'push'
+        run: |
+          git diff --name-only HEAD^ HEAD > "$RUNNER_TEMP/actual-changed-files.txt"
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; const list=JSON.parse(readFileSync("package/bundle-commit-files.json","utf8")).files; const actual=readFileSync(process.env.RUNNER_TEMP+"/actual-changed-files.txt","utf8").trim().split(/\r?\n/u).sort(); if(JSON.stringify(list)!==JSON.stringify(actual)){console.error("BUNDLE_COMMIT_FILE_LIST_MISMATCH");process.exitCode=1;}'
       - name: Claire syntax checks
         run: npm --prefix on-client run check
       - name: Claire loopback HTTP integration tests

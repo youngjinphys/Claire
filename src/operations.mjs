@@ -6,7 +6,7 @@ export const STAGES_REQUIRED = 12;
 export const ATTACK_TYPES_REQUIRED = 41;
 export const PROBES = Object.freeze([
   { id: 'deployment_manifest', stage: 12, mode: 'normal',
-    method: 'GET', path: '/aleph.json', expected: 'HTTP 200, 배포 단계 12 및 서명 없는 공개 배포 식별자 일치' },
+    method: 'GET', path: '/aleph.json', expected: 'HTTP 200, 저장소·공개 주소·배포 SHA·정책 식별자 일치 (서명 없는 자기 증적)' },
   { id: 'static_redaction', stage: 2, mode: 'normal',
     method: 'GET', path: '/data.json', expected: 'HTTP 200, 공개 메모는 빈 배열이며 no-store' },
   { id: 'anonymous_notes', stage: 3, mode: 'forbidden',
