@@ -1,12 +1,11 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "on-client/public/dashboard.css",
+    "on-client/public/dashboard-model.mjs",
     "on-client/public/dashboard.mjs",
-    "on-client/student/collect-host.mjs",
-    "on-client/student/extension.mjs",
-    "on-client/test/host-collection.test.mjs",
+    "on-client/test/dashboard-resilience.test.mjs",
+    "on-client/tools/dashboard-browser-smoke.mjs",
     "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-10-31: classify non-root Linux ufw stderr diagnostics as PERMISSION_DENIED; add form-field id/name to host comparison consent checkbox for zero DevTools form warnings; polish Local Observatory logo badge alignment, unavailable metric unit suppression, SVG trend vertex markers, host card top accent bars, and structured host report dark-theme panels."
+  "releaseNote": "2026-10-31: finish unified observatory failure isolation, independent SDP refresh, timestamp validation, accessible pending states, stop boundaries and local export recovery. Preserve supplied app/server/collector, earlier submissions and one-server architecture; no packaging or deployment."
 }

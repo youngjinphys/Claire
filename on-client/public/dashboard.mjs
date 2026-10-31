@@ -38,6 +38,7 @@ const REASONS = Object.freeze({
   MEASUREMENT_TIME_INVALID: '센서의 관측 시각과 응답 시각이 일치하지 않습니다.',
   DISK_SCOPE_UNVERIFIED: '디스크 측정 대상 파일시스템이 확인되지 않았습니다.',
   SECURITY_STALE: '보안 상태 조회 시각이 오래됐습니다. 기록을 직접 재조회하세요.',
+  SOURCE_TIME_UNVERIFIED: '응답 시각과 이번 조회 구간이 맞지 않습니다. PC 시계를 확인하고 직접 재조회하세요.',
 });
 const reasonText = reason => REASONS[reason] || (typeof reason === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(reason)
   ? '조회가 실패했습니다. 상태 코드: ' + reason : '측정값의 원인 정보를 확인할 수 없습니다.');
@@ -46,7 +47,11 @@ const dateText = iso => {
   return new Date(iso).toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', timeZoneName: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 };
 const titleIso = (element, iso) => { element.title = typeof iso === 'string' ? iso : ''; };
-const set = (id, value) => { $(id).textContent = String(value); };
+const set = (id, value) => {
+  const element = $(id), next = String(value);
+  // Do not re-announce identical polite status text on every freshness tick.
+  if (element.textContent !== next) element.textContent = next;
+};
 const safeDuration = (ms) => Number.isFinite(ms) ? Math.round(ms) + ' ms' : '확인 불가';
 
 let latestSnapshot = null;
@@ -61,26 +66,81 @@ let activeRequest = null;
 let activeEventRequest = null;
 let scheduled = null;
 let freshnessTimer = null;
+let securityPending = { identity: false, events: false };
 
 // One host-report reader, shared with the provided student expansion. The OS
 // collector is an explicit user-launched CLI, NOT an HTTP endpoint or background scan.
 const hostState = { pending: false, latest: null, history: [], error: null, requestId: 0 };
 let displayedHostMode = null;
+let hostRenderFailed = false;
 
-function renderHostObservation(mode) {
-  const normalizedMode = ['connected', 'demo', 'disconnected'].includes(mode) ? mode : 'unknown';
-  if (displayedHostMode === normalizedMode) return;
-  const panel = hostPanel(hostState, normalizedMode);
-  const details = panel.querySelector('[data-host-report-details]');
-  if (details) {
-    $('host-report-content').replaceChildren(details);
-  } else {
-    const notice = document.createElement('p');
-    notice.textContent = '보고서 상세 연결을 확인할 수 없습니다. 기존 Claire 화면에서 보고서를 선택해 확인하세요.';
-    $('host-report-content').replaceChildren(notice);
+// Reusing a renderer must not discard keyboard focus or disclosure state when
+// the independent SDP mode changes. No file content is persisted outside this tab.
+function hostViewState() {
+  const roots = [$('integrated-host-root'), $('host-report-content')];
+  const controls = roots.flatMap(root => [...(root.querySelectorAll?.('button, a[href], input, summary') || [])]);
+  const key = el => [el.tagName, el.type || '', el.getAttribute?.('aria-label') || '', el.textContent || ''].join('|');
+  const active = document.activeElement;
+  return {
+    open: new Set(roots.flatMap(root => [...(root.querySelectorAll?.('details[open]') || [])])
+      .map(detail => detail.querySelector('summary')?.textContent)),
+    focus: controls.includes(active) ? key(active) : null,
+    key,
+  };
+}
+function restoreHostView(saved) {
+  for (const root of [$('integrated-host-root'), $('host-report-content')]) {
+    for (const detail of root.querySelectorAll?.('details') || []) {
+      if (saved.open.has(detail.querySelector('summary')?.textContent)) detail.open = true;
+    }
+    if (saved.focus) {
+      const target = [...(root.querySelectorAll?.('button, a[href], input, summary') || [])]
+        .find(el => saved.key(el) === saved.focus && !el.disabled);
+      target?.focus?.({ preventScroll: true });
+    }
   }
-  $('integrated-host-root').replaceChildren(panel);
-  displayedHostMode = normalizedMode;
+}
+function renderHostObservation(mode, retry = false) {
+  const normalizedMode = ['connected', 'demo', 'disconnected'].includes(mode) ? mode : 'unknown';
+  if (!retry && (hostRenderFailed || displayedHostMode === normalizedMode)) return;
+  const saved = hostViewState();
+  try {
+    const panel = hostPanel(hostState, normalizedMode);
+    const details = panel?.querySelector?.('[data-host-report-details]');
+    if (!panel || !details) throw Error('HOST_RENDER_UNAVAILABLE');
+    $('host-report-content').replaceChildren(details);
+    $('integrated-host-root').replaceChildren(panel);
+    const redraw = hostState.hostRedraw;
+    if (typeof redraw === 'function') {
+      hostState.hostRedraw = () => {
+        const previous = hostViewState();
+        try { redraw(); restoreHostView(previous); }
+        catch { showHostRenderFailure(); }
+      };
+    }
+    displayedHostMode = normalizedMode;
+    hostRenderFailed = false;
+    restoreHostView(saved);
+  } catch {
+    showHostRenderFailure();
+  }
+}
+function showHostRenderFailure() {
+  hostRenderFailed = true;
+  hostState.hostRedraw = null;
+  const notice = document.createElement('p');
+  notice.setAttribute('role', 'status');
+  notice.textContent = '학생 관측 표시 확인 불가 · PC 자원 측정과 SDP 조회는 별도로 사용할 수 있습니다. 표시만 다시 열거나 기존 화면을 확인하세요.';
+  const retry = document.createElement('button');
+  retry.type = 'button'; retry.className = 'button ghost';
+  retry.textContent = '학생 관측 표시 다시 열기';
+  retry.addEventListener('click', () => renderHostObservation(latestSecurity?.mode, true));
+  const original = document.createElement('a');
+  original.href = '/'; original.textContent = '기존 ALEPH 화면 열기';
+  $('integrated-host-root').replaceChildren(notice, retry, original);
+  const detail = document.createElement('p');
+  detail.textContent = '보고서 표시 확인 불가 · 예시 값으로 대체하지 않습니다.';
+  $('host-report-content').replaceChildren(detail);
 }
 
 function headerClock() { set('header-clock', new Date().toLocaleString('ko-KR', { hour12: false })); }
@@ -131,15 +191,20 @@ function showSecurity() {
   const sessions = { active: '활성', expired: '만료', revoked: '철회', unknown: '확인 불가' };
   const time = checkedAt ? dateText(checkedAt) : '조회 시각 확인 불가';
   let description;
-  if (mode === 'demo') {
-    description = 'SDP 예제 DEMO · 실제 보안 정책 판정이 아닙니다. ' + time;
+  if (securityPending.identity) {
+    description = 'SDP 정책 조회 중 · 이전 결과는 현재 연결의 확인이 아닙니다. ' + time;
+  } else if (mode === 'demo') {
+    description = info?.status === 'ok' && current
+      ? 'SDP 예제 DEMO · 실제 보안 정책 판정이 아닙니다. ' + time
+      : 'SDP 예제 DEMO · 정책 결과 확인 불가. '
+        + reasonText(info?.status !== 'ok' ? info?.reason || 'SECURITY_LOOKUP_FAILED' : 'SECURITY_STALE') + ' · ' + time;
   } else if (mode === 'disconnected') {
     description = 'SDP 미연결 · PC 자원 측정이나 로컬 보고서 조회 성공과 무관합니다. ' + time;
   } else if (mode !== 'connected') {
     description = 'SDP 연결 확인 불가 · 원천 응답을 검증할 수 없습니다.';
   } else if (info?.status !== 'ok' || !current) {
     description = 'SDP 어댑터 연결 구성 · 정책 결과 확인 불가. '
-      + (current ? reasonText(info?.reason || 'SECURITY_LOOKUP_FAILED') : reasonText('SECURITY_STALE'))
+      + reasonText(info?.status !== 'ok' ? info?.reason || 'SECURITY_LOOKUP_FAILED' : 'SECURITY_STALE')
       + ' · ' + time;
   } else {
     description = 'SDP 기기 정책 ' + labels[info.value]
@@ -212,20 +277,22 @@ function renderChart() {
   set('trend-copy', '메모리 ' + signed(trend.memoryDelta) + ' %p · 최근 10분 내 실측 CPU ' + trend.cpuSamples + '개, 메모리 ' + trend.memorySamples + '개. 비교 구간 ' + dateText(new Date(trend.from).toISOString()) + ' → ' + dateText(new Date(trend.to).toISOString()) + '. 보안 위협이나 원인 판정이 아닙니다.');
 }
 
-let lastRenderedHistoryPoint = null;
+let lastRenderedRows = null;
 let lastRenderedHistoryLength = -1;
 
 function renderMeasurementRecords(force = false) {
-  const currentLast = history.length > 0 ? history[history.length - 1].time : null;
-  if (!force && lastRenderedHistoryLength === history.length && lastRenderedHistoryPoint === currentLast) return;
+  const rows = history.slice(-20).reverse();
+  // A bounded buffer can gain a same-timestamp gap without changing length.
+  // Compare immutable row identities, not only length and the last timestamp.
+  if (!force && lastRenderedHistoryLength === history.length && lastRenderedRows
+      && rows.length === lastRenderedRows.length && rows.every((row, i) => row === lastRenderedRows[i])) return;
   lastRenderedHistoryLength = history.length;
-  lastRenderedHistoryPoint = currentLast;
+  lastRenderedRows = rows;
 
   const target = $('measurement-body');
   target.replaceChildren();
   $('export-measurements').disabled = history.length === 0;
   set('measurement-note', '최근 10분 이 탭 기록 ' + history.length + '개 · 화면은 최근 20개, JSON은 보관 중인 전체(최대 120개) · 계정/보안 로그 제외');
-  const rows = history.slice(-20).reverse();
   if (!rows.length) {
     const row = document.createElement('tr'), cell = document.createElement('td');
     cell.colSpan = 5; cell.textContent = '관측 기록 없음 · 예시 수치를 채우지 않습니다.';
@@ -256,16 +323,34 @@ function renderMeasurementRecords(force = false) {
 }
 function downloadMeasurements() {
   if (!history.length) return;
-  const data = exportMeasurements(history);
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-  const anchor = document.createElement('a');
-  anchor.href = url; anchor.download = 'claire-measurements-' + Date.now() + '.json';
-  document.body.append(anchor); anchor.click(); anchor.remove();
-  // Revoke after the browser has had a chance to start the user-requested download.
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  let url, anchor;
+  try {
+    const data = exportMeasurements(history);
+    if (!data.records.length) {
+      set('measurement-note', '저장할 최근 10분 기록이 없습니다. 직접 새 측정을 시작하세요.');
+      return;
+    }
+    url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    anchor = document.createElement('a');
+    anchor.href = url; anchor.download = 'claire-measurements-' + Date.now() + '.json';
+    document.body.append(anchor); anchor.click();
+    set('measurement-note', '측정 기록 JSON 저장을 요청했습니다. 브라우저 다운로드 결과를 확인하세요. 계정·SDP 기록은 포함하지 않습니다.');
+  } catch {
+    set('measurement-note', '측정 기록 저장 확인 불가 · 브라우저 다운로드 권한과 저장 공간을 확인한 뒤 직접 다시 누르세요. 이 탭의 관측 기록은 유지됩니다.');
+  } finally {
+    anchor?.remove();
+    // A requested download is not proof that the browser wrote the file.
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 function redrawEvents() {
+  $('records-panel').setAttribute('aria-busy', String(securityPending.events));
+  if (securityPending.events) {
+    set('events-origin', 'SDP 기록 조회 중 · 이전 결과와 구분');
+    set('events-note', '기록 재조회 중 · 아래 내용은 마지막 조회 결과이며 새 결과가 아닙니다.');
+    return;
+  }
   const data = latestEvents;
   const mode = data.mode;
   // Configured adapter and verified event data are different claims.
@@ -313,27 +398,47 @@ function redrawEvents() {
 }
 
 async function refreshSecurity() {
-  $('refresh-security').disabled = true;
-  set('events-note', '기록 재조회 중 · 이전 값은 마지막 조회 결과입니다.');
   const token = ++eventGeneration;
   activeEventRequest?.abort();
   const controller = new AbortController();
   activeEventRequest = controller;
+  securityPending = { identity: true, events: true };
+  $('refresh-security').disabled = true;
+  showSecurity(); redrawEvents();
   const read = async path => {
     const requestedAt = Date.now();
     let response;
     try { response = await fetchJson(path, controller); }
-    catch { response = { ok: false, error: { code: 'LOCAL_FETCH_FAILED' }, meta: { mode: 'unknown' } }; }
+    catch (error) {
+      const code = ['REQUEST_CANCELLED', 'RESPONSE_TOO_LARGE', 'RESPONSE_CONTRACT_INVALID'].includes(error?.message)
+        ? error.message : 'LOCAL_FETCH_FAILED';
+      response = { ok: false, error: { code }, meta: { mode: 'unknown' } };
+    }
     return { response, timing: { requestedAt, receivedAt: Date.now() } };
   };
-  const [identity, events] = await Promise.all([read('/api/me'), read('/api/events')]);
-  if (token !== eventGeneration) return;
-  activeEventRequest = null;
-  $('refresh-security').disabled = false;
-  latestSecurity = normalizeSecurity(identity.response);
-  latestEvents = normalizeEvents(events.response, events.timing);
-  showSecurity();
-  redrawEvents();
+  try {
+    // Each independent source updates as it settles. A slow events read cannot
+    // hide a finished identity result (or vice versa). Generations reject late replies.
+    await Promise.all([
+      read('/api/me').then(({ response, timing }) => {
+        if (token !== eventGeneration) return;
+        latestSecurity = normalizeSecurity(response, timing);
+        securityPending.identity = false;
+        showSecurity();
+      }),
+      read('/api/events').then(({ response, timing }) => {
+        if (token !== eventGeneration) return;
+        latestEvents = normalizeEvents(response, timing);
+        securityPending.events = false;
+        redrawEvents();
+      }),
+    ]);
+  } finally {
+    if (token === eventGeneration) {
+      activeEventRequest = null;
+      $('refresh-security').disabled = false;
+    }
+  }
 }
 
 async function measureOnce() {
@@ -383,32 +488,41 @@ async function measureOnce() {
 }
 
 function stopObserving(message = '관측이 중지됐습니다. 이전 측정값은 마지막 실측으로만 표시합니다.') {
+  const wasActive = observing || busy;
+  if (wasActive && history.length) history = appendGap(history);
   observing = false;
   generation += 1;
   if (scheduled) clearTimeout(scheduled);
   scheduled = null;
   activeRequest?.abort();
+  activeRequest = null;
   busy = false;
   updateControls();
   if (latestSnapshot?.status === 'ok') for (const key of ['cpu','memory','disk']) showMetric(key, latestSnapshot);
   set('page-notice', message);
+  if (wasActive) renderChart();
 }
 
 // Repaint stale markers locally without polling the OS, SDP, or AI; this is not an automatic retry.
-function startFreshnessTimer() {
-  if (freshnessTimer !== null) clearInterval(freshnessTimer);
-  freshnessTimer = setInterval(() => {
+function repaintFreshness() {
   headerClock();
   if (latestSnapshot?.status === 'ok') for (const key of ['cpu','memory','disk']) showMetric(key, latestSnapshot);
-  if (latestSecurity) showSecurity();
-  // Repaint freshness without replacing the rows on every tick.
-  if (latestEvents.status === 'ok' && latestEvents.checkedAt) {
-    $('events-origin').textContent = (latestEvents.mode === 'demo' ? '예제 DEMO · 실제 사건 아님' : 'SDP 본인 범위 기록')
-      + (Date.now() - Date.parse(latestEvents.checkedAt) > MAX_MEASUREMENT_AGE_MS ? ' · 조회 오래됨' : '');
+  if (latestSecurity || securityPending.identity) showSecurity();
+  if (!securityPending.events && latestEvents.status === 'ok' && latestEvents.checkedAt) {
+    set('events-origin', (latestEvents.mode === 'demo' ? '예제 DEMO · 실제 사건 아님' : 'SDP 본인 범위 기록')
+      + (Date.now() - Date.parse(latestEvents.checkedAt) > MAX_MEASUREMENT_AGE_MS ? ' · 조회 오래됨' : ''));
   }
   renderChart();
-  }, 1000);
 }
+function stopFreshnessTimer() {
+  if (freshnessTimer !== null) clearInterval(freshnessTimer);
+  freshnessTimer = null;
+}
+function startFreshnessTimer() {
+  stopFreshnessTimer();
+  if (!document.hidden) freshnessTimer = setInterval(repaintFreshness, 1000);
+}
+
 startFreshnessTimer();
 
 $('start').addEventListener('click', () => {
@@ -430,7 +544,13 @@ $('refresh-security').addEventListener('click', () => { void refreshSecurity(); 
 $('event-filter').addEventListener('change', redrawEvents);
 $('export-measurements').addEventListener('click', downloadMeasurements);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && (observing || busy)) stopObserving('브라우저 탭이 숨겨져 관측을 중지했습니다. 재개하려면 관측 시작을 누르세요.');
+  if (document.hidden) {
+    if (observing || busy) stopObserving('브라우저 탭이 숨겨져 관측을 중지했습니다. 재개하려면 관측 시작을 누르세요.');
+    stopFreshnessTimer();
+  } else {
+    repaintFreshness();
+    startFreshnessTimer();
+  }
 });
 window.addEventListener('pagehide', () => {
   stopObserving('페이지를 떠나 관측을 중지했습니다. 복원 후에는 직접 다시 시작하세요.');
@@ -438,10 +558,11 @@ window.addEventListener('pagehide', () => {
   activeRequest?.abort();
   activeEventRequest?.abort();
   activeEventRequest = null;
+  securityPending = { identity: false, events: false };
   $('refresh-security').disabled = false;
+  $('records-panel').setAttribute('aria-busy', 'false');
   if (scheduled) clearTimeout(scheduled);
-  if (freshnessTimer !== null) clearInterval(freshnessTimer);
-  freshnessTimer = null;
+  stopFreshnessTimer();
 });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
@@ -451,6 +572,7 @@ window.addEventListener('pageshow', event => {
   startFreshnessTimer();
   for (const key of ['cpu', 'memory', 'disk']) if (latestSnapshot?.status === 'ok') showMetric(key, latestSnapshot);
   showSecurity();
+  redrawEvents();
   renderChart();
 });
 

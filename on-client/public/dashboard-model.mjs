@@ -156,7 +156,17 @@ export function trendSummary(history) {
   };
 }
 
-export function normalizeSecurity(response) {
+// Bind successful live SDP envelopes to the caller's observed HTTP interval.
+// Stored fixtures omit timing; no wall-clock time is invented for historical data.
+function responseTimeValid(checkedAt, timing) {
+  if (timing === null) return true;
+  return isObject(timing) && finite(timing.requestedAt) && finite(timing.receivedAt)
+    && timing.receivedAt >= timing.requestedAt && isIso(checkedAt)
+    && Date.parse(checkedAt) >= timing.requestedAt - 5000
+    && Date.parse(checkedAt) <= timing.receivedAt + 1000
+    && timing.receivedAt - Date.parse(checkedAt) <= MAX_MEASUREMENT_AGE_MS;
+}
+export function normalizeSecurity(response, timing = null) {
   const mode = response?.meta?.mode;
   const checkedAt = isIso(response?.meta?.checkedAt) ? response.meta.checkedAt : null;
   if (!['connected','demo','disconnected'].includes(mode)) return { status:'unavailable', reason:'SOURCE_MODE_UNVERIFIED', mode:'unknown', checkedAt };
@@ -165,6 +175,7 @@ export function normalizeSecurity(response) {
     reason:validReason(response?.error?.code) ? response.error.code : 'SECURITY_LOOKUP_FAILED',
   };
   if (mode === 'disconnected' || !checkedAt) return { status:'unavailable', mode, checkedAt, reason:'SOURCE_MODE_UNVERIFIED' };
+  if (!responseTimeValid(checkedAt, timing)) return { status:'unavailable', mode, checkedAt, reason:'SOURCE_TIME_UNVERIFIED' };
   // Match the supplied Claire identity validator. A partial object is not
   // evidence that the operating-system or SDP device is compliant.
   const { user, device, session } = response.data ?? {};
@@ -216,6 +227,7 @@ export function normalizeEvents(response, timing = null) {
   if (!['connected', 'demo', 'disconnected'].includes(mode)) return { status: 'unavailable', reason: 'SOURCE_MODE_UNVERIFIED', checkedAt, mode: 'unknown', events: [] };
   if (response?.ok !== true) return { status: 'unavailable', reason: validReason(response?.error?.code) ? response.error.code : 'EVENT_LOOKUP_FAILED', checkedAt, mode, events: [] };
   if (mode === 'disconnected' || !checkedAt) return { status: 'unavailable', reason: 'SOURCE_MODE_UNVERIFIED', checkedAt, mode, events: [] };
+  if (!responseTimeValid(checkedAt, timing)) return { status: 'unavailable', reason: 'SOURCE_TIME_UNVERIFIED', checkedAt, mode, events: [] };
   if (!Array.isArray(response.data) || response.data.length > 40 || !coverageValid(response.coverage, response.data.length, checkedAt, timing)) {
     return { status: 'unavailable', reason: 'EVENT_RESPONSE_INVALID', checkedAt, mode, events: [] };
   }
@@ -303,10 +315,12 @@ export async function requestDashboardJson(path, {
       if (done) break;
       bytes += value.byteLength;
       if (bytes > maxBytes) throw Error('RESPONSE_TOO_LARGE');
-      text += decoder.decode(value, { stream: true });
+      try { text += decoder.decode(value, { stream: true }); }
+      catch { throw Error('RESPONSE_CONTRACT_INVALID'); }
     }
-    text += decoder.decode();
-    const body = JSON.parse(text);
+    let body;
+    try { text += decoder.decode(); body = JSON.parse(text); }
+    catch { throw Error('RESPONSE_CONTRACT_INVALID'); }
     if (!isObject(body) || typeof body.ok !== 'boolean' || (!response.ok && body.ok !== false)) throw Error('RESPONSE_CONTRACT_INVALID');
     return body;
   };
