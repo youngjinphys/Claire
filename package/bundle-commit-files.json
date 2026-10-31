@@ -1,11 +1,9 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "README.md",
     "on-client/public/dashboard.css",
-    "on-client/public/dashboard.mjs",
-    "package/bundle-commit-files.json",
-    "public/observatory-theme.css"
+    "on-client/test/dashboard.test.mjs",
+    "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-10-31: optimize observatory animation rendering pipeline with composited GPU layers, eliminate DOM thrashing and integrate mobile responsive CSS. Preserve supplied app/server/collector and existing contracts."
+  "releaseNote": "2026-10-31: keep observatory workspace links visible below 850px by wrapping the rail instead of hiding them. Preserve supplied app/server/collector and existing contracts."
 }

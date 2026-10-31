@@ -120,3 +120,41 @@ test('new local dashboard and metrics route use the existing same-origin loopbac
     await new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeIdleConnections?.(); });
   }
 });
+
+function mediaBlock(css, header) {
+  const start = css.indexOf(header);
+  assert.notEqual(start, -1, header);
+  const open = css.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < css.length; i += 1) {
+    if (css[i] === '{') depth += 1;
+    else if (css[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return css.slice(open + 1, i);
+    }
+  }
+  assert.fail('unclosed ' + header);
+}
+
+test('narrow observatory keeps every workspace link on screen', async () => {
+  const server = createOnServer({});
+  try {
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+    const base = 'http://127.0.0.1:' + server.address().port;
+    const htmlResponse = await fetch(base + '/dashboard.html');
+    const cssResponse = await fetch(base + '/dashboard.css');
+    assert.equal(htmlResponse.status, 200);
+    assert.equal(cssResponse.status, 200);
+    const html = await htmlResponse.text();
+    const css = await cssResponse.text();
+    const nav = html.match(/<nav class="rail-nav"[\s\S]*?<\/nav>/u)?.[0] || '';
+    const hrefs = [...nav.matchAll(/href="([^"]+)"/gu)].map(match => match[1]);
+    assert.deepEqual(hrefs, ['/dashboard.html', '/', '#resource-panel', '#records-panel', '#source-panel']);
+    const narrow = mediaBlock(css, '@media (max-width: 850px)');
+    assert.match(narrow, /\.rail-nav\s*\{[^}]*flex-wrap:\s*wrap/u);
+    assert.doesNotMatch(narrow, /\.rail-nav a:nth-child\([^)]*\)\s*\{[^}]*display:\s*none/u);
+    assert.doesNotMatch(narrow, /\.rail-nav a\s*\{[^}]*display:\s*none/u);
+  } finally {
+    await new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeIdleConnections?.(); });
+  }
+});
