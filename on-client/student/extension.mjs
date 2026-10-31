@@ -331,6 +331,78 @@ export function hostReportQuality(report, now = Date.now()) {
     authenticity: 'user-selected-unsigned-local-report' };
 }
 
+/**
+ * OBS-inspired, explicit local download: only aggregate projections from the
+ * already validated user-selected host report. Not signed; never an API upload,
+ * raw-IP/DNS dump, full firewall attestation or security incident verdict.
+ */
+export function buildClaireHostAggregateEvidence(report, exportedAt = new Date().toISOString()) {
+  if (report?.status !== 'ok' || !['win32', 'darwin', 'linux'].includes(report.platform)
+    || report.scope !== 'local-node-runtime' || report.evidence !== 'user-generated-local-file-not-authenticated'
+    || !hostIso(report.producedAt) || !hostIso(exportedAt)) throw TypeError('HOST_EVIDENCE_INPUT_INVALID');
+  const quality = hostReportQuality(report, Date.parse(exportedAt));
+  // The helper is exported for independent tests: do not trust a caller that
+  // bypasses normalizeHostObservation with arbitrary "source"/"reason" text.
+  const expected = {
+    network: 'node:os.networkInterfaces+node:dns.getServers',
+    firewall: report.platform === 'win32' ? 'windows:Get-NetFirewallProfile(ActiveStore)'
+      : report.platform === 'darwin' ? 'macos:socketfilterfw(--getglobalstate)' : 'linux:firewalld+ufw',
+    windowsEvents: report.platform === 'win32'
+      ? 'windows:Get-WinEvent(System+Application)' : 'windows:NotApplicable',
+  };
+  const origin = name => {
+    const feed = quality.feeds[name];
+    if (!feed || feed.source !== expected[name] || (feed.measuredAt !== null && !hostIso(feed.measuredAt))) {
+      return { state: 'unavailable', source: null, measuredAt: null, reason: 'SOURCE_UNVERIFIED' };
+    }
+    return { state: feed.state, source: feed.source, measuredAt: feed.measuredAt,
+      reason: feed.reason === null ? null
+        : Object.hasOwn(HOST_REASON_GUIDANCE, feed.reason) ? feed.reason : 'SOURCE_UNVERIFIED' };
+  };
+  const boundedCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 2000 ? value : null;
+  const observation = (value, unit, feed, reason = null) => {
+    const source = origin(feed);
+    const checked = boundedCount(value);
+    const state = source.state === 'not_applicable' ? 'not_applicable'
+      : checked === null || !['observed', 'partial'].includes(source.state) ? 'unavailable'
+        : source.state === 'partial' ? 'partial' : 'observed';
+    return { status: state, value: state === 'unavailable' || state === 'not_applicable' ? null : checked,
+      unit, source: source.source, measuredAt: source.measuredAt,
+      reason: state === 'observed' ? null
+        : reason && Object.hasOwn(HOST_REASON_GUIDANCE, reason) ? reason
+          : source.reason || 'SOURCE_NOT_OBSERVED' };
+  };
+  const network = report.network, firewall = report.firewall, events = report.windowsEvents;
+  const firewallItems = Array.isArray(firewall?.profiles) ? firewall.profiles.length
+    : Array.isArray(firewall?.backends) ? firewall.backends.length
+      : ['enabled', 'disabled'].includes(firewall?.state) ? 1 : null;
+  const eventCount = (log, kind) => observation(log?.status === 'ok' ? log[kind] : null,
+    'events/24h', 'windowsEvents', log?.reason || events?.reason || 'SOURCE_NOT_OBSERVED');
+  const status = Object.fromEntries(Object.keys(expected).map(name => [name, origin(name)]));
+  return {
+    schema: 'claire.host-aggregate-evidence.v1',
+    provenance: {
+      scope: 'selected-local-host-aggregate', generatedAt: report.producedAt, exportedAt,
+      source: 'user-selected-unsigned-local-report',
+      authenticity: 'unsigned-user-download-not-host-attestation',
+      freshness: quality.freshness, ageSeconds: quality.ageSeconds,
+      coverage: quality.coverage, observedFeeds: quality.observedFeeds,
+      applicableFeeds: quality.applicableFeeds,
+      note: 'Counts and sensor status only. No raw IP, DNS address, device identity or SDP event. A warning count is not a breach verdict.',
+    },
+    sourceStatus: status,
+    measurements: {
+      networkInterfaces: observation(Array.isArray(network?.interfaces) ? network.interfaces.length : null, 'interfaces', 'network'),
+      dnsServers: observation(Array.isArray(network?.dns) ? network.dns.length : null, 'resolvers', 'network'),
+      firewallBackends: observation(firewallItems, 'observed-backends', 'firewall'),
+      windowsSystemWarnings: eventCount(events?.system, 'warning'),
+      windowsSystemErrors: eventCount(events?.system, 'error'),
+      windowsApplicationWarnings: eventCount(events?.application, 'warning'),
+      windowsApplicationErrors: eventCount(events?.application, 'error'),
+    },
+  };
+}
+
 export function hostComparison(history) {
   if (!Array.isArray(history) || history.length < 2) return null;
   const last = history.at(-1), previous = [...history].slice(0, -1).reverse().find(row => row.time < last.time);
@@ -363,6 +435,10 @@ export function hostPanel(state, mode) {
   const retry = hostNode('button', '다시 조회 · 보고서 선택', 'btn');
   retry.type = 'button';
   retry.setAttribute('aria-label', '다시 조회, 로컬 관측 보고서 선택');
+  const exportButton = hostNode('button', '비식별 집계 JSON 저장', 'btn');
+  exportButton.type = 'button';
+  exportButton.setAttribute('aria-label', '주소·식별자 없는 로컬 관측 요약을 JSON으로 저장');
+  exportButton.disabled = !state.latest || state.pending === true;
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.accept = '.json,application/json';
@@ -380,7 +456,7 @@ export function hostPanel(state, mode) {
   cardsRoot.className = 'student-host-cards';
   cardsRoot.setAttribute('aria-label', '네트워크, 방화벽, Windows 기록, SDP 네 가지 상태');
   const dataRoot = hostNode('div');
-  actionBar.append(retry, fileInput);
+  actionBar.append(retry, fileInput, exportButton);
   region.append(cardsRoot, actionBar, progress, help, dataRoot);
 
   const card = (title, value, details, kind) => {
@@ -569,6 +645,8 @@ export function hostPanel(state, mode) {
     region.setAttribute('aria-busy', state.pending ? 'true' : 'false');
     retry.disabled = state.pending === true;
     retry.setAttribute('aria-disabled', state.pending ? 'true' : 'false');
+    exportButton.disabled = state.pending === true || state.latest?.status !== 'ok';
+    exportButton.setAttribute('aria-disabled', exportButton.disabled ? 'true' : 'false');
     draw();
   };
   // A provided SDP status refresh can replace the student slot while the
@@ -609,6 +687,28 @@ export function hostPanel(state, mode) {
     if (state.pending) return;
     fileInput.value = '';
     fileInput.click();
+  });
+  exportButton.addEventListener('click', () => {
+    if (state.pending || state.latest?.status !== 'ok') return;
+    try {
+      const evidence = buildClaireHostAggregateEvidence(state.latest);
+      const bytes = new Blob([JSON.stringify(evidence, null, 2)], { type: 'application/json' });
+      if (bytes.size > 16 * 1024) throw Error('HOST_EVIDENCE_TOO_LARGE');
+      const url = URL.createObjectURL(bytes);
+      try {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'claire-host-aggregates-' + evidence.provenance.generatedAt.slice(0, 10) + '.json';
+        document.body.append(link);
+        link.click();
+        link.remove();
+        progress.textContent = '비식별 집계 JSON 저장을 요청했습니다. 브라우저 다운로드 결과를 확인하세요. 원본 주소·DNS·SDP 사건은 제외됩니다.';
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      }
+    } catch {
+      progress.textContent = '집계 파일 저장 확인 불가 · 보고서와 브라우저 파일 저장 권한을 확인하세요. 자동 재시도하지 않습니다.';
+    }
   });
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];

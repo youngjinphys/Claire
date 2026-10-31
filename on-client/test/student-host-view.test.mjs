@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { collectHostObservation } from '../student/collect-host.mjs';
-import { normalizeHostObservation, hostComparison, hostPanel, hostReportQuality } from '../student/extension.mjs';
+import { normalizeHostObservation, hostComparison, hostPanel, hostReportQuality, buildClaireHostAggregateEvidence } from '../student/extension.mjs';
 
 const T = Date.parse('2026-10-31T02:00:00Z');
 const networkInterfaces = () => ({ eth0: [{ family: 'IPv6', address: 'fe80::1%eth0', internal: false }] });
@@ -221,3 +221,63 @@ test('old local report never displays green present-tense PC status while retain
     assert.match(root.textContent, /현재 상태로 해석하지 마세요/);
   });
 });
+
+test('OBS-style Claire export contains only counts and provenance, never local addresses or DNS values', async () => {
+  const observed = normalizeHostObservation(await report('win32', T), T);
+  const evidence = buildClaireHostAggregateEvidence(observed, new Date(T + 30_000).toISOString());
+  assert.equal(evidence.schema, 'claire.host-aggregate-evidence.v1');
+  assert.equal(evidence.provenance.authenticity, 'unsigned-user-download-not-host-attestation');
+  assert.equal(evidence.provenance.freshness, 'recent');
+  assert.equal(evidence.measurements.networkInterfaces.value, 1);
+  assert.equal(evidence.measurements.dnsServers.value, 1);
+  assert.equal(evidence.measurements.windowsSystemWarnings.value, 2);
+  assert.equal(evidence.measurements.windowsApplicationErrors.value, 0);
+  const json = JSON.stringify(evidence);
+  for (const confidential of ['fe80::1', '1.1.1.1', 'eth0', 'interfaces":[', 'dns":[', 'MAC', 'username', 'sessionId']) {
+    assert.equal(json.includes(confidential), false, confidential);
+  }
+  assert.equal(Object.hasOwn(evidence, 'network'), false);
+  assert.equal(Object.hasOwn(evidence, 'firewall'), false);
+});
+
+test('stale, future-skew and non-Windows host evidence remain explicitly bounded', async () => {
+  const win = normalizeHostObservation(await report('win32', T), T);
+  const stale = buildClaireHostAggregateEvidence(win, new Date(T + 17 * 60_000).toISOString());
+  assert.equal(stale.provenance.freshness, 'stale');
+  assert.equal(stale.provenance.coverage, 'unverifiable');
+  const skew = buildClaireHostAggregateEvidence(win, new Date(T - 10_000).toISOString());
+  assert.equal(skew.provenance.freshness, 'clock_skew');
+  const mac = normalizeHostObservation(await report('darwin', T), T);
+  const other = buildClaireHostAggregateEvidence(mac, new Date(T + 30_000).toISOString());
+  assert.equal(other.measurements.windowsSystemErrors.status, 'not_applicable');
+  assert.equal(other.measurements.windowsSystemErrors.value, null);
+  assert.throws(() => buildClaireHostAggregateEvidence(win, 'not-iso'), /HOST_EVIDENCE_INPUT_INVALID/);
+});
+
+test('Claire export is user-initiated; before selecting a report the button is disabled', async () => {
+  await withDocument(async () => {
+    const state = { pending:false, latest:null, history:[], error:null, requestId:0 };
+    const root = hostPanel(state, 'disconnected');
+    const button = root.find(el => el.tagName === 'BUTTON' && el.textContent.includes('비식별 집계'));
+    assert.ok(button);
+    assert.equal(button.disabled, true);
+    const selected = JSON.stringify(await report('win32', Date.now()));
+    const input = root.find(el => el.tagName === 'INPUT' && el.type === 'file');
+    input.files = [{ size:Buffer.byteLength(selected), text:async()=>selected }];
+    await input.dispatch('change');
+    assert.equal(button.disabled, false);
+    assert.match(button.getAttribute('aria-label'), /식별자 없는/);
+  });
+});
+
+test('aggregate export fails closed on forged source labels and never copies unknown reason text', async () => {
+  const trusted = normalizeHostObservation(await report('win32', T), T);
+  const tampered = structuredClone(trusted);
+  tampered.network.source = 'private-address-secret';
+  tampered.windowsEvents.reason = 'SENSITIVE_PAYLOAD';
+  const output = buildClaireHostAggregateEvidence(tampered, new Date(T + 30_000).toISOString());
+  assert.equal(output.sourceStatus.network.state, 'unavailable');
+  assert.equal(output.measurements.networkInterfaces.value, null);
+  const json = JSON.stringify(output);
+  assert.doesNotMatch(json, /private-address-secret|SENSITIVE_PAYLOAD/);
+})

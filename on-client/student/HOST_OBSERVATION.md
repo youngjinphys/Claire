@@ -90,3 +90,16 @@ hostReportQuality(report, now)는 수집된 원천을 네트워크 / 방화벽 /
 검증: on-client 폴더에서 npm run check 및 npm test; Node 24.19.0 일반 사용자 실행 후 기존 보호 현황 학생 화면에서 정상/오래된 JSON을 각각 선택해 표시를 비교합니다. 실제 사용자 PC 결과와 CI 테스트 예제를 혼동하지 않습니다.
 
 OBS 측에는 인증 후 이미 위생 처리된 호스트 집계 자료만을 별도의 로컬 JSON 증적으로 출력하도록 추가했으며, OBS의 호스트 비밀 로그나 사용자의 Claire 보고서를 다른 서비스로 이동하지 않습니다.
+
+## OBS → Claire: 비식별 진단 증적 내보내기 (2026-10-31)
+
+OBS의 **비식별·출처 명시·수동 내보내기** 원칙을 적용했습니다. 기존 원본 `observation.json`에는 로컬 IP·DNS 구성이 포함될 수 있으므로 공유용으로 직접 사용하지 않습니다.
+
+- 로컬 보고서를 검증한 다음 학생 화면에서 **비식별 집계 JSON 저장**을 직접 누르면 `claire.host-aggregate-evidence.v1` JSON을 다운로드하도록 요청합니다. 버튼은 보고서를 선택하기 전이나 읽는 동안 비활성화됩니다.
+- 포함 범위는 수집기 실행 OS, 생성·내보내기 UTC 시각, unsigned 근거, 원천별 상태·이유, 인터페이스/DNS/방화벽 조회 백엔드 **개수**, Windows 24시간 System/Application 경고·오류 **건수**에 한합니다. 원시 IP, DNS 주소, 인터페이스 이름, 파일 경로, 사용자·세션 식별자, SDP 사건 본문과 인증값은 제외됩니다.
+- 값마다 개수 단위·원천 시각·출처·상태를 붙입니다. macOS/Linux의 Windows 이벤트는 `not_applicable`과 `null`, 실패는 `unavailable`과 `null`입니다. 실제 0건과 구분합니다.
+- `freshness: recent|stale|clock_skew`, `coverage: observed|partial|unverifiable|unavailable`, 적용 가능한 원천 수와 실제 조회된 원천 수를 기록합니다. 오래된 보고서도 **과거 자료**로 저장할 수 있지만 현재 정상 판단으로 승격하지 않습니다.
+- 보고서는 여전히 **사용자가 직접 선택한 서명되지 않은 파일**에 기반합니다. 집계 JSON은 수집기 진위/동일 PC/완전한 방화벽 정책/침해 부재에 대한 증명이 아닙니다. 원본을 OBS로 보내거나 OBS 수집기와 합치지 않습니다.
+- 기존 학생 `extension.mjs` 파일 안에서 승인된 보고서만 가공합니다. 새 권한·서비스·원격 API·관리자 명령·포장 기능을 추가하지 않습니다.
+
+검증: `cd on-client && npm run check && npm test` 실행 후 보호 현황 학생 화면에서 실제 보고서 선택 → 집계 저장 → 주소·개인 식별자가 없는지 파일 내용을 확인합니다. 시험 합성 데이터와 본인 PC 결과를 구분합니다.

@@ -6,5 +6,5 @@
     "on-client/test/student-host-view.test.mjs",
     "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-10-31: OBS-inspired student host-report provenance and freshness; preserve original student submissions, shipped server routes, and prior audit evidence. One Claire main commit, no packaging or deployment."
+  "releaseNote": "2026-10-31: import OBS privacy-minimized host evidence export, source verification and user-triggered JSON download into Claire; preserve prior submissions and original server routes. One Claire main commit; no packaging or deployment."
 }
