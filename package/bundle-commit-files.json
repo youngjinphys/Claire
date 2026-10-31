@@ -4,10 +4,9 @@
     "on-client/public/dashboard.css",
     "on-client/public/dashboard.html",
     "on-client/public/dashboard.mjs",
-    "on-client/public/style.css",
     "on-client/student/extension.mjs",
-    "package/bundle-commit-files.json",
-    "public/observatory-theme.css"
+    "on-client/tools/dashboard-browser-smoke.mjs",
+    "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-10-31: polish frame-accurate animations, resolve form control warnings, and eliminate DOM churn across client dashboards"
+  "releaseNote": "2026-10-31: audit and harden the one-server Claire observatory; preserve upstream UI animations and form metadata; add legacy screen navigation, explicit failed SDP attribution, accessible headings, real 1440/390px browser QA. No additional service, packaging or deployment."
 }

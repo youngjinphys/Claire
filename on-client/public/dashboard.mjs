@@ -260,8 +260,12 @@ function downloadMeasurements() {
 function redrawEvents() {
   const data = latestEvents;
   const mode = data.mode;
-  set('events-origin', mode === 'demo' ? '예제 DEMO · 실제 사건 아님'
-    : mode === 'connected' ? 'SDP 본인 기록' : '원천 연결 없음');
+  // Configured adapter and verified event data are different claims.
+  set('events-origin', data.status !== 'ok'
+    ? mode === 'demo' ? '예제 DEMO · 기록 확인 불가'
+      : mode === 'connected' ? 'SDP 조회 실패 · 기록 확인 불가'
+        : mode === 'disconnected' ? 'SDP 미연결' : 'SDP 연결 확인 불가'
+    : mode === 'demo' ? '예제 DEMO · 실제 사건 아님' : 'SDP 본인 범위 기록');
   const body = $('events-body');
   body.replaceChildren();
   if (data.status !== 'ok') {
@@ -391,7 +395,7 @@ function startFreshnessTimer() {
   if (latestSecurity) showSecurity();
   // Repaint freshness without replacing the rows on every tick.
   if (latestEvents.status === 'ok' && latestEvents.checkedAt) {
-    $('events-origin').textContent = (latestEvents.mode === 'demo' ? '예제 DEMO · 실제 사건 아님' : 'SDP 본인 기록')
+    $('events-origin').textContent = (latestEvents.mode === 'demo' ? '예제 DEMO · 실제 사건 아님' : 'SDP 본인 범위 기록')
       + (Date.now() - Date.parse(latestEvents.checkedAt) > MAX_MEASUREMENT_AGE_MS ? ' · 조회 오래됨' : '');
   }
   renderChart();

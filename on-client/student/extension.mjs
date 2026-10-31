@@ -462,6 +462,13 @@ export function hostPanel(state, mode) {
   // report details without duplicating parsing, file selection or OS collection.
   dataRoot.setAttribute('data-host-report-details', '');
   actionBar.append(retry, fileInput, exportButton);
+  // Link the supplied ALEPH status slot to the same server's observatory.
+  if (typeof window === 'undefined' || window.location?.pathname !== '/dashboard.html') {
+    const unifiedLink = hostNode('a', '통합 관제 대시보드 열기', 'btn');
+    unifiedLink.href = '/dashboard.html';
+    unifiedLink.setAttribute('aria-label', '같은 Claire 서버의 통합 관제 대시보드 열기');
+    actionBar.append(unifiedLink);
+  }
   region.append(cardsRoot, actionBar, progress, help, dataRoot);
 
   const card = (title, value, details, kind) => {

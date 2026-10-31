@@ -176,6 +176,18 @@ footer { padding: 14px 0 7px; border-top: 1px solid var(--line); color: #667c96;
 }
 
 
+/* Invisible heading preserves the accessible hierarchy h1 → h2 → supplied h3. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 /* Claire unified observatory: reuse the student host-report UI without a second collector. */
 .integrated-host { margin-top: 20px; padding: 22px; }
 #integrated-host-root .student-host-panel { margin-bottom: 0 !important; }
