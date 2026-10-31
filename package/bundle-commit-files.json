@@ -1,14 +1,12 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    ".github/workflows/quality.yml",
-    "on-client/student/HOST_OBSERVATION.md",
+    "on-client/public/dashboard.css",
+    "on-client/public/dashboard.mjs",
     "on-client/student/collect-host.mjs",
     "on-client/student/extension.mjs",
     "on-client/test/host-collection.test.mjs",
-    "on-client/test/student-host-view.test.mjs",
-    "on-client/tools/dashboard-browser-smoke.mjs",
     "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-10-31: harden unsigned host-report IP/DNS, Linux firewall and Windows event envelope validation; correct ActiveStore interpretation; regression and keyboard/320px visual checks; Korean CI glyph coverage only. Preserve original student submissions, server contracts, read-only acquisition. No branch, installer, packaging or Vercel deployment."
+  "releaseNote": "2026-10-31: classify non-root Linux ufw stderr diagnostics as PERMISSION_DENIED; add form-field id/name to host comparison consent checkbox for zero DevTools form warnings; polish Local Observatory logo badge alignment, unavailable metric unit suppression, SVG trend vertex markers, host card top accent bars, and structured host report dark-theme panels."
 }

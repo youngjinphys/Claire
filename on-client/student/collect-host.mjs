@@ -18,7 +18,8 @@ const SAFE_OUTPUT_BYTES = 64 * 1024;
 const iso = time => new Date(time).toISOString();
 const failure = (reason, measuredAt, source) => ({ status: 'unavailable', reason, measuredAt, source });
 const errorReason = error => {
-  if (['EPERM', 'EACCES'].includes(error?.code)) return 'PERMISSION_DENIED';
+  const text = String(error?.output ?? error?.message ?? '');
+  if (['EPERM', 'EACCES'].includes(error?.code) || /permission denied|you need to be root|operation not permitted/iu.test(text)) return 'PERMISSION_DENIED';
   if (error?.code === 'ENOENT') return 'COMMAND_NOT_FOUND';
   if (error?.killed || error?.code === 'ETIMEDOUT') return 'QUERY_TIMEOUT';
   if (error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return 'RESULT_TOO_LARGE';
@@ -28,8 +29,8 @@ const bounded = (value, limit = 80) => typeof value === 'string' && value.length
 
 function runReadOnlyCommand(file, args, { timeout = COMMAND_TIMEOUT_MS } = {}) {
   return new Promise((fulfill, reject) => {
-    execFile(file, args, { timeout, maxBuffer: SAFE_OUTPUT_BYTES, windowsHide: true, shell: false }, (error, stdout) => {
-      if (error) { error.output = stdout; reject(error); }
+    execFile(file, args, { timeout, maxBuffer: SAFE_OUTPUT_BYTES, windowsHide: true, shell: false }, (error, stdout, stderr) => {
+      if (error) { error.output = (stdout || '') + (stderr ? '\n' + stderr : ''); reject(error); }
       else fulfill(stdout);
     });
   });

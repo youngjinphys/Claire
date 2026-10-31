@@ -175,16 +175,24 @@ function renderChart() {
   const x = time => left + Math.max(0, Math.min(1, (time - t0) / HISTORY_WINDOW_MS)) * (right - left);
   const y = value => bottom - value / 100 * (bottom - top);
   for (const item of chartSeries) {
-    for (const segment of seriesSegments(history, item.key)) {
-      const points = segment.map(point => x(point.time).toFixed(2) + ',' + y(point.value).toFixed(2));
+    const segments = seriesSegments(history, item.key);
+    for (let sIdx = 0; sIdx < segments.length; sIdx += 1) {
+      const segment = segments[sIdx];
+      const coords = segment.map(point => [x(point.time).toFixed(2), y(point.value).toFixed(2)]);
+      const points = coords.map(([cx, cy]) => cx + ',' + cy);
       if (points.length >= 2) {
         plot.append(svg('polyline', {
           points: points.join(' '), fill: 'none', stroke: item.color,
           'stroke-dasharray': item.dash || 'none', 'stroke-width': 2.6, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
         }));
-      } else if (points.length === 1) {
-        const [cx, cy] = points[0].split(',');
-        plot.append(svg('circle', { cx, cy, r: 3, fill: item.color }));
+      }
+      for (let pIdx = 0; pIdx < coords.length; pIdx += 1) {
+        const [cx, cy] = coords[pIdx];
+        const isLatest = sIdx === segments.length - 1 && pIdx === coords.length - 1;
+        if (isLatest) {
+          plot.append(svg('circle', { cx, cy, r: 6.5, fill: item.color, 'fill-opacity': 0.2 }));
+        }
+        plot.append(svg('circle', { cx, cy, r: isLatest ? 3.6 : 2.8, fill: item.color, stroke: '#0c1626', 'stroke-width': 1.2 }));
       }
     }
   }

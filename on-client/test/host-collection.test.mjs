@@ -114,6 +114,16 @@ test('a stopped firewalld is not mislabeled as system-wide firewall disabled', a
   assert.equal(state.status, 'ok');
   assert.deepEqual(state.backends.map(b => b.state), ['not-running', 'enabled']);
 });
+test('non-root Linux ufw stderr diagnostic is classified as PERMISSION_DENIED', async () => {
+  const state = await readFirewall({ platform: 'linux', clock: () => T,
+    run: async file => {
+      if (file.includes('firewall-cmd')) throw Object.assign(Error('missing'), { code: 'ENOENT' });
+      throw Object.assign(Error('Command failed'), { code: 1, output: 'ERROR: You need to be root to run this script\n' });
+    } });
+  assert.equal(state.status, 'unavailable');
+  assert.equal(state.reason, 'PERMISSION_DENIED');
+  assert.equal(state.source, 'linux:firewalld+ufw');
+});
 test('local report is saved only to a new private temporary folder, without overwriting existing files', async () => {
   const dest = await mkdtemp(join(tmpdir(), 'claire-test-parent-'));
   try {

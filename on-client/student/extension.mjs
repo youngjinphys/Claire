@@ -682,6 +682,8 @@ export function hostPanel(state, mode) {
       consent.style.alignItems = 'flex-start';
       const check = hostNode('input');
       check.type = 'checkbox';
+      check.id = 'student-host-compare-consent';
+      check.name = 'hostCompareConsent';
       check.checked = state.compareConfirmed === true;
       check.setAttribute('aria-label', '이전 보고서와 현재 보고서가 동일 PC의 동일 실행 환경에서 생성되었음을 확인한 경우에만 비교');
       consent.append(check, hostNode('span', '두 보고서가 같은 PC·실행 환경에서 수집됐음을 확인했습니다 (원본 인증은 아님).'));
