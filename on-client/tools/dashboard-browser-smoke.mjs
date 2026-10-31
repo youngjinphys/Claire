@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import { createOnServer } from '../src/server.mjs';
 import { demoEngine } from '../src/engine.mjs';
+import { collectHostObservation } from '../student/collect-host.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, title, maxMs = 15000) {
@@ -76,13 +77,31 @@ async function main() {
     await cmd('Page.enable');
     await cmd('Runtime.enable');
     await cmd('Page.navigate', { url: origin + '/dashboard.html' });
-    await observed("document.readyState === 'complete' && document.querySelectorAll('.metric-card').length === 4", 'four cards');
+    await observed("document.readyState === 'complete' && document.querySelectorAll('[data-host-card]').length === 4 && document.querySelectorAll('.metric-card').length === 3", 'four host cards and three resource cards');
     assert.equal(await evaluate("document.getElementById('cpu-value').textContent"), '확인 불가');
     await observed("document.getElementById('events-origin').textContent.includes('예제 DEMO')", 'DEMO evidence');
     await evaluate("document.getElementById('sample-once').click()");
     await observed("document.getElementById('cpu-time').textContent !== '미측정' && !document.getElementById('sample-once').disabled", 'PC measurement', 20000);
     assert.equal(await evaluate("document.getElementById('disk-unit').textContent"), 'GiB');
-    assert.match(await evaluate("document.getElementById('security-source').textContent"), /DEMO/);
+    assert.match(await evaluate("document.querySelector('[data-host-card=sdp]').textContent"), /DEMO/);
+    // Explicitly selected synthetic file tests the real student file reader,
+    // without any system changes, escalation, network probing or exploit tests.
+    const sample = await collectHostObservation({
+      platform:'linux', clock:()=>Date.now(),
+      networkInterfaces:()=>({test0:[{family:'IPv4',address:'127.0.0.1',internal:true}]}),
+      dnsServers:()=>['127.0.0.1'],
+      run:async()=>{throw Object.assign(new Error('absent'),{code:'ENOENT'});},
+    });
+    const sampleLiteral=JSON.stringify(JSON.stringify(sample));
+    const loaded=await evaluate("(()=>{const input=document.querySelector('#integrated-host-root input[type=file]');"
+      +"if(!input)throw Error('No existing student file reader');"
+      +"const files=new DataTransfer();files.items.add(new File(["+sampleLiteral+"],'observation.json',{type:'application/json'}));"
+      +"input.files=files.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true})()");
+    assert.equal(loaded,true);
+    await observed("document.querySelector('[data-host-card=network]').textContent.includes('1개 인터페이스')"
+      +" && document.querySelector('#host-report-content').textContent.includes('test0')", 'real student UI reused for file input');
+    assert.match(await evaluate("document.querySelector('[data-host-card=sdp]').textContent"), /DEMO/);
+    assert.match(await evaluate("document.getElementById('host-report-section').textContent"), /Windows|OS 기록/);
     await evaluate("document.getElementById('start').click()");
     await observed("!document.getElementById('stop').disabled", 'start control');
     await observed("Number.parseInt(document.getElementById('sample-count').textContent,10) >= 2", 'sample history', 20000);
@@ -94,13 +113,13 @@ async function main() {
     await writeFile(join(captures, 'desktop-demo.png'), Buffer.from(shot.data, 'base64'));
     await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await sleep(500);
-    const mobile = await evaluate("({viewport:innerWidth, width:document.documentElement.scrollWidth,cards:document.querySelectorAll('.metric-card').length})");
-    assert.equal(mobile.cards, 4);
+    const mobile = await evaluate("({viewport:innerWidth, width:document.documentElement.scrollWidth,cards:document.querySelectorAll('[data-host-card]').length,resources:document.querySelectorAll('.metric-card').length})");
+    assert.equal(mobile.cards, 4); assert.equal(mobile.resources, 3);
     assert.ok(mobile.width <= mobile.viewport + 4, 'mobile overflow: ' + JSON.stringify(mobile));
     const mobileShot = await cmd('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(captures, 'mobile-demo.png'), Buffer.from(mobileShot.data, 'base64'));
     assert.deepEqual(errors, [], 'no browser JS exceptions');
-    console.log('PASS browser: initial unavailable, DEMO source, PC measurement, trend, stop, mobile layout, zero JS exceptions.');
+    console.log('PASS browser: four reused host cards, selected synthetic report, DEMO source, PC measurement, trend, stop, mobile layout, zero JS exceptions.');
     console.log('Screenshots (synthetic SDP only; OS figures are from the CI runner): ' + captures);
   } finally {
     if (socket?.readyState === WebSocket.OPEN) socket.close();

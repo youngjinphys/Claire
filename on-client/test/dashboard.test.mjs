@@ -61,14 +61,24 @@ test('security and events distinguish SDP verified, DEMO and not-connected', () 
   assert.equal(events.events.length, 1);
   assert.equal(normalizeEvents({ ok: false, error: { code: 'ENGINE_NOT_CONNECTED' }, meta: { mode: 'disconnected', checkedAt } }).events.length, 0);
 });
-test('dashboard assets parse and HTML has exactly four metric cards and source labels', () => {
+test('unified dashboard reuses four student host cards and three measured resource cards', () => {
   const base = new URL('../public/', import.meta.url);
   for (const file of ['dashboard.mjs', 'dashboard-model.mjs']) execFileSync(process.execPath, ['--check', fileURLToPath(new URL(file, base))], { stdio: 'pipe' });
   const html = readFileSync(new URL('dashboard.html', base), 'utf8');
-  assert.equal((html.match(/class="metric-card(?: security)?"/g) || []).length, 4);
-  for (const id of ['cpu-card', 'memory-card', 'disk-card', 'security-card', 'resource-chart', 'events-body', 'start', 'stop']) assert.ok(html.includes('id="' + id + '"'), id);
-  assert.match(html, /PC 실측/u);
-  assert.match(html, /예제 DEMO/u);
+  assert.equal((html.match(/class="metric-card(?: security)?"/g) || []).length, 3);
+  for (const id of ['cpu-card', 'memory-card', 'disk-card', 'integrated-host-root',
+    'host-report-content', 'sdp-policy-detail', 'resource-chart', 'events-body', 'start', 'stop']) {
+    assert.ok(html.includes('id="' + id + '"'), id);
+  }
+  assert.equal(html.includes('id="security-card"'), false, 'do not duplicate SDP status');
+  assert.ok(html.indexOf('id="host-panel"') < html.indexOf('id="resource-panel"'));
+  assert.match(html, /로컬 JSON 보고서/u);
+  assert.match(html, /예제 DEMO|DEMO/u);
+  const js = readFileSync(new URL('dashboard.mjs', base), 'utf8');
+  assert.match(js, /import \{ hostPanel \} from '\/student\/extension\.mjs'/u);
+  assert.match(js, /hostPanel\(hostState, normalizedMode\)/u);
+  const student = readFileSync(new URL('../student/extension.mjs', base), 'utf8');
+  assert.match(student, /data-host-report-details/u);
   assert.doesNotMatch(html, /onclick\s*=/iu);
 });
 test('new local dashboard and metrics route use the existing same-origin loopback server', { timeout: 15000 }, async () => {
@@ -76,7 +86,7 @@ test('new local dashboard and metrics route use the existing same-origin loopbac
   try {
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     const base = 'http://127.0.0.1:' + server.address().port;
-    for (const file of ['/dashboard.html', '/dashboard.css', '/dashboard.mjs', '/dashboard-model.mjs']) {
+    for (const file of ['/dashboard.html', '/dashboard.css', '/dashboard.mjs', '/dashboard-model.mjs', '/student/extension.mjs']) {
       const response = await fetch(base + file);
       assert.equal(response.status, 200, file);
       assert.equal(response.headers.get('x-content-type-options'), 'nosniff');

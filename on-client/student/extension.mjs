@@ -456,6 +456,9 @@ export function hostPanel(state, mode) {
   cardsRoot.className = 'student-host-cards';
   cardsRoot.setAttribute('aria-label', '네트워크, 방화벽, Windows 기록, SDP 네 가지 상태');
   const dataRoot = hostNode('div');
+  // Stable reuse contract: the local dashboard can relocate the existing
+  // report details without duplicating parsing, file selection or OS collection.
+  dataRoot.setAttribute('data-host-report-details', '');
   actionBar.append(retry, fileInput, exportButton);
   region.append(cardsRoot, actionBar, progress, help, dataRoot);
 

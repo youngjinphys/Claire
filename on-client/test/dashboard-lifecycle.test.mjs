@@ -26,13 +26,22 @@ async function browser(){
     if(path==='/api/local-pc')return new Promise(resolve=>requests.push(resolve));
     return new Response(JSON.stringify({ok:false,error:{code:'ENGINE_NOT_CONNECTED'},meta:{mode:'disconnected',checkedAt:new Date().toISOString()}}),{status:503,headers:{'content-type':'application/json'}});
   };
-  const context=vm.createContext({...model,console,document,window,fetch,AbortController,URL,Blob,Response,TextDecoder,performance,
+  const hostModes=[];
+  const hostPanel=(state,mode)=>{
+    hostModes.push(mode);
+    const region=new Element();
+    const details=new Element();
+    region.querySelector=selector=>selector==='[data-host-report-details]'?details:null;
+    return region;
+  };
+  const context=vm.createContext({...model,hostPanel,console,document,window,fetch,AbortController,URL,Blob,Response,TextDecoder,performance,
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay,type:'timeout'});return id},clearTimeout:id=>timers.delete(id),
     setInterval:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay,type:'interval'});return id},clearInterval:id=>timers.delete(id),
   });
-  const source=(await readFile(new URL('../public/dashboard.mjs',import.meta.url),'utf8')).replace(/^import\s*\{[\s\S]*?\}\s*from\s*['"][^'"]+['"];\s*/, '');
+  const source=(await readFile(new URL('../public/dashboard.mjs',import.meta.url),'utf8'))
+    .replace(/^(?:import\s*\{[\s\S]*?\}\s*from\s*['"][^'"]+['"];\s*)+/u, '');
   vm.runInContext(source,context);await flush();
-  return {get:document.getElementById,requests,window,document,timers,context};
+  return {get:document.getElementById,requests,window,document,timers,context,hostModes};
 }
 function result(){
   const now=Date.now();const iso=n=>new Date(n).toISOString();
@@ -90,4 +99,14 @@ test('hidden tab cancels an in-flight one-shot and permits explicit recovery',as
   assert.equal(b.requests.length,1);
   b.document.hidden=false;b.document.handlers.get('visibilitychange')?.();
   assert.equal(b.requests.length,1,'showing a tab does not restart reads');
+});
+
+test('single-source host cards display SDP mode without adding a second OS endpoint',async t=>{
+  const b=await browser();t.after(()=>b.window.handlers.get('pagehide')?.({persisted:false}));
+  assert.ok(b.hostModes.includes('unknown'));
+  assert.ok(b.hostModes.includes('disconnected'));
+  assert.match(b.get('sdp-policy-detail').textContent,/SDP 미연결/);
+  assert.equal(b.get('integrated-host-root').children.length,1);
+  assert.equal(b.get('host-report-content').children.length,1);
+  assert.equal(b.requests.length,0,'host-panel mount must not trigger CPU or OS reads');
 });

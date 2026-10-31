@@ -1,7 +1,16 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
+    "on-client/README.md",
+    "on-client/public/dashboard.css",
+    "on-client/public/dashboard.html",
+    "on-client/public/dashboard.mjs",
+    "on-client/student/HOST_OBSERVATION.md",
+    "on-client/student/extension.mjs",
+    "on-client/test/dashboard-lifecycle.test.mjs",
+    "on-client/test/dashboard.test.mjs",
+    "on-client/tools/dashboard-browser-smoke.mjs",
     "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-10-31: this commit changes only package/bundle-commit-files.json so the push check matches git diff --name-only HEAD^ HEAD. No packaging or deployment."
+  "releaseNote": "2026-10-31: integrate local host observations and resource/XDR charts on a single same-origin Claire dashboard; reuse student report parser and existing APIs; keep original course UI, OS safeguards, submissions, and provenance. No installer, bundle, new branch, or deployment."
 }

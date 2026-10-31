@@ -27,11 +27,14 @@ npm start도 같은 서버를 켭니다. 기본 실행은 실제 회사 시스�
 - 실제 회사 시스템(SDP)·앱 안 AI 연결은 담당자가 따로 안내할 때만 씁니다: docs/SDP_HOST_CONNECTION.md, docs/AI_SETUP_GUIDE.md. 이 연결은 앱을 처음 켜고 13~16단계 화면을 만들거나 공식 AI 코드 판정을 받기 위한 전제 조건은 아닙니다. 다만 17단계 이후의 실제 연결과 새 환경 재현은 해당 단계의 기준에 따라 따로 확인합니다.
 
 
-## 로컬 관제 대시보드 (Claire 추가 구현)
+## 통합 로컬 관제 대시보드 (Claire 추가 구현)
 
-기존 13~22단계의 화면(`http://127.0.0.1:5189/`)과 학생 코드(`student/extension.mjs`)를 보존하면서 **별도 읽기 전용 화면**을 제공합니다.
+기존 13~22단계의 화면(`http://127.0.0.1:5189/`)과 학생 코드(`student/extension.mjs`)를 보존하면서 **동일 서버의 통합 읽기 전용 화면**을 제공합니다. 이는 새 서비스나 별도의 백엔드가 아닙니다.
 
-- 주소: `http://127.0.0.1:5189/dashboard.html`
+- 통합 화면: `http://127.0.0.1:5189/dashboard.html`. 상단 4개 카드(네트워크·방화벽·Windows 기록·SDP)는 기존 `student/extension.mjs`의 `hostPanel()`을 **재사용**합니다. CPU·메모리·디스크 3개 실측 카드와 추이, 근거 기록, 기존 XDR·접속 기록은 아래에 둡니다.
+- **네트워크·방화벽·Windows 기록은 자동 조회하지 않습니다.** 앱 폴더에서 `node student/collect-host.mjs`를 일반 권한으로 실행하면 임시 디렉터리에 `observation.json`이 생성됩니다. 통합 화면의 `다시 조회 · 보고서 선택`으로 그 파일을 명시적으로 지정합니다. 이 파일은 원본 미인증이며 CPU API와 같은 물리 PC/실행 환경이라는 보장이 없습니다. 읽기 실패 시 확인 불가와 원인을 표시합니다.
+- Windows System·Application의 지난 24시간 경고·오류 수치는 **공격·침해 탐지 건수가 아닙니다.** macOS·Linux는 Windows 전용으로 표시하고 0건으로 표시하지 않습니다. 방화벽 설정은 읽기만 하며 관리자 권한이나 변경 명령을 사용하지 않습니다.
+- 기존 수업용 화면 `/`는 계속 유지됩니다. 통합 화면에서 링크로 이동할 수 있으며 원래 제공 UI·학생 제출 코드는 제거하지 않습니다.
 - 동일한 `on-client` 폴더에서 `npm start` 또는 기존 Windows `tools/start-alekov.ps1`로 실행합니다. 별도 npm 설치, 관리자 권한, 실행파일 패키징, Vercel 배포가 필요하지 않습니다.
 - **PC 실측:** `/api/local-pc`에서 OS CPU 두 시점의 누적시간 차(400ms), OS 총 메모리와 free 메모리 차, 프로젝트 파일시스템의 일반 사용자 디스크 여유 공간을 측정합니다. 사용률은 %이고 남은 디스크는 GiB입니다. 값마다 OS 원천과 관측 시각을 표시합니다. 메모리 수치는 os.freemem 기준 추정치로, OS에 따라 free와 reclaimable 캐시 해석이 달라집니다.
 - **기존 제공 정보:** `/api/me` 기기 보안 상태와 `/api/events` 본인 최근 최대 40건은 제공된 API를 재사용하며 중복 구현하지 않습니다. 기본 미연결은 실제 데이터를 제공하지 않습니다.
@@ -50,7 +53,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1
 Invoke-RestMethod http://127.0.0.1:5189/api/local-pc | ConvertTo-Json -Depth 8
 ```
 
-먼저 기존 `/` 화면을 열어 메뉴 3개가 그대로인지 확인하고, `/dashboard.html`에서 관측 시작·중지·기록 재조회·DEMO 구분을 점검합니다. 종료는 실행한 PowerShell에서 `Ctrl+C`입니다.
+먼저 기존 `/` 화면의 세 메뉴가 그대로인지 확인하고, `/dashboard.html`에서 파일 선택 → 네 상단 카드 → 자원 측정 시작·중지 → 추이·OS 상세·XDR 기록 → SDP 미연결/DEMO 분리를 점검합니다. 종료는 실행한 PowerShell에서 `Ctrl+C`입니다.
 
 
 ### 검증 범위와 안전 제한

@@ -21,9 +21,10 @@
       </div>
       <div class="rail-section">WORKSPACE</div>
       <nav class="rail-nav" aria-label="화면 전환">
-        <a class="active" href="/dashboard.html" aria-current="page"><span class="nav-mark" aria-hidden="true">◈</span> 관제 대시보드</a>
-        <a href="/"><span class="nav-mark" aria-hidden="true">▤</span> 기존 Claire 화면</a>
-        <a href="#records-panel"><span class="nav-mark" aria-hidden="true">≡</span> 보안 기록</a>
+        <a class="active" href="/dashboard.html" aria-current="page"><span class="nav-mark" aria-hidden="true">◈</span> 통합 관제</a>
+        <a href="/"><span class="nav-mark" aria-hidden="true">▤</span> ALEPH 기본 화면</a>
+        <a href="#resource-panel"><span class="nav-mark" aria-hidden="true">▥</span> PC 자원 추이</a>
+        <a href="#records-panel"><span class="nav-mark" aria-hidden="true">≡</span> SDP · XDR 기록</a>
         <a href="#source-panel"><span class="nav-mark" aria-hidden="true">◎</span> 데이터 출처</a>
       </nav>
       <div class="rail-bottom">
@@ -48,20 +49,36 @@
         <div class="heading-row">
           <div>
             <p class="section-index">01 / SYSTEM OVERVIEW</p>
-            <h1>내 PC 관제 현황<span class="heading-dot">.</span></h1>
-            <p class="lede">운영체제 자원 실측과 기존 SDP 보안 조회를 분리한 로컬 대시보드</p>
+            <h1>Claire 통합 관제<span class="heading-dot">.</span></h1>
+            <p class="lede">네트워크 · 방화벽 · Windows 기록 · SDP를 한 화면에서 확인하고, 아래에서 CPU·메모리·디스크 추이와 보안 기록을 살펴봅니다.</p>
             <p class="runtime-note">측정 대상: Node 서버 실행 환경. WSL·컨테이너·가상 머신에서는 물리 PC 전체와 다를 수 있습니다.</p>
           </div>
+
+        </div>
+
+        <section class="panel integrated-host" id="host-panel" aria-label="통합 네트워크 방화벽 Windows 기록 SDP 상태">
+          <div id="integrated-host-root">
+            <p class="records-note" role="status">학생 수집기 보고서와 SDP 연결 정보를 확인하는 중입니다. 읽지 못한 값은 예시 숫자로 바꾸지 않습니다.</p>
+          </div>
+          <p id="sdp-policy-detail" class="sdp-policy-detail" role="status" aria-live="polite">SDP 정책 상태는 아직 조회되지 않았습니다.</p>
+        </section>
+
+        <section class="resource-panel" id="resource-panel" aria-labelledby="resource-title">
+          <div class="resource-heading">
+            <div>
+              <p class="section-index">02 / LOCAL RESOURCE METRICS</p>
+              <h2 id="resource-title">CPU · 메모리 · 디스크</h2>
+              <p>로컬 Node 서버가 실행되는 환경의 OS 실측 · 위의 선택 JSON 보고서와는 수집 시각·출처가 다를 수 있습니다.</p>
+            </div>
           <div class="toolbar" aria-label="관측 제어">
             <button id="sample-once" class="button ghost" type="button">한 번 측정</button>
             <button id="stop" class="button ghost" type="button" disabled>관측 중지</button>
             <button id="start" class="button primary" type="button">관측 시작 <span aria-hidden="true">↗</span></button>
           </div>
-        </div>
-
+          </div>
         <div id="page-notice" class="page-notice" role="status" aria-live="polite">측정을 시작하면 CPU·메모리·디스크의 실제 로컬 관측값이 표시됩니다. 측정 전에는 예시 수치를 넣지 않습니다.</div>
 
-        <section class="metrics-grid" aria-label="주요 상태 카드">
+        <section class="metrics-grid resource-metrics" aria-label="PC 자원 실측 카드 3개">
           <article class="metric-card" id="cpu-card" data-state="unavailable">
             <div class="metric-top"><h2>CPU 사용률</h2><span class="metric-icon" aria-hidden="true">01</span></div>
             <div class="metric-reading"><strong id="cpu-value">확인 불가</strong><span id="cpu-unit">%</span></div>
@@ -82,13 +99,6 @@
             <p class="metric-detail" id="disk-detail">앱 폴더가 위치한 파일시스템 기준</p>
             <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="disk-time">미측정</span></div>
             <p class="metric-reason" id="disk-reason">관측 시작 전</p>
-          </article>
-          <article class="metric-card security" id="security-card" data-state="unavailable">
-            <div class="metric-top"><h2>내 기기 보안 상태</h2><span class="metric-icon" aria-hidden="true">04</span></div>
-            <div class="metric-reading security-reading"><strong id="security-value">확인 불가</strong></div>
-            <p class="metric-detail" id="security-detail">SDP 원천 정책 결과 · 상태 코드</p>
-            <div class="metric-bottom"><span class="source-pill source-sdp" id="security-source">SDP 조회</span><span id="security-time">미조회</span></div>
-            <p class="metric-reason" id="security-reason">원천 조회 전</p>
           </article>
         </section>
 
@@ -126,6 +136,21 @@
             <p class="fine-print">변화량은 시작·마지막 표본의 차이(%p)입니다. 침해 여부나 원인 판정이 아닙니다.</p>
           </aside>
         </div>
+
+        </section>
+
+        <section class="panel host-report-panel" id="host-report-section" aria-labelledby="host-report-title">
+          <div class="panel-heading">
+            <div>
+              <p class="section-index">05 / SOURCE DETAILS</p>
+              <h2 id="host-report-title">네트워크 · 방화벽 · Windows 기록 근거</h2>
+              <p>선택한 OS 보고서의 세부사항과 이동 집계 비교. 새 관측은 터미널에서 수집기를 직접 실행해야 합니다.</p>
+            </div>
+          </div>
+          <div id="host-report-content" class="host-report-content">
+            <p class="records-note">현재 선택한 보고서가 없습니다.</p>
+          </div>
+        </section>
 
         <section class="panel records-panel measurement-log" aria-labelledby="measurement-title">
           <div class="panel-heading">
@@ -167,9 +192,10 @@
         <section class="provenance" id="source-panel" aria-label="측정 범위와 데이터 출처">
           <div><span class="provenance-label">DATA INTEGRITY</span><h2>값이 없으면, 없다고 표시합니다.</h2></div>
           <div class="provenance-grid">
-            <p><strong>PC 실측</strong> Node 서버 실행 환경의 OS·파일시스템 실측. 일반 권한만 사용하며 가상 환경에서는 물리 PC 전체의 값이라고 보장하지 않습니다.</p>
-            <p><strong>SDP 원천</strong> 기존 서버가 검증한 기기·기록. 연결 실패는 정상 판정이 아닙니다.</p>
-            <p><strong>예제 DEMO</strong> 서버의 가상 보안 자료에만 적용. 실제 PC 자원 관측값과 절대 합산하지 않습니다.</p>
+            <p><strong>CPU·메모리·디스크</strong> Node 서버 실행 환경에서 표준 OS API로 관측. 일반 권한·측정 시각을 표시하며 물리 PC 전체와 다를 수 있습니다.</p>
+            <p><strong>로컬 JSON 보고서</strong> 학생 수집기가 사용자가 선택한 파일로 제공하는 네트워크·방화벽·Windows 기록. 원본 미인증·별도 시각이며 방화벽 설정을 변경하지 않습니다.</p>
+            <p><strong>SDP 원천</strong> 기존 서버의 연결/기기 정책·본인 사건. SDP 미연결은 PC 관측 성공과 독립적이며, 에이전트 구성만으로 운영 연결 성공을 추정하지 않습니다.</p>
+            <p><strong>DEMO / 이벤트</strong> DEMO는 설명용 SDP 기록입니다. Windows System·Application 경고·오류 건수는 침해·공격 탐지 결과가 아닙니다.</p>
           </div>
         </section>
         <footer>Claire Local Observatory · 측정은 로컬 Node 서버 환경에서 수행 · 원본 제출물 및 기존 화면 보존</footer>

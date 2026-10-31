@@ -1,8 +1,9 @@
 import {
   appendSample, appendGap, trendSummary, normalizeSnapshot, normalizeSecurity, normalizeEvents,
-  HISTORY_WINDOW_MS, MAX_MEASUREMENT_AGE_MS, seriesSegments, securityCardState, pairedSamples,
+  HISTORY_WINDOW_MS, MAX_MEASUREMENT_AGE_MS, seriesSegments, pairedSamples,
   requestDashboardJson, exportMeasurements,
 } from '/dashboard-model.mjs';
+import { hostPanel } from '/student/extension.mjs';
 
 const $ = id => document.getElementById(id);
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -61,6 +62,27 @@ let activeEventRequest = null;
 let scheduled = null;
 let freshnessTimer = null;
 
+// One host-report reader, shared with the provided student expansion. The OS
+// collector is an explicit user-launched CLI, NOT an HTTP endpoint or background scan.
+const hostState = { pending: false, latest: null, history: [], error: null, requestId: 0 };
+let displayedHostMode = null;
+
+function renderHostObservation(mode) {
+  const normalizedMode = ['connected', 'demo', 'disconnected'].includes(mode) ? mode : 'unknown';
+  if (displayedHostMode === normalizedMode) return;
+  const panel = hostPanel(hostState, normalizedMode);
+  const details = panel.querySelector('[data-host-report-details]');
+  if (details) {
+    $('host-report-content').replaceChildren(details);
+  } else {
+    const notice = document.createElement('p');
+    notice.textContent = '보고서 상세 연결을 확인할 수 없습니다. 기존 Claire 화면에서 보고서를 선택해 확인하세요.';
+    $('host-report-content').replaceChildren(notice);
+  }
+  $('integrated-host-root').replaceChildren(panel);
+  displayedHostMode = normalizedMode;
+}
+
 function headerClock() { set('header-clock', new Date().toLocaleString('ko-KR', { hour12: false })); }
 headerClock();
 
@@ -99,27 +121,32 @@ function showMetric(key, snapshot) {
 
 function showSecurity() {
   const info = latestSecurity;
-  const card = $('security-card');
   const mode = info?.mode || 'unknown';
-  const isDemo = info?.status === 'ok' && mode === 'demo';
-  const fresh = info?.checkedAt && Date.now() - Date.parse(info.checkedAt) <= MAX_MEASUREMENT_AGE_MS
-    && Date.parse(info.checkedAt) - Date.now() <= 1000;
-  const recognized = info?.status === 'ok' && fresh;
-  card.dataset.state = securityCardState(info);
+  renderHostObservation(mode);
+  const checkedAt = info?.checkedAt;
+  const current = typeof checkedAt === 'string' && Number.isFinite(Date.parse(checkedAt))
+    && Date.now() - Date.parse(checkedAt) <= MAX_MEASUREMENT_AGE_MS
+    && Date.parse(checkedAt) - Date.now() <= 1000;
   const labels = { compliant: '기준 충족', noncompliant: '기준 미충족', unknown: '확인 불가' };
-  set('security-value', recognized ? labels[info.value] : '확인 불가');
-  set('security-source', isDemo ? '예제 DEMO' : mode === 'connected' ? 'SDP 원천 조회' : 'SDP 미연결');
-  const sessionLabels = { active:'활성', expired:'만료', revoked:'철회', unknown:'확인 불가' };
-  set('security-detail', '제공 기기 정책' + (recognized ? ' ' + info.value + ' · 세션 ' + (sessionLabels[info.sessionStatus] || '확인 불가') : ' · 조회 미확인'));
-  set('security-time', info?.checkedAt ? dateText(info.checkedAt) : '미조회');
-  titleIso($('security-time'), info?.checkedAt);
-  set('security-reason', !info ? reasonText('NOT_STARTED') : info.status === 'ok' && !fresh ? reasonText('SECURITY_STALE')
-    : isDemo ? '가상 기기 상태입니다. 실제 PC 보안 판정이 아닙니다.'
-    : recognized && info.value === 'noncompliant' ? '기기 보안 기준 미충족: 안전 상태가 아닙니다. 서버 정책과 현재 세션을 확인하세요.'
-    : recognized && info.sessionStatus !== 'active' ? '로그인 세션 ' + (sessionLabels[info.sessionStatus] || '확인 불가') + ': 기기 상태만으로 접속 가능 여부를 판단하지 마세요.'
-    : recognized && info.value === 'unknown' ? 'SDP가 기기 상태를 알 수 없다고 응답했습니다.'
-    : recognized ? '기기 기준 충족 · 세션 활성은 SDP 보고 상태이며 OS 전체 안전 보장은 아닙니다.'
-    : reasonText(info?.reason || 'SECURITY_LOOKUP_FAILED'));
+  const sessions = { active: '활성', expired: '만료', revoked: '철회', unknown: '확인 불가' };
+  const time = checkedAt ? dateText(checkedAt) : '조회 시각 확인 불가';
+  let description;
+  if (mode === 'demo') {
+    description = 'SDP 예제 DEMO · 실제 보안 정책 판정이 아닙니다. ' + time;
+  } else if (mode === 'disconnected') {
+    description = 'SDP 미연결 · PC 자원 측정이나 로컬 보고서 조회 성공과 무관합니다. ' + time;
+  } else if (mode !== 'connected') {
+    description = 'SDP 연결 확인 불가 · 원천 응답을 검증할 수 없습니다.';
+  } else if (info?.status !== 'ok' || !current) {
+    description = 'SDP 어댑터 연결 구성 · 정책 결과 확인 불가. '
+      + (current ? reasonText(info?.reason || 'SECURITY_LOOKUP_FAILED') : reasonText('SECURITY_STALE'))
+      + ' · ' + time;
+  } else {
+    description = 'SDP 기기 정책 ' + labels[info.value]
+      + ' · 세션 ' + sessions[info.sessionStatus] + ' · 조회 ' + time
+      + ' · 이 값은 원천 정책 보고이며 OS 전체의 안전을 뜻하지 않습니다.';
+  }
+  set('sdp-policy-detail', description);
 }
 
 function svg(tag, attrs = {}, label = null) {
