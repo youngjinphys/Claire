@@ -1,20 +1,10 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    ".github/workflows/production-identity.yml",
-    "README.md",
-    "api/ops.js",
-    "docs/DEPLOYMENT_DRIFT_RUNBOOK_2026-10-30.md",
-    "on-client/docs/OBSERVATORY_AUDIT_2026-10-30.md",
-    "on-client/public/dashboard-model.mjs",
-    "on-client/public/dashboard.css",
-    "on-client/public/dashboard.html",
-    "on-client/public/dashboard.mjs",
-    "on-client/src/local-pc-metrics.mjs",
-    "on-client/test/dashboard-lifecycle.test.mjs",
-    "on-client/test/observatory-regression.test.mjs",
-    "package/bundle-commit-files.json",
-    "test/operations-stage12.test.mjs"
+    "on-client/student/HOST_OBSERVATION.md",
+    "on-client/student/extension.mjs",
+    "on-client/test/student-host-view.test.mjs",
+    "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-10-30: consolidate prior audit and local observatory corrections; preserve production identity evidence and old submissions; exact parent-to-final changed paths, no packaging or deployment."
+  "releaseNote": "2026-10-31: OBS-inspired student host-report provenance and freshness; preserve original student submissions, shipped server routes, and prior audit evidence. One Claire main commit, no packaging or deployment."
 }

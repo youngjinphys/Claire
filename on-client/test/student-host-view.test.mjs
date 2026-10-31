@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { collectHostObservation } from '../student/collect-host.mjs';
-import { normalizeHostObservation, hostComparison, hostPanel } from '../student/extension.mjs';
+import { normalizeHostObservation, hostComparison, hostPanel, hostReportQuality } from '../student/extension.mjs';
 
 const T = Date.parse('2026-10-31T02:00:00Z');
 const networkInterfaces = () => ({ eth0: [{ family: 'IPv6', address: 'fe80::1%eth0', internal: false }] });
@@ -174,5 +174,50 @@ test('unreadable selected files report file access failure rather than incorrect
     assert.equal(state.error,'FILE_READ_FAILED');
     assert.equal(state.latest,null);
     assert.match(root.textContent,/파일을 읽지 못했습니다/);
+  });
+});
+
+test('OBS-inspired quality distinguishes per-source coverage, non-Windows and freshness', async () => {
+  const windows = normalizeHostObservation(await report('win32', T), T);
+  const now = hostReportQuality(windows, T + 1000);
+  assert.equal(now.freshness, 'recent');
+  assert.equal(now.coverage, 'observed');
+  assert.equal(now.observedFeeds, 3);
+  assert.equal(now.applicableFeeds, 3);
+  assert.equal(now.feeds.windowsEvents.measuredAt, windows.windowsEvents.measuredAt);
+  assert.match(now.authenticity, /unsigned/);
+  const delayed = hostReportQuality(windows, T + 16 * 60_000);
+  assert.equal(delayed.freshness, 'stale');
+  assert.equal(delayed.coverage, 'unverifiable');
+  const future = hostReportQuality(windows, T - 15_000);
+  assert.equal(future.freshness, 'clock_skew');
+  assert.equal(future.coverage, 'unverifiable');
+  const linux = normalizeHostObservation(await report('linux', T), T);
+  const quality = hostReportQuality(linux, T);
+  assert.equal(quality.feeds.windowsEvents.state, 'not_applicable');
+  assert.equal(quality.applicableFeeds, 2);
+  assert.notEqual(quality.coverage, 'observed');
+  assert.equal(hostReportQuality({ status: 'error' }).coverage, 'unavailable');
+});
+
+test('old local report never displays green present-tense PC status while retaining historical details', async () => {
+  await withDocument(async () => {
+    const producedAt = Date.now() - 16 * 60_000;
+    const latest = normalizeHostObservation(await report('win32', producedAt), Date.now());
+    assert.equal(latest.status, 'ok');
+    const state = { pending: false, latest, history: [], error: null, requestId: 0 };
+    const root = hostPanel(state, 'disconnected');
+    const cards = root.findAll(el => el.getAttribute('data-host-card') !== undefined);
+    assert.equal(cards.length, 4);
+    for (const card of cards.slice(0, 3)) {
+      assert.match(card.textContent, /확인 불가.*오래된 보고서/);
+      assert.doesNotMatch(card.textContent, /실시간 정상/);
+    }
+    assert.match(cards[3].textContent, /SDP 미연결/);
+    assert.match(root.textContent, /출처 범위.*최신성 검증 불가/);
+    assert.match(root.textContent, /원천별 관측 상태/);
+    assert.match(root.textContent, /원천 시각/);
+    assert.match(root.textContent, /파일 원본 미인증/);
+    assert.match(root.textContent, /현재 상태로 해석하지 마세요/);
   });
 });

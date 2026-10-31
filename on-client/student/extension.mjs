@@ -291,6 +291,45 @@ export function normalizeHostObservation(raw, now = Date.now()) {
     windowsEvents: hostParseEvents(raw.windowsEvents, raw.platform, produced) };
 }
 
+const HOST_REPORT_MAX_AGE_MS = 15 * 60_000;
+const HOST_FUTURE_TOLERANCE_MS = 5_000;
+const hostReportSource = row => {
+  const state = row?.status === 'ok' ? 'observed'
+    : row?.status === 'partial' ? 'partial'
+      : row?.status === 'not_applicable' ? 'not_applicable' : 'unavailable';
+  return { state,
+    measuredAt: typeof row?.measuredAt === 'string' && Number.isFinite(Date.parse(row.measuredAt)) ? row.measuredAt : null,
+    source: typeof row?.source === 'string' ? row.source : null,
+    reason: typeof row?.reason === 'string' ? row.reason : null };
+};
+
+/**
+ * All results come from a user-selected, unsigned report; quality is not
+ * proof of device security, independent acquisition or SDP authentication.
+ * Do not expand this to read private logs or promote OS warnings to XDR.
+ */
+export function hostReportQuality(report, now = Date.now()) {
+  const valid = report?.status === 'ok' && typeof report.producedAt === 'string'
+    && Number.isFinite(Date.parse(report.producedAt)) && Number.isFinite(now);
+  if (!valid) return { freshness: 'unverifiable', ageSeconds: null, coverage: 'unavailable',
+    observedFeeds: 0, applicableFeeds: 0, feeds: {}, authenticity: 'unverified-local-file' };
+  const ageMs = now - Date.parse(report.producedAt);
+  const freshness = ageMs < -HOST_FUTURE_TOLERANCE_MS ? 'clock_skew'
+    : ageMs > HOST_REPORT_MAX_AGE_MS ? 'stale' : 'recent';
+  const feeds = { network: hostReportSource(report.network),
+    firewall: hostReportSource(report.firewall), windowsEvents: hostReportSource(report.windowsEvents) };
+  const applicable = Object.values(feeds).filter(row => row.state !== 'not_applicable');
+  const observedFeeds = applicable.filter(row => row.state === 'observed').length;
+  const coverage = freshness !== 'recent' ? 'unverifiable'
+    : applicable.length === 0 ? 'unavailable'
+      : observedFeeds === applicable.length ? 'observed'
+        : observedFeeds > 0 || applicable.some(row => row.state === 'partial') ? 'partial'
+          : 'unavailable';
+  return { freshness, ageSeconds: Math.max(0, Math.round(ageMs / 1000)), coverage,
+    observedFeeds, applicableFeeds: applicable.length, feeds,
+    authenticity: 'user-selected-unsigned-local-report' };
+}
+
 export function hostComparison(history) {
   if (!Array.isArray(history) || history.length < 2) return null;
   const last = history.at(-1), previous = [...history].slice(0, -1).reverse().find(row => row.time < last.time);
@@ -376,21 +415,26 @@ export function hostPanel(state, mode) {
   const draw = () => {
     dataRoot.replaceChildren();
     const latest = state.latest, sdp = security();
+    const quality = hostReportQuality(latest, Date.now());
+    const fresh = quality.freshness === 'recent';
+    const unavailableState = quality.freshness === 'stale' ? '확인 불가 · 오래된 보고서'
+      : quality.freshness === 'clock_skew' ? '확인 불가 · 시계 불일치'
+        : '확인 불가 · 출처 확인 전';
     const grid = hostNode('div');
     grid.style.display = 'grid';
     grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(min(100%, 190px), 1fr))';
     grid.style.gap = '10px';
     const net = latest?.network, fw = latest?.firewall, logs = latest?.windowsEvents;
     grid.append(
-      card('01 · 네트워크', latest ? networkText(net) : '미조회', [
+      card('01 · 네트워크', latest ? (fresh ? networkText(net) : unavailableState) : '미조회', [
         latest ? '수집 ' + hostTime(net?.measuredAt) : '보고서 미선택',
         '출처: ' + (net?.source || '조회 전'), reasonLine(net),
       ].filter(Boolean), 'network'),
-      card('02 · 방화벽', latest ? firewallText(fw) : '미조회', [
+      card('02 · 방화벽', latest ? (fresh ? firewallText(fw) : unavailableState) : '미조회', [
         latest ? '수집 ' + hostTime(fw?.measuredAt) : '보고서 미선택',
         '출처: ' + (fw?.source || '조회 전'), reasonLine(fw),
       ].filter(Boolean), 'firewall'),
-      card('03 · Windows 기록', latest ? eventTotal(logs) : '미조회', [
+      card('03 · Windows 기록', latest ? (fresh ? eventTotal(logs) : unavailableState) : '미조회', [
         latest ? '수집 ' + hostTime(logs?.measuredAt) : '보고서 미선택',
         'System·Application, 경고(Level 3)·오류(Level 2)', reasonLine(logs),
       ].filter(Boolean), 'windows-events'),
@@ -401,8 +445,30 @@ export function hostPanel(state, mode) {
     const source = hostNode('p', '보고서 수집 시각: ' + hostTime(latest.producedAt)
       + ' · 실행 OS: ' + latest.platform + ' · 대상: 수집기 Node 실행 환경 · 사용자 선택 파일(원본 인증 불가)', 'muted');
     dataRoot.append(source);
-    if (Date.now() - Date.parse(latest.producedAt) > 15 * 60 * 1000) {
-      dataRoot.append(hostNode('p', '오래된 보고서입니다. 현재 상태로 해석하지 마세요. 수집기를 직접 재실행해 새 파일을 선택하세요.', 'state state-error'));
+    const qualityLabel = quality.coverage === 'observed' ? '조회 범위 내 관측'
+      : quality.coverage === 'partial' ? '부분 관측'
+        : quality.coverage === 'unverifiable' ? '최신성 검증 불가' : '출처 상태 확인 불가';
+    dataRoot.append(hostNode('p', '선택 보고서의 출처 범위: ' + qualityLabel
+      + ' · 성공 ' + quality.observedFeeds + '/' + quality.applicableFeeds
+      + '개 적용 대상 원천 · 파일 원본 미인증', 'muted'));
+    const detail = hostNode('details');
+    detail.append(hostNode('summary', '원천별 관측 상태·출처·시각 확인'));
+    for (const [name, feed] of Object.entries(quality.feeds)) {
+      const label = { network: '네트워크', firewall: '방화벽', windowsEvents: 'OS 이벤트' }[name];
+      const stateLabel = { observed: '조회됨', partial: '부분 조회', unavailable: '확인 불가',
+        not_applicable: '해당 OS에서 미적용' }[feed.state];
+      detail.append(hostNode('p', label + ' · ' + stateLabel
+        + ' · 출처: ' + (feed.source || '미확인')
+        + ' · 원천 시각: ' + hostTime(feed.measuredAt)
+        + (feed.reason ? ' · 사유: ' + feed.reason : ''), 'muted'));
+    }
+    dataRoot.append(detail);
+    if (!fresh) {
+      dataRoot.append(hostNode('p',
+        quality.freshness === 'clock_skew'
+          ? '보고서 시각이 현재보다 미래입니다. PC 시계를 확인하고 새 파일을 수집하세요. 현재 상태로 사용하지 않습니다.'
+          : '오래되거나 검증되지 않은 보고서입니다. 현재 상태로 해석하지 마세요. 수집기를 다시 실행해 새 파일을 선택하세요.',
+        'state state-error'));
     }
     const netSection = hostNode('section');
     netSection.append(hostNode('h4', '네트워크 구성 · 인터페이스 및 DNS'));

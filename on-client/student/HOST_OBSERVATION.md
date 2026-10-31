@@ -79,3 +79,14 @@ Windows 명령은 `-NoProfile -NonInteractive`로 실행하고 실행된 명령�
 - Windows/macOS 실기기 사용자 환경의 실제 수집 결과는 해당 사용자 PC에서 재현하고 명시적으로 기록하기 전까지 확정하지 않습니다. CI/모의 결과를 사용자 PC 실측이라고 하지 않습니다.
 
 참고: [Node OS 인터페이스](https://nodejs.org/docs/latest-v24.x/api/os.html#osnetworkinterfaces), [Get-NetFirewallProfile](https://learn.microsoft.com/en-us/powershell/module/netsecurity/get-netfirewallprofile), [Get-WinEvent](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.diagnostics/get-winevent), [firewalld](https://firewalld.org/documentation/utilities/firewall-cmd.html), [Ubuntu UFW](https://ubuntu.com/server/docs/firewalls/).
+## OBS의 출처별 품질 판단 적용 (2026-10-31)
+
+이 변경은 OBS의 최신성·수집 범위·출처 분리 원칙만 학생 화면의 기존 로컬 JSON 관측에 도입합니다. 새로운 API·관리자 권한 명령·원격 네트워크 업로드·방화벽 변경·자동 재조회는 없습니다.
+
+hostReportQuality(report, now)는 수집된 원천을 네트워크 / 방화벽 / Windows 이벤트로 나누고 observed, partial, unavailable, not_applicable를 표시합니다. 보고서가 15분보다 오래되거나 OS 시각이 5초보다 미래이면 세 관측 카드의 현재 값은 확인 불가로 표시하며, 세부 원본은 역사적 자료로 구분해 남깁니다. SDP 카드와 판단은 기존 제공 기능을 그대로 따릅니다.
+
+원천별 관측 개수, OS/원천 시간, 조회 상태, 결측 사유를 펼쳐 확인할 수 있습니다. Linux/macOS에서 Windows 이벤트는 미적용이지 0건이 아닙니다. 일부 관측 성공은 전체 OS 안전, 공격 탐지, 전체 방화벽 규칙 검증의 증거가 아닙니다. 파일은 여전히 사용자 선택 자료이고 디지털 서명으로 진위 검증되지 않았습니다.
+
+검증: on-client 폴더에서 npm run check 및 npm test; Node 24.19.0 일반 사용자 실행 후 기존 보호 현황 학생 화면에서 정상/오래된 JSON을 각각 선택해 표시를 비교합니다. 실제 사용자 PC 결과와 CI 테스트 예제를 혼동하지 않습니다.
+
+OBS 측에는 인증 후 이미 위생 처리된 호스트 집계 자료만을 별도의 로컬 JSON 증적으로 출력하도록 추가했으며, OBS의 호스트 비밀 로그나 사용자의 Claire 보고서를 다른 서비스로 이동하지 않습니다.
