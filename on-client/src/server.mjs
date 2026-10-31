@@ -32,6 +32,7 @@ const files=new Map([['/','public/index.html'],['/index.html','public/index.html
   ['/dashboard.css','public/dashboard.css'],
   ['/dashboard.mjs','public/dashboard.mjs'],
   ['/dashboard-model.mjs','public/dashboard-model.mjs'],
+  ['/favicon.ico','public/assets/alekov/alekov-app-icon.webp'],
   ...['alekov-ai-explain','alekov-app-icon','alekov-connect-approval','alekov-connection-unknown','alekov-empty-records'].map(name=>[`/assets/alekov/${name}.webp`,`public/assets/alekov/${name}.webp`])]);
 const connectionRoutes=new Map(['start','finish','status','cancel'].map(kind=>[`/api/ai/connect/${kind}`,kind]));
 const safeErrors=Object.freeze({
@@ -393,8 +394,10 @@ export function createOnServer(serverOptions={}) {
         return;
       }
       if(req.method==='GET'&&files.has(url.pathname)){
-        const data=await readFile(resolve(assetsRoot,files.get(url.pathname)));
-        const type=url.pathname.endsWith('.webp')?'image/webp':url.pathname.endsWith('.css')?'text/css':url.pathname.endsWith('.js')||url.pathname.endsWith('.mjs')?'text/javascript':'text/html';
+        const file=files.get(url.pathname);
+        const data=await readFile(resolve(assetsRoot,file));
+        // Type follows the asset. /favicon.ico is the webp app icon, so the URL suffix is not the type.
+        const type=file.endsWith('.webp')?'image/webp':file.endsWith('.css')?'text/css':file.endsWith('.js')||file.endsWith('.mjs')?'text/javascript':'text/html';
         res.writeHead(200,{'content-type':type==='image/webp'?type:`${type}; charset=utf-8`,'cache-control':'no-store','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",'x-content-type-options':'nosniff'});res.end(data);return;
       }
       if(req.method==='POST'&&connectionRoutes.has(url.pathname)){

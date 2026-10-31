@@ -75,3 +75,20 @@ test('AI permission denial is terminal while rate limits are retryable',async()=
     }
   });
 });
+test('automatic favicon request serves the app icon instead of a 404',async()=>{
+  const icon=await readFile(new URL('../public/assets/alekov/alekov-app-icon.webp',import.meta.url));
+  await serve({engine:demoEngine()},async base=>{
+    for(const path of ['/','/dashboard.html']){
+      const page=await fetch(base+path);
+      const html=await page.text();
+      assert.equal(page.status,200);
+      assert.match(html,/rel="icon" href="\/assets\/alekov\/alekov-app-icon\.webp" type="image\/webp"/);
+    }
+    const favicon=await fetch(base+'/favicon.ico');
+    const bytes=Buffer.from(await favicon.arrayBuffer());
+    assert.equal(favicon.status,200);
+    assert.equal(favicon.headers.get('content-type'),'image/webp');
+    assert.equal(favicon.headers.get('x-content-type-options'),'nosniff');
+    assert.deepEqual(bytes,icon);
+  });
+});
