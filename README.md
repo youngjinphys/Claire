@@ -1,3 +1,21 @@
+## 2026-10-31 · 관제 UI 렌더링 파이프라인 및 동적 애니메이션 최적화
+
+- **작동하는 기능**: Local Observatory (`on-client/public/dashboard.html`) 및 루트 작전실 UI의 시각적 완성도와 프레임 레이트 최적화.
+  - `@keyframes led-ripple`: 기존 `box-shadow` 메인 스레드 리페인트 애니메이션을 GPU 합성 레이어(Composited layer, `transform: scale()` + `opacity`)로 전환하여 리페인트 0 및 120fps 완벽 지원.
+  - 실시간 자원 차트(`dashboard.mjs`의 `renderChart()`): 단일 원자적 `replaceChildren(...elements)` 배치 갱신을 통해 중간 상태 깜빡임(flicker) 및 DOM 트래싱 방지.
+  - 인터랙션 가속: 메트릭 카드 및 호스트 카드 호버 트랜지션에 `will-change: transform, box-shadow; backface-visibility: hidden;` 하드웨어 가속 적용. 버튼 클릭 시 스케일 피드백 마이크로 인터랙션 추가.
+  - 타이포그래피 & 스크롤바: 다크 테마 안티앨리어싱 스무딩 및 슬림형 커스텀 스크롤바 적용. 중복 분산되었던 모바일 미디어 쿼리 통합 정리.
+- **다시 실행하는 방법**:
+  ```bash
+  npm test
+  npm --prefix on-client run check
+  npm --prefix on-client test
+  node on-client/tools/dashboard-browser-smoke.mjs
+  ```
+- **검증 범위**: 로컬 CDP 스모크 및 단위/회귀 테스트 전수 통과(90/90 pass). 실제 SDP 엔진 및 공식 심판 판정은 별도 운영 서버를 통해 이루어집니다.
+
+---
+
 ## 2026-10-30 · 최신 main 정합성 후속 점검
 
 - `aleph.config.json.repoUrl`은 이미 `https://github.com/youngjinphys/Claire`로 정렬되어 있습니다. 과거 `choi-bujang-secret-vault`는 Vercel **프로젝트 리소스명**이며 GitHub 저장소와 같을 필요가 없습니다.

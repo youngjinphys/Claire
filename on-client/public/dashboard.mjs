@@ -223,14 +223,15 @@ function svg(tag, attrs = {}, label = null) {
 
 function renderChart() {
   const plot = $('resource-chart');
-  plot.replaceChildren();
+  if (!plot) return;
   const left = 36, top = 16, right = 901, bottom = 232;
   const now = Date.now();
   history = history.filter(point => point.time >= now - HISTORY_WINDOW_MS && point.time <= now + 1000);
+  const elements = [];
   for (const percent of [0, 25, 50, 75, 100]) {
     const y = bottom - percent / 100 * (bottom - top);
-    plot.append(svg('line', { x1: left, y1: y, x2: right, y2: y, stroke: 'rgba(164,195,223,.16)', 'stroke-dasharray': percent ? '3 6' : 'none' }));
-    plot.append(svg('text', { x: 2, y: y + 4, fill: '#8195ae', 'font-size': 12 }, percent + '%'));
+    elements.push(svg('line', { x1: left, y1: y, x2: right, y2: y, stroke: 'rgba(164,195,223,.16)', 'stroke-dasharray': percent ? '3 6' : 'none' }));
+    elements.push(svg('text', { x: 2, y: y + 4, fill: '#8195ae', 'font-size': 12 }, percent + '%'));
   }
   const chartSeries = [
     { key: 'cpu', color: '#85efd7' },
@@ -246,7 +247,7 @@ function renderChart() {
       const coords = segment.map(point => [x(point.time).toFixed(2), y(point.value).toFixed(2)]);
       const points = coords.map(([cx, cy]) => cx + ',' + cy);
       if (points.length >= 2) {
-        plot.append(svg('polyline', {
+        elements.push(svg('polyline', {
           points: points.join(' '), fill: 'none', stroke: item.color,
           'stroke-dasharray': item.dash || 'none', 'stroke-width': 2.6, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
         }));
@@ -255,12 +256,13 @@ function renderChart() {
         const [cx, cy] = coords[pIdx];
         const isLatest = sIdx === segments.length - 1 && pIdx === coords.length - 1;
         if (isLatest) {
-          plot.append(svg('circle', { cx, cy, r: 6.5, fill: item.color, 'fill-opacity': 0.2 }));
+          elements.push(svg('circle', { cx, cy, r: 6.5, fill: item.color, 'fill-opacity': 0.2 }));
         }
-        plot.append(svg('circle', { cx, cy, r: isLatest ? 3.6 : 2.8, fill: item.color, stroke: '#0c1626', 'stroke-width': 1.2 }));
+        elements.push(svg('circle', { cx, cy, r: isLatest ? 3.6 : 2.8, fill: item.color, stroke: '#0c1626', 'stroke-width': 1.2 }));
       }
     }
   }
+  plot.replaceChildren(...elements);
   renderMeasurementRecords();
   const trend = trendSummary(history);
   $('chart-empty').hidden = ['cpu', 'memory'].some(key => seriesSegments(history, key).length > 0);

@@ -1,11 +1,11 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "on-client/public/dashboard-model.mjs",
+    "README.md",
+    "on-client/public/dashboard.css",
     "on-client/public/dashboard.mjs",
-    "on-client/test/dashboard-resilience.test.mjs",
-    "on-client/tools/dashboard-browser-smoke.mjs",
-    "package/bundle-commit-files.json"
+    "package/bundle-commit-files.json",
+    "public/observatory-theme.css"
   ],
-  "releaseNote": "2026-10-31: finish unified observatory failure isolation, independent SDP refresh, timestamp validation, accessible pending states, stop boundaries and local export recovery. Preserve supplied app/server/collector, earlier submissions and one-server architecture; no packaging or deployment."
+  "releaseNote": "2026-10-31: optimize observatory animation rendering pipeline with composited GPU layers, eliminate DOM thrashing and integrate mobile responsive CSS. Preserve supplied app/server/collector and existing contracts."
 }

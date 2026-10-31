@@ -11,6 +11,9 @@ body {
     radial-gradient(ellipse at 93% 30%,rgba(47,154,232,.08),transparent 36%),
     linear-gradient(145deg,#071322,#0b1e32 52%,#081424);
   background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  text-rendering:optimizeLegibility;
 }
 .topbar {
   background:rgba(7,22,41,.90); border-bottom-color:rgba(169,216,255,.17);
@@ -51,14 +54,15 @@ body {
   to { transform: rotate(383deg); }
 }
 @keyframes orbit-satellite {
-  0%, 100% { transform: scale(1); opacity: .85; }
-  50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 22px 8px rgba(95,190,255,.55); }
+  0%, 100% { transform: scale(1) translateZ(0); opacity: .85; }
+  50% { transform: scale(1.25) translateZ(0); opacity: 1; }
 }
 .hero-orbit::after {inset:29% 8%;border-style:dashed;transform:rotate(23deg);animation:orbit-spin 36s linear infinite}
 .hero-orbit span {
   position:absolute;left:41%;top:20%;width:7px;height:7px;border-radius:50%;
-  background:#b4eaff;box-shadow:0 0 17px 6px rgba(95,190,255,.33);
+  background:#b4eaff;box-shadow:0 0 17px 6px rgba(95,190,255,.45);
   animation:orbit-satellite 3s ease-in-out infinite;
+  will-change:transform,opacity;
 }
 .section-kicker {color:#a9e5ff}
 .metric,.panel {
@@ -69,12 +73,13 @@ body {
 .metric {
   position:relative;overflow:hidden;min-height:147px;
   transition:border-color .2s,transform .2s,box-shadow .2s;
+  will-change:transform,box-shadow;backface-visibility:hidden;
 }
 .metric::before {
   content:"";position:absolute;inset:0 0 auto;height:2px;
   background:linear-gradient(90deg,transparent,rgba(150,218,255,.45),transparent);
 }
-.metric:hover {border-color:rgba(155,220,255,.42);transform:translateY(-2px);box-shadow:0 24px 50px rgba(1,8,23,.2)}
+.metric:hover {border-color:rgba(155,220,255,.42);transform:translateY(-2px) translateZ(0);box-shadow:0 24px 50px rgba(1,8,23,.2)}
 .metric-label {color:#c4d8e9}
 .system-item,.record {border-color:rgba(148,201,245,.14)}
 .panel-head {padding-top:23px}
