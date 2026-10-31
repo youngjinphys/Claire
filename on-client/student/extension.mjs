@@ -188,6 +188,7 @@ const HOST_REASON_GUIDANCE = Object.freeze({
   INVALID_REPORT: '보고서의 스키마 또는 출처를 검증하지 못했습니다. 공식 수집기로 새 보고서를 생성한 뒤 다시 선택하세요.',
   REPORT_TOO_LARGE: '보고서 크기가 128 KiB 제한을 초과했습니다. 기록 본문을 포함한 파일은 사용하지 마세요.',
   FILE_READ_FAILED: '파일을 읽지 못했습니다. 현재 계정에서 접근 가능한 수집기 보고서를 다시 선택하세요.',
+  FILE_READ_TIMEOUT: '파일 읽기 시간이 초과됐습니다. 시스템 설정을 바꾸지 말고 파일 접근 상태를 확인한 뒤 다시 선택하세요.',
   NOT_SELECTED: '먼저 일반 권한으로 수집기를 실행한 다음 observation.json 파일을 선택하세요.',
 });
 const hostSafeString = (value, max = 100) => typeof value === 'string' && value.length > 0 && value.length <= max
@@ -368,16 +369,19 @@ export function hostPanel(state, mode) {
   fileInput.hidden = true;
   fileInput.tabIndex = -1;
   fileInput.setAttribute('aria-label', '로컬 관측 JSON 보고서');
-  const help = hostNode('p', '수집: 프로젝트 폴더에서 node student/collect-host.mjs 실행 → 출력된 임시 observation.json 파일을 이 버튼으로 선택', 'muted');
+  const help = hostNode('p', '새 OS 조회: 일반 권한 터미널에서 node student/collect-host.mjs 실행 → 새 observation.json 선택. 이 버튼은 기존 로컬 JSON만 읽으며 OS·방화벽 설정을 변경하지 않습니다.', 'muted');
   const progress = hostNode('p', state.pending ? '로컬 보고서를 읽고 검증하는 중입니다.'
     : state.error ? '확인 불가 — ' + (HOST_REASON_GUIDANCE[state.error] || HOST_REASON_GUIDANCE.INVALID_REPORT)
       : state.latest ? '선택한 보고서를 표시합니다. 사용자 제공 파일의 진위는 이 앱이 인증하지 않습니다.'
         : HOST_REASON_GUIDANCE.NOT_SELECTED, 'muted');
   progress.setAttribute('role', 'status');
   progress.setAttribute('aria-live', 'polite');
+  const cardsRoot = hostNode('div');
+  cardsRoot.className = 'student-host-cards';
+  cardsRoot.setAttribute('aria-label', '네트워크, 방화벽, Windows 기록, SDP 네 가지 상태');
   const dataRoot = hostNode('div');
   actionBar.append(retry, fileInput);
-  region.append(actionBar, help, progress, dataRoot);
+  region.append(cardsRoot, actionBar, progress, help, dataRoot);
 
   const card = (title, value, details, kind) => {
     const node = hostNode('article');
@@ -386,6 +390,7 @@ export function hostPanel(state, mode) {
     node.style.borderRadius = '10px';
     node.style.minWidth = '0';
     node.style.background = 'rgba(19, 37, 54, .07)';
+    node.style.borderLeft = kind === 'sdp' ? '4px solid #9783ba' : '4px solid #4b8fa9';
     node.setAttribute('data-host-card', kind);
     node.append(hostNode('h4', title));
     const strong = hostNode('strong', value);
@@ -415,6 +420,10 @@ export function hostPanel(state, mode) {
   const draw = () => {
     dataRoot.replaceChildren();
     const latest = state.latest, sdp = security();
+    const emptyValue = state.pending ? '조회 중' : state.error ? '확인 불가' : '미조회';
+    const emptyDetail = state.pending ? '로컬 JSON을 읽는 중 · OS 재측정 아님'
+      : state.error ? HOST_REASON_GUIDANCE[state.error] || HOST_REASON_GUIDANCE.INVALID_REPORT
+        : '수집기 실행 후 보고서 선택';
     const quality = hostReportQuality(latest, Date.now());
     const fresh = quality.freshness === 'recent';
     const unavailableState = quality.freshness === 'stale' ? '확인 불가 · 오래된 보고서'
@@ -423,24 +432,28 @@ export function hostPanel(state, mode) {
     const grid = hostNode('div');
     grid.style.display = 'grid';
     grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(min(100%, 190px), 1fr))';
+    grid.style.marginBottom = '12px';
     grid.style.gap = '10px';
     const net = latest?.network, fw = latest?.firewall, logs = latest?.windowsEvents;
     grid.append(
-      card('01 · 네트워크', latest ? (fresh ? networkText(net) : unavailableState) : '미조회', [
-        latest ? '수집 ' + hostTime(net?.measuredAt) : '보고서 미선택',
+      card('01 · 네트워크', latest ? (fresh ? networkText(net) : unavailableState) : emptyValue, [
+        latest ? 'OS 수집 ' + hostTime(net?.measuredAt) : emptyDetail,
         '출처: ' + (net?.source || '조회 전'), reasonLine(net),
       ].filter(Boolean), 'network'),
-      card('02 · 방화벽', latest ? (fresh ? firewallText(fw) : unavailableState) : '미조회', [
-        latest ? '수집 ' + hostTime(fw?.measuredAt) : '보고서 미선택',
+      card('02 · 방화벽', latest ? (fresh ? firewallText(fw) : unavailableState) : emptyValue, [
+        latest ? 'OS 수집 ' + hostTime(fw?.measuredAt) : emptyDetail,
         '출처: ' + (fw?.source || '조회 전'), reasonLine(fw),
       ].filter(Boolean), 'firewall'),
-      card('03 · Windows 기록', latest ? (fresh ? eventTotal(logs) : unavailableState) : '미조회', [
-        latest ? '수집 ' + hostTime(logs?.measuredAt) : '보고서 미선택',
-        'System·Application, 경고(Level 3)·오류(Level 2)', reasonLine(logs),
+      card('03 · Windows 기록', latest ? (fresh ? eventTotal(logs) : unavailableState) : emptyValue, [
+        latest ? 'OS 수집 ' + hostTime(logs?.measuredAt) : emptyDetail,
+        'System·Application, 경고(Level 3)·오류(Level 2)',
+        logs?.status === 'not_applicable' ? 'Windows 전용 · 이 OS에는 해당 없음'
+          : logs?.status === 'partial' || logs?.status === 'unavailable'
+            ? 'System/Application 중 조회 실패 · 아래 각 로그별 사유와 다음 조치 확인' : reasonLine(logs),
       ].filter(Boolean), 'windows-events'),
-      card('04 · SDP', sdp[0], [sdp[1], '로컬 PC 보고서와 독립된 연결 상태'], 'sdp'),
+      card('04 · SDP', sdp[0], [sdp[1], 'PC 조회와 독립 · 실제 연결·정책은 기존 화면에서 별도 확인'], 'sdp'),
     );
-    dataRoot.append(grid);
+    cardsRoot.replaceChildren(grid);
     if (!latest) return;
     const source = hostNode('p', '보고서 수집 시각: ' + hostTime(latest.producedAt)
       + ' · 실행 OS: ' + latest.platform + ' · 대상: 수집기 Node 실행 환경 · 사용자 선택 파일(원본 인증 불가)', 'muted');
@@ -470,16 +483,18 @@ export function hostPanel(state, mode) {
           : '오래되거나 검증되지 않은 보고서입니다. 현재 상태로 해석하지 마세요. 수집기를 다시 실행해 새 파일을 선택하세요.',
         'state state-error'));
     }
-    const netSection = hostNode('section');
-    netSection.append(hostNode('h4', '네트워크 구성 · 인터페이스 및 DNS'));
+    const netSection = hostNode('details');
+    netSection.style.marginTop = '12px';
+    netSection.append(hostNode('summary', '네트워크 상세 · 인터페이스 및 DNS (Enter/Space로 펼치기)'));
     if (net?.status === 'ok' || net?.status === 'partial') {
       for (const iface of net.interfaces) netSection.append(hostNode('p', iface.name + ': '
         + (iface.addresses.length ? iface.addresses.map(item => item.family + ' ' + item.address + (item.internal ? ' (loopback)' : '')).join(' · ') : 'IP 주소 확인 불가'), 'muted'));
       netSection.append(hostNode('p', 'DNS: ' + (net.dns.length ? net.dns.join(', ') : '확인 불가') + ' · 기본 게이트웨이: 확인 불가(이번 수집 대상 제외)', 'muted'));
     } else netSection.append(hostNode('p', reasonLine(net), 'state state-error'));
-    dataRoot.append(netSection);
-    const fwSection = hostNode('section');
-    fwSection.append(hostNode('h4', '방화벽 설정 · 읽기 전용'));
+    // Network details follow the comparison and event summary.
+    const fwSection = hostNode('details');
+    fwSection.style.marginTop = '12px';
+    fwSection.append(hostNode('summary', '방화벽 상세 · 읽기 전용 (Enter/Space로 펼치기)'));
     if (fw?.status === 'ok' || fw?.status === 'partial') {
       if (fw.profiles) for (const p of fw.profiles) fwSection.append(hostNode('p', p.name + ' · 사용 ' + (p.enabled ? '켜짐' : '꺼짐')
         + ' · 기본 인바운드 ' + p.inbound + ' · 기본 아웃바운드 ' + p.outbound, 'muted'));
@@ -488,24 +503,54 @@ export function hostPanel(state, mode) {
       if (fw.status === 'partial') fwSection.append(hostNode('p', reasonLine(fw), 'state state-error'));
       fwSection.append(hostNode('p', '표시된 관리 도구 외의 방화벽, 모든 규칙 적용, 시스템 전체의 안전은 확인한 것이 아닙니다.', 'muted'));
     } else fwSection.append(hostNode('p', reasonLine(fw), 'state state-error'));
-    dataRoot.append(fwSection);
+    // Firewall commands stay in the existing separate read-only collector.
     const logsSection = hostNode('section');
     logsSection.append(hostNode('h4', '최근 Windows System·Application 기록 · 지난 24시간'));
-    logsSection.append(hostNode('p', '집계 구간: ' + hostTime(logs?.windowStart) + ' ~ ' + hostTime(logs?.windowEnd)
-      + ' · 경고·오류 건수는 침해나 공격 탐지 결과가 아닙니다.', 'muted'));
+    logsSection.append(hostNode('p',
+      logs?.status === 'not_applicable'
+        ? 'Windows System·Application 기록: 해당 없음 · Windows 전용'
+        : '집계 구간: ' + hostTime(logs?.windowStart) + ' ~ ' + hostTime(logs?.windowEnd)
+          + ' · 경고·오류 건수는 침해나 공격 탐지 결과가 아닙니다.', 'muted'));
     if (logs?.status === 'not_applicable') logsSection.append(hostNode('p', HOST_REASON_GUIDANCE.WINDOWS_ONLY, 'muted'));
     else for (const [name, row] of [['System', logs?.system], ['Application', logs?.application]]) {
       const text = row?.status === 'ok' ? '경고 ' + row.warning + '건 · 오류 ' + row.error + '건'
         : '확인 불가 · ' + (HOST_REASON_GUIDANCE[row?.reason] || '로그를 읽지 못했습니다.');
       logsSection.append(hostNode('p', name + ' — ' + text, row?.status === 'ok' ? 'muted' : 'state state-error'));
     }
-    dataRoot.append(logsSection);
+    // The System and Application counts remain visible without disclosure.
     const historySection = hostNode('section');
     historySection.append(hostNode('h4', '조회 추이 · 선택한 로컬 보고서'));
-    const comparison = hostComparison(state.history);
-    historySection.append(hostNode('p', comparison ? '마지막 두 보고서의 24시간 집계 차이: '
-      + (comparison.delta > 0 ? '+' : '') + comparison.delta + '건. ' + comparison.note
-      : '비교 가능한 서로 다른 시각의 완전한 Windows 보고서 2개가 필요합니다.', 'muted'));
+    // Provenance is not authenticated. Explicit consent is required before
+    // treating two manually imported files as the same machine's history.
+    const selectedTime = Date.parse(latest.producedAt);
+    const newest = state.history.at(-1);
+    const mayCompare = latest.platform === 'win32' && state.history.length >= 2
+      && newest?.time === selectedTime && fresh;
+    const comparisonText = () => {
+      const comparison = mayCompare && state.compareConfirmed === true
+        ? hostComparison(state.history) : null;
+      if (comparison) return '최근 24시간 이동 집계 차이: '
+        + (comparison.delta > 0 ? '+' : '') + comparison.delta + '건. ' + comparison.note;
+      if (!mayCompare) return '비교 확인 불가 · 최신 Windows 보고서 2개가 필요합니다. 오래된/다른 OS 보고서를 자동 연결하지 않습니다.';
+      return '비교 보류 · 동일 PC·실행 환경 여부는 사용자가 확인해야 합니다. OS 기록 수치 자체는 침해 탐지가 아닙니다.';
+    };
+    if (mayCompare) {
+      const consent = hostNode('label', null, 'muted');
+      consent.style.display = 'flex';
+      consent.style.gap = '8px';
+      consent.style.alignItems = 'flex-start';
+      const check = hostNode('input');
+      check.type = 'checkbox';
+      check.checked = state.compareConfirmed === true;
+      check.setAttribute('aria-label', '이전 보고서와 현재 보고서가 동일 PC의 동일 실행 환경에서 생성되었음을 확인한 경우에만 비교');
+      consent.append(check, hostNode('span', '두 보고서가 같은 PC·실행 환경에서 수집됐음을 확인했습니다 (원본 인증은 아님).'));
+      const note = hostNode('p', comparisonText(), 'muted');
+      check.addEventListener('change', () => {
+        state.compareConfirmed = check.checked === true;
+        note.textContent = comparisonText();
+      });
+      historySection.append(consent, note);
+    } else historySection.append(hostNode('p', comparisonText(), 'muted'));
     const list = hostNode('ol');
     for (const h of state.history.slice(-HOST_HISTORY_LIMIT).reverse()) {
       list.append(hostNode('li', hostTime(new Date(h.time).toISOString()) + ' · OS ' + h.platform
@@ -513,16 +558,53 @@ export function hostPanel(state, mode) {
         + ' · 24시간 기록 ' + (h.windowsEventCount === null ? '확인 불가' : h.windowsEventCount + '건'), 'muted'));
     }
     historySection.append(list);
-    dataRoot.append(historySection);
+    // Visible record order: four cards -> provenance -> trend -> Windows log -> network/firewall details.
+    dataRoot.append(historySection, logsSection, netSection, fwSection);
   };
   const redraw = () => {
     progress.textContent = state.pending ? '로컬 보고서를 읽고 검증하는 중입니다.'
       : state.error ? '확인 불가 — ' + (HOST_REASON_GUIDANCE[state.error] || HOST_REASON_GUIDANCE.INVALID_REPORT)
-        : state.latest ? '수집기에서 만든 파일을 표시합니다. 파일 원본은 별도 인증하지 않았으며 예제 수치를 만들지 않습니다.'
+        : state.latest ? '파일 확인 ' + hostTime(state.loadedAt) + ' · OS 수집 ' + hostTime(state.latest.producedAt) + ' · 사용자 선택 파일(원본 인증 불가) · 예제 수치 없음.'
           : HOST_REASON_GUIDANCE.NOT_SELECTED;
     region.setAttribute('aria-busy', state.pending ? 'true' : 'false');
+    retry.disabled = state.pending === true;
+    retry.setAttribute('aria-disabled', state.pending ? 'true' : 'false');
     draw();
   };
+  // A provided SDP status refresh can replace the student slot while the
+  // file reader is awaiting a Promise. Only repaint the most recent panel.
+  const previouslyFocused = state.hostRetry && typeof document !== 'undefined'
+    && document.activeElement === state.hostRetry;
+  state.hostRedraw = redraw;
+  state.hostRetry = retry;
+  if (previouslyFocused && typeof queueMicrotask === 'function') {
+    queueMicrotask(() => { if (retry.isConnected) retry.focus?.({ preventScroll: true }); });
+  }
+  // UI-only freshness tracking: no system, firewall, or SDP requests.
+  if (typeof window !== 'undefined' && !state.hostLifecycleBound) {
+    state.hostLifecycleBound = true;
+    const startTicker = () => {
+      if (state.hostTicker) return;
+      state.hostTicker = window.setInterval(() => {
+        const stamp = state.latest?.producedAt;
+        const stale = Boolean(stamp && (Date.now() - Date.parse(stamp) > 15 * 60 * 1000
+          || Date.parse(stamp) - Date.now() > 10000));
+        if (stale !== state.hostWasStale) {
+          state.hostWasStale = stale;
+          state.hostRedraw?.();
+        }
+      }, 15000);
+    };
+    startTicker();
+    window.addEventListener('pagehide', () => {
+      if (state.hostTicker) window.clearInterval(state.hostTicker);
+      state.hostTicker = null;
+    });
+    window.addEventListener('pageshow', () => {
+      startTicker();
+      state.hostRedraw?.();
+    });
+  }
   retry.addEventListener('click', () => {
     if (state.pending) return;
     fileInput.value = '';
@@ -532,11 +614,22 @@ export function hostPanel(state, mode) {
     const file = fileInput.files?.[0];
     if (!file) return;
     const id = ++state.requestId;
-    state.pending = true; state.error = null; state.latest = null; redraw();
+    state.pending = true; state.error = null; state.latest = null;
+    state.loadedAt = null;
+    state.compareConfirmed = false;
+    state.hostRedraw?.();
     try {
       if (file.size > HOST_MAX_FILE_BYTES) throw Error('REPORT_TOO_LARGE');
       let text;
-      try { text = await file.text(); } catch { throw Error('FILE_READ_FAILED'); }
+      let timeout;
+      try {
+        text = await Promise.race([
+          file.text(),
+          new Promise((_, reject) => { timeout = setTimeout(() => reject(Error('FILE_READ_TIMEOUT')), 10000); }),
+        ]);
+      } catch (error) {
+        throw Error(error?.message === 'FILE_READ_TIMEOUT' ? 'FILE_READ_TIMEOUT' : 'FILE_READ_FAILED');
+      } finally { clearTimeout(timeout); }
       if (new TextEncoder().encode(text).length > HOST_MAX_FILE_BYTES) throw Error('REPORT_TOO_LARGE');
       let parsed;
       try { parsed = JSON.parse(text); } catch { throw Error('INVALID_REPORT'); }
@@ -544,6 +637,7 @@ export function hostPanel(state, mode) {
       if (report.status !== 'ok') throw Error(report.reason);
       if (id !== state.requestId) return;
       state.latest = report;
+      state.loadedAt = new Date().toISOString(); // File check time != OS measuredAt.
       const time = Date.parse(report.producedAt);
       const total = report.windowsEvents?.system?.status === 'ok' && report.windowsEvents?.application?.status === 'ok'
         ? report.windowsEvents.system.warning + report.windowsEvents.system.error
@@ -555,12 +649,14 @@ export function hostPanel(state, mode) {
     } catch (error) {
       if (id !== state.requestId) return;
       state.latest = null; // Never keep old verified-looking readings after a failed selection.
-      state.error = ['REPORT_TOO_LARGE','INVALID_REPORT','FILE_READ_FAILED'].includes(error?.message) ? error.message : 'INVALID_REPORT_FIELD';
+      state.loadedAt = null;
+      state.error = ['REPORT_TOO_LARGE','INVALID_REPORT','FILE_READ_FAILED','FILE_READ_TIMEOUT'].includes(error?.message)
+        ? error.message : 'INVALID_REPORT_FIELD';
     } finally {
-      if (id === state.requestId) { state.pending = false; redraw(); }
+      if (id === state.requestId) { state.pending = false; state.hostRedraw?.(); }
     }
   });
-  draw();
+  redraw();
   return region;
 }
 
