@@ -441,6 +441,8 @@ export function hostPanel(state, mode) {
   exportButton.disabled = !state.latest || state.pending === true;
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
+  fileInput.id = 'student-host-observation-file';
+  fileInput.name = 'hostObservationFile';
   fileInput.accept = '.json,application/json';
   fileInput.hidden = true;
   fileInput.tabIndex = -1;
@@ -951,10 +953,12 @@ export function createStudentView() {
       const list = document.createElement('ul');
       list.className = 'records';
 
-      const createFilter = (title, values, describe) => {
+      const createFilter = (title, values, describe, idSuffix, filterName) => {
         const label = document.createElement('label');
         label.textContent = title + ': ';
         const select = document.createElement('select');
+        select.id = 'student-filter-' + idSuffix;
+        select.name = filterName;
         select.setAttribute('aria-label', title);
         const all = document.createElement('option');
         all.value = 'all';
@@ -972,9 +976,9 @@ export function createStudentView() {
         return select;
       };
 
-      const kindFilter = createFilter('기록 종류', data.map((event) => event?.kind ?? 'unknown'), kindLabel);
-      const appFilter = createFilter('업무 앱', data.map((event) => event?.appId ?? ''), appLabel);
-      const accessFilter = createFilter('접속 상태', data.map((event) => event?.state?.access ?? 'unknown'), accessLabel);
+      const kindFilter = createFilter('기록 종류', data.map((event) => event?.kind ?? 'unknown'), kindLabel, 'kind', 'eventKind');
+      const appFilter = createFilter('업무 앱', data.map((event) => event?.appId ?? ''), appLabel, 'app', 'eventApp');
+      const accessFilter = createFilter('접속 상태', data.map((event) => event?.state?.access ?? 'unknown'), accessLabel, 'status', 'eventStatus');
       root.append(filters, count, list);
 
       const renderItemGroup = (parent, title, items) => {

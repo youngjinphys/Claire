@@ -62,6 +62,7 @@ h4 { font-size: 0.9rem; margin: 0 0 4px; color: var(--muted); }
 .mode-badge {
   padding: 4px 10px; border-radius: 999px; font-size: 0.85rem; font-weight: 600;
   background: var(--unknown-soft); color: var(--unknown); border: 1px solid currentColor;
+  transition: background-color .2s ease, color .2s ease, border-color .2s ease;
 }
 .mode-badge[data-mode="connected"] { background: var(--allow-soft); color: var(--allow); }
 .mode-badge[data-mode="demo"] { background: var(--challenge-soft); color: var(--challenge); }
@@ -77,6 +78,7 @@ h4 { font-size: 0.9rem; margin: 0 0 4px; color: var(--muted); }
 #nav [role="tab"] {
   text-align: left; padding: 10px 12px; border: 0; border-radius: var(--radius);
   background: transparent; color: var(--text); font: inherit; cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
 }
 #nav [role="tab"]:hover { background: var(--bg); }
 #nav [role="tab"][aria-selected="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
@@ -101,6 +103,7 @@ main:focus { outline: none; }
 .card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 16px 18px; margin-bottom: 16px;
+  transition: border-color .2s ease, box-shadow .2s ease;
 }
 .grid-2 > .card { margin-bottom: 0; }
 .card.student { border-left: 4px solid var(--student); }
@@ -128,6 +131,7 @@ main:focus { outline: none; }
 .btn {
   font: inherit; padding: 7px 14px; border-radius: var(--radius);
   border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer;
+  transition: border-color .15s ease, color .15s ease, background-color .15s ease;
 }
 .btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .btn:disabled { cursor: not-allowed; opacity: 0.55; }

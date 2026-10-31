@@ -46,10 +46,19 @@ body {
 .hero-orbit::before,.hero-orbit::after {
   content:"";position:absolute;inset:11% 27%;border:1px solid rgba(182,225,255,.23);border-radius:50%;
 }
-.hero-orbit::after {inset:29% 8%;border-style:dashed;transform:rotate(23deg)}
+@keyframes orbit-spin {
+  from { transform: rotate(23deg); }
+  to { transform: rotate(383deg); }
+}
+@keyframes orbit-satellite {
+  0%, 100% { transform: scale(1); opacity: .85; }
+  50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 22px 8px rgba(95,190,255,.55); }
+}
+.hero-orbit::after {inset:29% 8%;border-style:dashed;transform:rotate(23deg);animation:orbit-spin 36s linear infinite}
 .hero-orbit span {
   position:absolute;left:41%;top:20%;width:7px;height:7px;border-radius:50%;
   background:#b4eaff;box-shadow:0 0 17px 6px rgba(95,190,255,.33);
+  animation:orbit-satellite 3s ease-in-out infinite;
 }
 .section-kicker {color:#a9e5ff}
 .metric,.panel {
@@ -95,4 +104,5 @@ tbody tr:hover {background:rgba(102,178,242,.09)}
 }
 @media(prefers-reduced-motion:reduce) {
   .metric,.metric:hover {transition:none;transform:none}
+  .hero-orbit::after, .hero-orbit span {animation:none}
 }

@@ -204,7 +204,15 @@ function renderChart() {
   set('trend-copy', '메모리 ' + signed(trend.memoryDelta) + ' %p · 최근 10분 내 실측 CPU ' + trend.cpuSamples + '개, 메모리 ' + trend.memorySamples + '개. 비교 구간 ' + dateText(new Date(trend.from).toISOString()) + ' → ' + dateText(new Date(trend.to).toISOString()) + '. 보안 위협이나 원인 판정이 아닙니다.');
 }
 
-function renderMeasurementRecords() {
+let lastRenderedHistoryPoint = null;
+let lastRenderedHistoryLength = -1;
+
+function renderMeasurementRecords(force = false) {
+  const currentLast = history.length > 0 ? history[history.length - 1].time : null;
+  if (!force && lastRenderedHistoryLength === history.length && lastRenderedHistoryPoint === currentLast) return;
+  lastRenderedHistoryLength = history.length;
+  lastRenderedHistoryPoint = currentLast;
+
   const target = $('measurement-body');
   target.replaceChildren();
   $('export-measurements').disabled = history.length === 0;
