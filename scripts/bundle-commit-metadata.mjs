@@ -79,8 +79,10 @@ export function readCurrentCommit(root) {
 // restricted grader process itself does not execute Git to rediscover it.
 export function readSubmissionChangedFiles(root) {
   const value = JSON.parse(read(join(root, MANIFEST)));
+  // A push may update only this manifest. The list still has to name it,
+  // stay sorted, and match that commit's git diff.
   if (value?.schema !== 'aleph.defense.commit-files.v1'
-      || !Array.isArray(value.files) || value.files.length < 2 || value.files.length > 80) {
+      || !Array.isArray(value.files) || value.files.length < 1 || value.files.length > 80) {
     throw new Error('INVALID_CHANGE_MANIFEST');
   }
   const files = value.files;

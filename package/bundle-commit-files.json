@@ -1,10 +1,9 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "on-client/student/HOST_OBSERVATION.md",
-    "on-client/student/extension.mjs",
-    "on-client/test/student-host-view.test.mjs",
-    "package/bundle-commit-files.json"
+    "package/bundle-commit-files.json",
+    "scripts/bundle-commit-metadata.mjs",
+    "test/bundle-stage12-isolated.test.mjs"
   ],
-  "releaseNote": "2026-10-31: import OBS privacy-minimized host evidence export, source verification and user-triggered JSON download into Claire; preserve prior submissions and original server routes. One Claire main commit; no packaging or deployment."
+  "releaseNote": "2026-10-31: accept a commit file list that names only this manifest, and record the files changed by this commit. No packaging or deployment."
 }
