@@ -281,3 +281,92 @@ test('aggregate export fails closed on forged source labels and never copies unk
   const json = JSON.stringify(output);
   assert.doesNotMatch(json, /private-address-secret|SENSITIVE_PAYLOAD/);
 })
+
+test('local report rejects non-IP interface and DNS strings instead of displaying fake network addresses', async () => {
+  const original = await report('win32', T);
+  for (const address of ['999.999.999.999', '127.0.0.999', '1.2.3.04', '2001:db8:::1']) {
+    const changed = structuredClone(original);
+    changed.network.interfaces[0].addresses[0].address = address;
+    assert.equal(normalizeHostObservation(changed, T).network.status, 'unavailable', address);
+  }
+  for (const resolver of ['bad:ipv6', '999.999.999.999', '[::1]:70000']) {
+    const changed = structuredClone(original);
+    changed.network.dns = [resolver];
+    assert.equal(normalizeHostObservation(changed, T).network.status, 'unavailable', resolver);
+  }
+  for (const resolver of ['127.0.0.1', '127.0.0.1:5353', '::1', '[::1]:5353']) {
+    const changed = structuredClone(original);
+    changed.network.dns = [resolver];
+    assert.equal(normalizeHostObservation(changed, T).network.status, 'ok', resolver);
+  }
+  assert.equal(normalizeHostObservation(original, T).network.status, 'ok', 'existing scoped IPv6 remains supported');
+});
+
+test('Windows event envelope cannot claim success when System/Application results contradict it', async () => {
+  const original = await report('win32', T);
+  for (const status of ['partial', 'unavailable', 'not_applicable']) {
+    const changed = structuredClone(original);
+    changed.windowsEvents.status = status;
+    const result = normalizeHostObservation(changed, T);
+    assert.equal(result.windowsEvents.status, 'unavailable');
+    assert.equal(result.windowsEvents.reason, 'EVENT_RESPONSE_INVALID');
+    assert.equal(result.windowsEvents.system, undefined, 'contradictory totals must not be used');
+  }
+  const partial = structuredClone(original);
+  partial.windowsEvents.system = { status: 'partial', reason: 'EVENT_LIMIT_EXCEEDED', warning: null, error: null };
+  partial.windowsEvents.status = 'partial';
+  const valid = normalizeHostObservation(partial, T);
+  assert.equal(valid.windowsEvents.status, 'partial');
+  assert.equal(valid.windowsEvents.system.warning, null);
+  assert.equal(valid.windowsEvents.application.warning, 1);
+  // Even when the outer file incorrectly claims success, preserve a separately
+  // validated Application log and reject only the affected System fields.
+  const inconsistent = structuredClone(original);
+  inconsistent.windowsEvents.system.warning = -1;
+  const degraded = normalizeHostObservation(inconsistent, T).windowsEvents;
+  assert.equal(degraded.status, 'partial');
+  assert.equal(degraded.reason, 'EVENT_RESPONSE_INVALID');
+  assert.equal(degraded.system.status, 'unavailable');
+  assert.equal(degraded.application.warning, 1);
+});
+
+test('Linux firewall reports reject duplicated and impossible management backend states', async () => {
+  const original = await report('linux', T);
+  const partial = structuredClone(original);
+  partial.firewall = { status: 'partial', reason: 'OTHER_BACKEND_UNVERIFIED',
+    measuredAt: original.firewall.measuredAt, source: 'linux:firewalld+ufw',
+    backends: [{ backend: 'linux:firewall-cmd(--state)', state: 'running' }] };
+  assert.equal(normalizeHostObservation(partial, T).firewall.status, 'partial');
+  for (const change of [
+    { ...partial.firewall, status: 'ok', reason: null },
+    { ...partial.firewall, backends: [{ backend: 'linux:ufw(status)', state: 'running' }] },
+    { ...partial.firewall, reason: null },
+    { ...partial.firewall, status: 'ok', reason: null, backends: [
+      { backend: 'linux:ufw(status)', state: 'enabled' }, { backend: 'linux:ufw(status)', state: 'disabled' }] },
+  ]) {
+    const altered = structuredClone(original);
+    altered.firewall = change;
+    assert.equal(normalizeHostObservation(altered, T).firewall.status, 'unavailable');
+  }
+});
+
+test('selected local report stays pending and latest mounted student panel receives the completion', async () => {
+  await withDocument(async () => {
+    const state = { pending:false, latest:null, history:[], error:null, requestId:0 };
+    const original = hostPanel(state,'disconnected');
+    const file = original.find(el => el.tagName === 'INPUT' && el.type === 'file');
+    let finish;
+    file.files = [{ size: 8000, text: () => new Promise(resolve => { finish = resolve; }) }];
+    const reading = file.dispatch('change');
+    assert.equal(state.pending, true);
+    assert.equal(original.find(el => el.tagName === 'BUTTON').disabled, true);
+    const replacement = hostPanel(state,'disconnected');
+    assert.equal(replacement.getAttribute('aria-busy'), 'true');
+    finish(JSON.stringify(await report('win32', Date.now())));
+    await reading;
+    assert.equal(state.pending, false);
+    assert.equal(state.error, null);
+    assert.match(replacement.textContent, /4건 \/ 24시간/);
+    assert.equal(replacement.find(el => el.tagName === 'BUTTON').disabled, false);
+  });
+});

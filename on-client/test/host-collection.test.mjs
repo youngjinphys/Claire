@@ -57,6 +57,7 @@ test('Windows fixed PowerShell scripts contain only read-only APIs and bounded 2
   assert.equal(report.readOnly, true);
   assert.equal(report.firewall.status, 'ok');
   assert.equal(report.firewall.profiles[0].inbound, 'Block');
+  assert.match(report.firewall.note, /ActiveStore.*현재 사용 중인 프로필/);
   assert.equal(report.windowsEvents.status, 'ok');
   assert.deepEqual(report.windowsEvents.system, { status: 'ok', warning: 4, error: 2 });
   assert.equal(report.windowsEvents.application.error, 5);

@@ -103,6 +103,15 @@ async function main() {
       +" && document.querySelector('#host-report-content').textContent.includes('test0')", 'real student UI reused for file input');
     assert.match(await evaluate("document.querySelector('[data-host-card=sdp]').textContent"), /DEMO/);
     assert.match(await evaluate("document.getElementById('host-report-section').textContent"), /Windows|OS 기록/);
+    // Native details/summary should work with the keyboard, not a mouse-only handler.
+    const focused = await evaluate("(()=>{const summary=document.querySelector('#host-report-content details summary');summary.focus();return document.activeElement===summary})()");
+    assert.equal(focused, true);
+    // CDP requires the character event for native <summary> Enter activation.
+    // A raw keyDown/keyUp alone is insufficient and would false-fail keyboard QA.
+    await cmd('Input.dispatchKeyEvent', { type:'rawKeyDown', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13 });
+    await cmd('Input.dispatchKeyEvent', { type:'char', text:'\r', unmodifiedText:'\r', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13 });
+    await cmd('Input.dispatchKeyEvent', { type:'keyUp', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13 });
+    await observed("document.querySelector('#host-report-content details').open === true", 'native keyboard details disclosure');
     await evaluate("document.getElementById('start').click()");
     await observed("!document.getElementById('stop').disabled", 'start control');
     await observed("Number.parseInt(document.getElementById('sample-count').textContent,10) >= 2", 'sample history', 20000);
@@ -116,6 +125,12 @@ async function main() {
     assert.equal(desktop.rows, 1);
     assert.equal(desktop.heading, true);
     assert.ok(desktop.scrollWidth <= desktop.width + 4);
+    // The keyboard test legitimately scrolls to the focused details summary.
+    // Keep that evidence separately, then capture the actual first viewport.
+    const detailShot = await cmd('Page.captureScreenshot', { format: 'png' });
+    await writeFile(join(captures, 'desktop-details-demo.png'), Buffer.from(detailShot.data, 'base64'));
+    await evaluate("document.activeElement?.blur();window.scrollTo(0,0)");
+    await sleep(150);
     const shot = await cmd('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(captures, 'desktop-demo.png'), Buffer.from(shot.data, 'base64'));
     await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -125,8 +140,16 @@ async function main() {
     assert.equal(mobile.cards, 4); assert.equal(mobile.resources, 3);
     assert.equal(mobile.rows, 2);
     assert.ok(mobile.width <= mobile.viewport + 4, 'mobile overflow: ' + JSON.stringify(mobile));
+    await evaluate("document.activeElement?.blur();window.scrollTo(0,0)");
+    await sleep(150);
     const mobileShot = await cmd('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(captures, 'mobile-demo.png'), Buffer.from(mobileShot.data, 'base64'));
+    // A 390px preview cannot prove the 320px supported minimum has no overflow.
+    await cmd('Emulation.setDeviceMetricsOverride', { width:320, height:720, deviceScaleFactor:1, mobile:true });
+    const narrow = await evaluate("({viewport:innerWidth, width:document.documentElement.scrollWidth, cards:document.querySelectorAll('#integrated-host-root [data-host-card]').length})");
+    assert.equal(narrow.viewport, 320);
+    assert.equal(narrow.cards, 4);
+    assert.ok(narrow.width <= narrow.viewport + 4, '320px overflow: ' + JSON.stringify(narrow));
     await cmd('Emulation.clearDeviceMetricsOverride');
     await cmd('Page.navigate', { url: origin + '/' });
     await observed("!!document.querySelector('#student-status a[href=\"/dashboard.html\"]')", 'legacy UI navigation');

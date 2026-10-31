@@ -198,6 +198,33 @@ const hostIso = value => typeof value === 'string' && Number.isFinite(Date.parse
 const hostReason = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/u.test(value)
   ? value : 'INVALID_REPORT_FIELD';
 const hostUnavailable = (reason = 'INVALID_REPORT_FIELD', source = null, measuredAt = null) => ({ status: 'unavailable', reason, source, measuredAt });
+
+// The Node collector validates addresses with net.isIP. Revalidate user-chosen
+// unsigned JSON in the browser, without introducing a server API or Node import.
+// Reject structurally invalid addresses rather than treating regex matches as
+// verified interfaces or resolvers.
+const hostValidIPv4 = value => typeof value === 'string'
+  && /^(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}$/u.test(value)
+  && value.split('.').every(part => Number(part) <= 255);
+const hostValidIPv6 = value => {
+  if (!hostSafeString(value, 90)) return false;
+  const match = /^([0-9A-Fa-f:.]+)(?:%([A-Za-z0-9_.-]+))?$/u.exec(value);
+  if (!match || !match[1].includes(':')) return false;
+  try {
+    // URL's bracketed host parser follows the standard IPv6 grammar; zone
+    // labels are verified separately because URL syntax excludes them.
+    return new URL('http://[' + match[1] + ']/').hostname.startsWith('[');
+  } catch { return false; }
+};
+const hostValidResolver = value => {
+  if (!hostSafeString(value, 90)) return false;
+  if (hostValidIPv4(value) || hostValidIPv6(value)) return true;
+  const ipv4Port = /^([^:]+):([0-9]{1,5})$/u.exec(value);
+  const ipv6Port = /^\[([^\]]+)\]:([0-9]{1,5})$/u.exec(value);
+  const match = ipv4Port || ipv6Port;
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 65535) return false;
+  return ipv4Port ? hostValidIPv4(match[1]) : hostValidIPv6(match[1]);
+};
 const hostTime = value => hostIso(value) ? new Date(value).toLocaleString('ko-KR') : '시각 확인 불가';
 
 function hostParseNetwork(data, platform, produced) {
@@ -212,12 +239,13 @@ function hostParseNetwork(data, platform, produced) {
     const addresses = [];
     for (const entry of item.addresses) {
       if (!['IPv4', 'IPv6'].includes(entry?.family) || !hostSafeString(entry.address, 90)
-        || !/^[0-9a-fA-F:.]+(?:%[a-zA-Z0-9_.-]+)?$/u.test(entry.address) || typeof entry.internal !== 'boolean') return hostUnavailable();
+        || !(entry.family === 'IPv4' ? hostValidIPv4(entry.address) : hostValidIPv6(entry.address))
+        || typeof entry.internal !== 'boolean') return hostUnavailable();
       addresses.push({ family: entry.family, address: entry.address, internal: entry.internal });
     }
     interfaces.push({ name: item.name, addresses });
   }
-  if (!data.dns.every(item => hostSafeString(item, 90) && /^[0-9a-fA-F:.%\[\]]+$/u.test(item))) return hostUnavailable();
+  if (!data.dns.every(hostValidResolver)) return hostUnavailable();
   return { status: data.status, reason: data.status === 'partial' ? hostReason(data.reason) : null,
     measuredAt: data.measuredAt, source: data.source, interfaces, dns: [...data.dns],
     gateway: { status: 'unavailable', reason: 'GATEWAY_NOT_COLLECTED' } };
@@ -247,8 +275,20 @@ function hostParseFirewall(data, platform, produced) {
     ? { status: 'ok', source, measuredAt: data.measuredAt, state: data.state } : hostUnavailable();
   if (platform === 'linux') {
     if (!Array.isArray(data.backends) || data.backends.length < 1 || data.backends.length > 2) return hostUnavailable();
-    for (const item of data.backends) if (!['linux:firewall-cmd(--state)', 'linux:ufw(status)'].includes(item?.backend)
-      || !['running', 'not-running', 'enabled', 'disabled'].includes(item.state)) return hostUnavailable();
+    const allowedStates = {
+      'linux:firewall-cmd(--state)': ['running', 'not-running'],
+      'linux:ufw(status)': ['enabled', 'disabled'],
+    };
+    const seen = new Set();
+    for (const item of data.backends) {
+      if (!Object.hasOwn(allowedStates, item?.backend)
+        || !allowedStates[item.backend].includes(item.state) || seen.has(item.backend)) return hostUnavailable();
+      seen.add(item.backend);
+    }
+    // The shipped collector always probes both backends. One verified result
+    // means partial coverage, never a complete system firewall finding.
+    if (data.status === 'ok' && (seen.size !== 2 || data.reason != null)) return hostUnavailable();
+    if (data.status === 'partial' && (seen.size !== 1 || data.reason !== 'OTHER_BACKEND_UNVERIFIED')) return hostUnavailable();
     return { status: data.status, reason: data.status === 'partial' ? hostReason(data.reason) : null, source,
       measuredAt: data.measuredAt, backends: data.backends.map(x => ({ ...x })) };
   }
@@ -274,6 +314,19 @@ function hostParseEvents(data, platform, produced) {
   const system = hostParseEventLog(data.system), application = hostParseEventLog(data.application);
   const status = system.status === 'ok' && application.status === 'ok' ? 'ok'
     : system.status === 'unavailable' && application.status === 'unavailable' ? 'unavailable' : 'partial';
+  // Conflicting envelope and individual log statuses must fail closed.
+  // Otherwise an unsigned file could claim 'unavailable' yet display valid-looking totals.
+  if (data.status !== status) {
+    // A malformed sub-log cannot certify the envelope's 'ok' claim, but a
+    // second independently validated log must not be discarded. Degrade to
+    // partial and retain only the source-validated numeric entries.
+    if (data.status === 'ok' && status === 'partial') {
+      return { status: 'partial', reason: 'EVENT_RESPONSE_INVALID',
+        source: data.source, measuredAt: data.measuredAt, windowStart: data.windowStart,
+        windowEnd: data.windowEnd, system, application, detection: false };
+    }
+    return hostUnavailable('EVENT_RESPONSE_INVALID', data.source, data.measuredAt);
+  }
   return { status, source: data.source, measuredAt: data.measuredAt, windowStart: data.windowStart,
     windowEnd: data.windowEnd, system, application, detection: false };
 }

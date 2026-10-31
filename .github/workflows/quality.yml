@@ -51,6 +51,14 @@ jobs:
         run: npm --prefix on-client run check
       - name: Claire loopback HTTP integration tests
         run: npm --prefix on-client test
+      - name: Install Korean fonts only for Chromium QA
+        run: |
+          # CI runners without ko glyph coverage produce tofu screenshots, which
+          # invalidate visual QA. This changes only the ephemeral CI machine.
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-nanum
+          fc-cache -f
+          fc-list -f '%{family}\n' :lang=ko | grep -i 'Nanum'
       - name: Claire headless browser dashboard smoke test
         env:
           CLAIRE_QA_CAPTURE_DIR: ${{ runner.temp }}/claire-observatory-qa

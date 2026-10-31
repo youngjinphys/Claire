@@ -1,12 +1,14 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "on-client/public/dashboard.css",
-    "on-client/public/dashboard.html",
-    "on-client/public/dashboard.mjs",
+    ".github/workflows/quality.yml",
+    "on-client/student/HOST_OBSERVATION.md",
+    "on-client/student/collect-host.mjs",
     "on-client/student/extension.mjs",
+    "on-client/test/host-collection.test.mjs",
+    "on-client/test/student-host-view.test.mjs",
     "on-client/tools/dashboard-browser-smoke.mjs",
     "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-10-31: audit and harden the one-server Claire observatory; preserve upstream UI animations and form metadata; add legacy screen navigation, explicit failed SDP attribution, accessible headings, real 1440/390px browser QA. No additional service, packaging or deployment."
+  "releaseNote": "2026-10-31: harden unsigned host-report IP/DNS, Linux firewall and Windows event envelope validation; correct ActiveStore interpretation; regression and keyboard/320px visual checks; Korean CI glyph coverage only. Preserve original student submissions, server contracts, read-only acquisition. No branch, installer, packaging or Vercel deployment."
 }

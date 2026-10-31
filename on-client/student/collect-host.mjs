@@ -104,7 +104,7 @@ export async function readFirewall({ platform = process.platform, run = runReadO
     try {
       const output = await run(WINDOWS_PS, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_FIREWALL_QUERY]);
       const profiles = validateProfiles(JSON.parse(output));
-      return profiles ? { status: 'ok', measuredAt, source, profiles, note: '활성 Windows Defender Firewall 프로필. 다른 제품 방화벽 별도' }
+      return profiles ? { status: 'ok', measuredAt, source, profiles, note: 'ActiveStore 정책 저장소의 Domain/Private/Public 구성. 현재 사용 중인 프로필과 타 제품 방화벽의 전체 적용 상태를 증명하지 않음' }
         : failure('FIREWALL_RESPONSE_INVALID', measuredAt, source);
     } catch (error) { return failure(errorReason(error), measuredAt, source); }
   }
