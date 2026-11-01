@@ -7,6 +7,10 @@ const LEGACY = 'aleph_refresh';
 const PREFIX = 'aleph_auth_g_';
 const MAX_AGE = 7 * 24 * 60 * 60;
 const MAX_COOKIE_HEADER = 16000;
+// Normal authentication remains capped at 16 KiB. Explicit login may only
+// discover bounded cookie *names* from a larger header to clear stale slots.
+const MAX_RECOVERY_HEADER = 65536;
+const MAX_RECOVERY_NAMES = 32;
 const MAX_GENERATION_COOKIES = 12;
 const MAX_REFRESH_BYTES = 8192;
 const MAX_VERSIONED_COOKIE_TOKEN = 3400;
@@ -98,7 +102,20 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
     return { name, generation, kind, token };
   }
   function parse(header = '') {
+    // Do not stop discovering removable names at the first invalid version.
+    // This pass never decodes values or elevates an oversized header to valid.
     const cleanupNames = [];
+    if (typeof header === 'string' && header.length <= MAX_RECOVERY_HEADER && COOKIE_BYTES.test(header)) {
+      const names = new Set();
+      for (const part of header.split(';')) {
+        if (names.size >= MAX_RECOVERY_NAMES) break;
+        const text = part.trim(), sep = text.indexOf('=');
+        if (sep < 1) continue;
+        const name = text.slice(0, sep).trim();
+        if (name.startsWith(PREFIX) && /^[A-Za-z0-9_]{1,60}$/u.test(name)) names.add(name);
+      }
+      cleanupNames.push(...names);
+    }
     const invalid = () => ({ invalid: true, legacy: null, entries: [], selected: null, cleanupNames });
     if (header == null) header = '';
     if (typeof header !== 'string' || header.length > MAX_COOKIE_HEADER || !COOKIE_BYTES.test(header))
@@ -113,7 +130,6 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
       const name = item.slice(0, sep).trim(), value = item.slice(sep + 1).trim();
       if (name === LEGACY) { legacy.push(value); continue; }
       if (!name.startsWith(PREFIX)) continue;
-      if (/^[A-Za-z0-9_]{1,60}$/u.test(name)) cleanupNames.push(name);
       if (seen.has(name) || entries.length >= MAX_GENERATION_COOKIES) return invalid();
       seen.add(name);
       const parsed = decodeCookie(name, value);
@@ -130,6 +146,18 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
     if (!checkToken(token)) return invalid();
     return { invalid: false, legacy: token, entries: [], selected: null, cleanupNames };
   }
+  const clear = name => name + '=; ' + cookieAttrs(env, 0);
+  function observedNames(seen) {
+    return [...new Set([...(seen?.entries || []).map(entry => entry.name), ...(seen?.cleanupNames || [])])];
+  }
+  function clearObserved(response, seen) {
+    // If the shared allocator is unavailable, no newer tombstone can be issued.
+    // Clear every observed cookie without claiming a completed remote logout.
+    // A delayed old response can still reintroduce a slot: the client must lock.
+    const cookies = [...observedNames(seen).map(clear), clear(LEGACY)];
+    // No versioned names: keep the old single Set-Cookie shape for legacy clients.
+    response.setHeader('Set-Cookie', cookies.length === 1 ? cookies[0] : cookies);
+  }
   function cookieOf(sequence, kind, token) {
     const name = PREFIX + sequence.toString(36);
     const value = `${kind}.${mac(sequence, kind, token)}.${encodeURIComponent(token)}`;
@@ -138,8 +166,10 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
   function write(response, seen, sequence, { token = null, revoked = false } = {}) {
     if (typeof sequence !== 'bigint' || sequence <= 0n || sequence > MAX_GENERATION || (revoked ? token !== null : !checkToken(token)))
       throw Error('AUTH_GENERATION_INVALID');
-    const clear = (name) => name + '=; ' + cookieAttrs(env, 0);
-    const out = [...new Set([...(seen?.entries || []).map(item => item.name), ...(seen?.cleanupNames || [])])].map(clear);
+    const issuedName = PREFIX + sequence.toString(36);
+    // Refresh failure can invalidate its input generation, not other sessions.
+    // Never clear and reset the same cookie name in one HTTP response.
+    const out = observedNames(seen).filter(name => name !== issuedName).map(clear);
     // Keep the old cookie/JSON surface compatible with already-loaded clients.
     out.push(revoked ? clear(LEGACY) : LEGACY + '=' + encodeURIComponent(token) + '; ' + cookieAttrs(env, MAX_AGE));
     out.push(cookieOf(sequence, revoked ? 'x' : 'r', revoked ? '' : token));
@@ -150,5 +180,5 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
     if (seen.selected) return seen.selected.kind === 'r' ? seen.selected.token : null;
     return seen.legacy;
   }
-  return Object.freeze({ parse, next: ordinal, refreshToken, write });
+  return Object.freeze({ parse, next: ordinal, refreshToken, write, clearObserved });
 }

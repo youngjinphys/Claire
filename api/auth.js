@@ -139,7 +139,10 @@ export function createAuthHandler({
       if (action === 'logout') {
         try { generation.write(response, existingCookies, await generation.next(), { revoked: true }); }
         catch {
-          clearRefreshCookie(response, env);
+          // We cannot mint a trusted tombstone during allocator failure.
+          // Best-effort remove the signed slots already present in this request.
+          // Do not tell older clients that remote logout succeeded.
+          generation.clearObserved(response, existingCookies);
           return response.status(503).json({ error: 'AUTH_GENERATION_UNAVAILABLE' });
         }
       }
@@ -211,8 +214,15 @@ export function createAuthHandler({
         const {data, error} = await supabase.auth.refreshSession({refresh_token:refreshToken});
         if (error) {
           if (invalidRefresh(error)) {
-            if (generation) generation.write(response, existingCookies, issueGeneration, { revoked: true });
-            else clearRefreshCookie(response, env);
+            if (generation) {
+              // A failed refresh proves this *input* token is unusable. It must
+              // not override a concurrent successful rotation or later login
+              // with a newer generation. Logout, unlike refresh failure, still
+              // writes a newly allocated global tombstone.
+              const failedGeneration = existingCookies.selected?.kind === 'r'
+                ? existingCookies.selected.generation : issueGeneration;
+              generation.write(response, existingCookies, failedGeneration, { revoked: true });
+            } else clearRefreshCookie(response, env);
             return response.status(401).json({error:'SESSION_EXPIRED'});
           }
           return response.status(503).json({error:'AUTH_BACKEND_UNAVAILABLE'});

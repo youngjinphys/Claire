@@ -1,16 +1,14 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    ".github/workflows/quality.yml",
+    "README.md",
     "api/auth.js",
     "docs/AUTH_COOKIE_GENERATIONS.md",
+    "docs/AUTH_RECENT_COMMITS_AUDIT_2026-11-01.md",
     "package/bundle-commit-files.json",
     "scripts/auth-cookie-browser-smoke.mjs",
     "src/auth-cookie-generation.mjs",
-    "supabase/step12_auth_cookie_generation.sql",
-    "test/auth-cookie-generation-pure.test.mjs",
-    "test/auth-cookie-generation.test.mjs",
-    "test/auth-cookie-order-ui.test.mjs"
+    "test/auth-cookie-hardening.test.mjs"
   ],
-  "releaseNote": "2026-11-01: globally ordered signed HttpOnly cookie generations and logout tombstones; preserve legacy JSON/cookie surface; add service-role-only SQL generation, browser CookieJar test, and align stale browser-auth assertions to existing fail-closed behavior. No new branch, packaging or Vercel deployment."
+  "releaseNote": "2026-11-01: audit the last 15 Claire main commits; repair bounded signed-cookie cleanup, restrict invalid refresh tombstones to their input generation, best-effort clear observed signed cookies on generation DB logout outage, update compatibility documentation and real Chromium concurrency regression. Preserve existing JSON/auth routes, SQL rights, old submissions, and default branch. No branch creation, packaging or deployment."
 }

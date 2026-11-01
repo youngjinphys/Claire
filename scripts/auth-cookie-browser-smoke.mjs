@@ -8,6 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {once} from 'node:events';
 import {createAuthHandler} from '../api/auth.js';
+import {AuthSessionMissingError} from '@supabase/supabase-js';
 import {createAuthCookieGeneration} from '../src/auth-cookie-generation.mjs';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -23,7 +24,7 @@ async function main(){
  const env={SUPABASE_URL:'https://synthetic.invalid',SUPABASE_PUBLISHABLE_KEY:'synthetic-only',
    SUPABASE_SECRET_KEY:'synthetic-generation-32-bytes-no-production',
    AUTH_COOKIE_GENERATION_MODE:'enforce'};
- let sequence=0;
+ let sequence=0, raceRefresh=null;
  const gates={};const entered=[];
  const factory=()=>({auth:{
    async signInWithPassword({email}){
@@ -34,6 +35,12 @@ async function main(){
    },
    async refreshSession({refresh_token}){
      const who=refresh_token.replace(/^(?:refresh-|next-)/u,'');entered.push('session:'+who);
+     if(raceRefresh && who === 'alice'){
+       raceRefresh.calls += 1;
+       if(raceRefresh.calls === 1) await raceRefresh.first.promise;
+       else if(raceRefresh.calls === 2)
+         return {data:{session:null},error:new AuthSessionMissingError()};
+     }
      if(gates['session:'+who] && entered.filter(v=>v==='session:'+who).length===1)
        await gates['session:'+who].promise;
      return {data:{session:{access_token:'access-'+who,refresh_token:'next-'+who,
@@ -128,8 +135,26 @@ async function main(){
    assert.equal((await evalJS('window.oldSession')).status,200);
    const after=await evalJS('callAuth("session")');
    assert.equal(after.status,401);assert.deepEqual(after.body,{error:'NO_SESSION'});
+   // A failed concurrent rotation must invalidate only its input cookie.
+   // Invalidation at a newly allocated global generation would falsely revoke
+   // the successful sibling rotation. Both responses use the real CookieJar.
+   await cmd('Network.clearBrowserCookies');
+   gates['session:alice']=null;
+   raceRefresh={calls:0,first:deferred()};
+   assert.equal((await evalJS('callAuth("login","alice")')).status,200);
+   await evalJS('window.pendingGood=callAuth("session");true');
+   await until(()=>raceRefresh.calls===1,'first parallel refresh entered');
+   const rejected=await evalJS('callAuth("session")');
+   assert.equal(rejected.status,401);
+   assert.deepEqual(rejected.body,{error:'SESSION_EXPIRED'});
+   raceRefresh.first.release();
+   assert.equal((await evalJS('window.pendingGood')).status,200);
+   raceRefresh=null;
+   const survives=await evalJS('callAuth("session")');
+   assert.equal(survives.status,200);
+   assert.equal(survives.body.user.email,'alice@example.invalid');
    assert.deepEqual(errors,[]);
-   console.log('PASS Chromium real HttpOnly CookieJar: late login and refresh do not override new login or logout; legacy JSON API is unchanged.');
+   console.log('PASS Chromium HttpOnly CookieJar: delayed login/logout and concurrent refresh rejection preserve newer valid generations; legacy JSON response unchanged.');
  } finally {
    if(socket?.readyState===WebSocket.OPEN)socket.close();
    if(chrome&&chrome.exitCode===null){const stop=once(chrome,'exit').catch(()=>{});chrome.kill('SIGTERM');await Promise.race([stop,pause(2500)]);if(chrome.exitCode===null)chrome.kill('SIGKILL');}

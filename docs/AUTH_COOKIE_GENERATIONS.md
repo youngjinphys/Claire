@@ -25,12 +25,21 @@ responses using the same cookie name are explicitly a race in RFC 6265.
   named `aleph_auth_g_<base36-generation>`. It contains the refresh token and an
   HMAC-SHA256 authentication tag derived with domain separation from the
   server-only Supabase secret key. No generation is trusted from browser input.
-- Logout and confirmed refresh invalidation write an independently named,
-  *signed tombstone* at a higher generation. A late old login or refresh cookie
-  cannot overwrite a newer cookie name; subsequent authentication selects the
-  greatest **validly signed** generation and rejects a tombstone. Invalid or
-  duplicate generation cookies cause a fail-closed `NO_SESSION`; an explicit
-  new login clears safe-to-remove invalid slots to recover.
+- Explicit logout writes an independently named, *signed tombstone* at a
+  newer globally allocated generation. A late old login or refresh cookie
+  cannot overwrite it; subsequent authentication selects the greatest
+  **validly signed** generation and rejects a tombstone.
+- A **confirmed invalid signed refresh** only replaces the generation of the
+  *input cookie* with a signed tombstone, rather than claiming a fresh global
+  logout generation. Another concurrent refresh may have succeeded with a
+  newer generation; invalidating that unrelated, valid result would be a false
+  logout. A legacy-only invalid refresh still uses a newly allocated generation.
+- Invalid/duplicate generation cookies fail closed as `NO_SESSION`. Explicit
+  login can remove **bounded, syntactically safe cookie names** even if an
+  invalid entry appears before valid ones or the incoming header exceeds the
+  16 KiB authentication limit (bounded recovery scan: 64 KiB / 32 names).
+  The large header is **never authenticated**; browsers/proxies may reject
+  headers before the handler, in which case manual cookie cleanup may be needed.
 - Existing clients still send `/api/auth/{login,session,logout}` with the same
   JSON payload and receive the same status/body. The old `aleph_refresh` cookie
   is issued/cleared alongside the new cookies for migration. If any signed
@@ -55,14 +64,20 @@ responses using the same cookie name are explicitly a race in RFC 6265.
   changing `SUPABASE_SECRET_KEY`, plan for explicit reauthentication of clients.
 - A missing RPC, missing secret or database outage under `enforce`/production
   yields HTTP 503 (`AUTH_GENERATION_UNAVAILABLE`) **without** silently
-  falling back to legacy refresh behavior. Logout still clears the old cookie,
-  but its remote outcome can be unconfirmed; the browser must keep the vault
-  locked until an explicit new login.
+  falling back to legacy refresh behavior. If parsing succeeded but the
+  allocator fails during explicit logout, the server best-effort clears
+  **all observed versioned and legacy cookie names**, not just the legacy name,
+  and returns 503. No signed, higher tombstone can be created without the
+  allocator, so an older response may reintroduce a cookie; the browser must
+  remain locked until explicit reauthentication. This is not confirmed remote
+  revocation.
 - Generations and tombstones share a 7-day TTL, matching the legacy refresh
-  cookie's maximum age. The server cleans versioned cookie names observed in the
-  request; delayed responses can reintroduce an old slot, but it stays lower than
-  a newer signed generation. Browser cookie capacity and a malformed/duplicate
-  generation slot cause fail-closed behavior, not a fabricated secure session.
+  cookie's maximum age. The server cleans observed versioned names, without
+  emitting duplicate `Set-Cookie` names in a response. Delayed responses may
+  reintroduce old slots, but those remain below newer signed generations.
+  Browser cookie limits and malformed/duplicate slots cause fail-closed
+  behavior, **not** an invented secure session. Name cleanup is bounded and
+  cannot repair an HTTP request rejected upstream as oversized.
 - Keep this migration and its RPC deployed across all live auth functions before
   enabling `enforce`. A rollback to the old server code loses versioned-cookie
   verification; use a planned reauthentication transition rather than silently
@@ -79,8 +94,10 @@ responses using the same cookie name are explicitly a race in RFC 6265.
    only once this migration exists. Do not deploy ahead of step 2. In a staging
    environment use `AUTH_COOKIE_GENERATION_MODE=enforce` to validate first.
 5. Run root `npm test`, client tests, and the actual Chrome CookieJar smoke test.
-   Test synthetic delayed login, logout, rotation, invalid signatures, concurrent
-   worker allocations, and pre-existing client API shapes.
+   Test synthetic delayed login, logout, simultaneous success/failure refresh,
+   recovery from bounded stale cookie accumulation, invalid signatures,
+   allocator outage cleanup, concurrent worker allocations, and existing client
+   JSON/status shapes.
 6. Track 503 `AUTH_GENERATION_UNAVAILABLE`, cookie header size, and unexpected
    `NO_SESSION` rates **without logging any cookie or secret value**. During
    rollback explicitly plan client logout/relogin instead of assuming an old
