@@ -176,7 +176,9 @@ git rev-parse HEAD^         # 반드시 287bedb8e69a2c5bc3b44ea5586ac382987cf8b0
 
 브라우저는 비밀번호를 로그인 서버 함수에만 보내고, 서버 함수가 Supabase 공식 `signInWithPassword()` 흐름을 사용합니다. refresh token은 `HttpOnly; SameSite=Strict` 쿠키로 두어 JavaScript가 읽지 못하게 했고, 화면에는 서버가 반환한 access token만 메모리에 유지합니다.
 
-페이지를 새로 열면 `/api/auth/session`이 HttpOnly refresh cookie로 세션을 갱신합니다. 메모 요청은 기존처럼 Bearer access token을 `/api/notes`에 보내며, 기존 `src/verify-login.mjs`와 owner 검사는 변경하지 않았습니다.
+페이지를 새로 열면 인증 상태를 안전하게 확인할 수 있는 경우 `/api/auth/session`이 HttpOnly refresh cookie로 세션을 갱신합니다. 브라우저 저장소를 사용할 수 없는 새 페이지에서는 이전 로그아웃 요청을 확인할 수 없으므로 자동 복원하지 않으며 명시적으로 다시 로그인해야 합니다. 같은 페이지에서 명시 로그인한 뒤의 세션 재확인은 계속 시도합니다. 메모 요청은 기존처럼 Bearer access token을 `/api/notes`에 보내며, 기존 `src/verify-login.mjs`와 owner 검사는 변경하지 않았습니다.
+
+**인증 순서의 미해결 한계:** 로그인·갱신·로그아웃 응답이 동일한 refresh 쿠키를 바꾸므로, 탭 간 잠금과 저장소를 사용할 수 없는 경우 이전 응답이 새 로그인 이후 도착하여 쿠키를 이전 세션으로 바꾸거나 삭제할 수 있습니다. Chrome·Firefox 루프백 가상 시험에서 재현했으며 현재 서버의 원자적 인증 세대 관리나 기존 클라이언트 전환으로 해결된 상태는 아닙니다. 저장소의 쓰기 권한이 사용 도중 사라져 로그아웃 의도를 기록하지 못하는 경우에도 다음 페이지의 안전한 자동 복원을 보장할 수 없습니다. 운영 인증·기기 검증 결과로 해석하지 마세요.
 
 ## 메모 API
 

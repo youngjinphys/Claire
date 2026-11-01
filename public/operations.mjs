@@ -79,6 +79,7 @@ function chart(snapshot, onFilter) {
 }
 export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
   let snapshot=null;
+  let requestNumber=0;
   const stage=byId('filter-stage'),kind=byId('filter-kind'),outcome=byId('filter-state');
   const table=byId('evidence-body');
   const count=byId('table-count');
@@ -145,6 +146,7 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
     rows();
   }
   async function refresh(){
+    const current=++requestNumber;
     const button=byId('ops-refresh');
     button.disabled=true;button.classList.add('loading');
     byId('ops-state').textContent='HTTP 관측 중 · 완료 전 수치 변경 없음';
@@ -162,12 +164,14 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
       if(body.schema!=='aleph.operations.snapshot.v1'||!Array.isArray(body.records)
          ||!body.summary||!body.verdict||body.verdict.attackTypesRequired!==41
          ||body.verdict.stagesRequired!==12)throw Error('INVALID_EVIDENCE_CONTRACT');
+      if(current!==requestNumber)return;
       render(body);
     }catch(error){
+      if(current!==requestNumber)return;
       byId('ops-state').textContent='증거 조회 실패 ('+String(error.message).slice(0,80)+') — 이전 관측을 새 결과로 취급하지 않음';
       byId('ops-state').classList.add('status-failed');
       if(!snapshot){byId('metric-observed').textContent='—';byId('metric-verified').textContent='—';}
-    }finally{button.disabled=false;button.classList.remove('loading');}
+    }finally{if(current===requestNumber){button.disabled=false;button.classList.remove('loading');}}
   }
   for(const item of [stage,kind,outcome])item.addEventListener('change',rows);
   byId('ops-refresh').addEventListener('click',refresh);

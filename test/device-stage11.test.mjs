@@ -172,7 +172,19 @@ test('the UI keeps the old workspace locked and never stores proofs in browser s
   const sw=readFileSync(new URL('../public/sw.js',import.meta.url),'utf8');
   assert.match(html,/id="workspace"[^>]*hidden/u);
   assert.match(html,/workspace\.hidden = !\(loggedIn && Boolean\(deviceProof\)\)/u);
-  assert.doesNotMatch(html+browser,/localStorage|sessionStorage|indexedDB/u);
+  // The device module must never persist a proof or credential. The page may
+  // persist only nonsecret coordination state; the browser-flow test checks
+  // every written key and value across auth, device and draft transitions.
+  assert.doesNotMatch(browser,/localStorage|sessionStorage|indexedDB/u);
+  assert.doesNotMatch(html,/sessionStorage|indexedDB/u);
+  assert.doesNotMatch(html+browser,/document\.cookie/u);
+  assert.equal((html.match(/\.setItem\(/gu)||[]).length,6);
+  assert.match(html,/authStorage\.setItem\(intent\.key,intent\.value\)/u);
+  assert.match(html,/authStorage\.setItem\(authVersionKey, pending\)/u);
+  assert.match(html,/authStorage\.setItem\(authVersionKey, next\)/u);
+  assert.match(html,/fallbackStorage\.setItem\(fallbackIntentKey, intent\)/u);
+  assert.match(html,/fallbackStorage\.setItem\(fallbackAckKey, fallbackSnapshot\.signature\)/u);
+  assert.match(html,/fallbackStorage\.setItem\(key, value\)/u);
   assert.doesNotMatch(gate,/pwa-state|appinstalled|beforeinstallprompt/u);
   assert.doesNotMatch(sw,/cache\.put\(event\.request/u);
 });

@@ -3,7 +3,6 @@ import {
   HISTORY_WINDOW_MS, MAX_MEASUREMENT_AGE_MS, seriesSegments, pairedSamples,
   requestDashboardJson, exportMeasurements,
 } from '/dashboard-model.mjs';
-import { hostPanel } from '/student/extension.mjs';
 
 const $ = id => document.getElementById(id);
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -73,6 +72,13 @@ let securityPending = { identity: false, events: false };
 const hostState = { pending: false, latest: null, history: [], error: null, requestId: 0 };
 let displayedHostMode = null;
 let hostRenderFailed = false;
+let hostFailureView = null;
+let hostPanel = null;
+const MAX_HOST_MODULE_ATTEMPTS = 8;
+let hostModuleAttempt = 0, hostModuleGeneration = 0, hostModuleLoading = false, hostModuleTimer = null;
+// Keep an inert copy of the initial loading layout for a compact, stable
+// error state. It contains no report data or interactive controls.
+const hostLoadingTemplate = $('integrated-host-root')?.querySelector?.('.host-loading')?.cloneNode?.(true) || null;
 
 // Reusing a renderer must not discard keyboard focus or disclosure state when
 // the independent SDP mode changes. No file content is persisted outside this tab.
@@ -88,22 +94,29 @@ function hostViewState() {
     key,
   };
 }
-function restoreHostView(saved) {
+function restoreHostView(saved, restoreFocus = true) {
+  let restoredFocus = false;
   for (const root of [$('integrated-host-root'), $('host-report-content')]) {
     for (const detail of root.querySelectorAll?.('details') || []) {
       if (saved.open.has(detail.querySelector('summary')?.textContent)) detail.open = true;
     }
-    if (saved.focus) {
+    if (restoreFocus && saved.focus) {
       const target = [...(root.querySelectorAll?.('button, a[href], input, summary') || [])]
         .find(el => saved.key(el) === saved.focus && !el.disabled);
-      target?.focus?.({ preventScroll: true });
+      if (target?.focus) { target.focus({ preventScroll: true }); restoredFocus = true; }
     }
   }
+  return restoredFocus;
 }
 function renderHostObservation(mode, retry = false) {
+  if (!hostPanel) return;
   const normalizedMode = ['connected', 'demo', 'disconnected'].includes(mode) ? mode : 'unknown';
   if (!retry && (hostRenderFailed || displayedHostMode === normalizedMode)) return;
-  const saved = hostViewState();
+  const root = $('integrated-host-root');
+  const retryControl = root.querySelector?.('.host-loading-actions')?.querySelector?.('button') || root.querySelector?.('button');
+  const retryHadFocus = retry && retryControl === document.activeElement;
+  const restoringFailure = Boolean(hostFailureView);
+  const saved = hostFailureView || hostViewState();
   try {
     const panel = hostPanel(hostState, normalizedMode);
     const details = panel?.querySelector?.('[data-host-report-details]');
@@ -115,32 +128,93 @@ function renderHostObservation(mode, retry = false) {
       hostState.hostRedraw = () => {
         const previous = hostViewState();
         try { redraw(); restoreHostView(previous); }
-        catch { showHostRenderFailure(); }
+        catch { showHostRenderFailure(previous); }
       };
     }
     displayedHostMode = normalizedMode;
     hostRenderFailed = false;
-    restoreHostView(saved);
+    hostFailureView = null;
+    const restoredFocus = restoreHostView(saved, !restoringFailure || retryHadFocus);
+    if (retryHadFocus && !restoredFocus)
+      $('integrated-host-root').querySelector?.('button:not(:disabled), a[href]')?.focus?.({ preventScroll: true });
   } catch {
-    showHostRenderFailure();
+    showHostRenderFailure(saved);
   }
 }
-function showHostRenderFailure() {
+function showHostRenderFailure(saved = hostViewState(), moduleExhausted = false) {
   hostRenderFailed = true;
   hostState.hostRedraw = null;
+  hostFailureView ||= saved;
+  const root = $('integrated-host-root');
+  const report = $('host-report-content');
+  const hadHostFocus = root.contains?.(document.activeElement) || report.contains?.(document.activeElement);
   const notice = document.createElement('p');
   notice.setAttribute('role', 'status');
-  notice.textContent = '학생 관측 표시 확인 불가 · PC 자원 측정과 SDP 조회는 별도로 사용할 수 있습니다. 표시만 다시 열거나 기존 화면을 확인하세요.';
+  notice.textContent = moduleExhausted
+    ? '학생 관측 표시를 계속 불러오지 못했습니다. 페이지를 새로고침하거나 기존 화면을 확인하세요. PC 자원 측정과 SDP 조회는 별도로 사용할 수 있습니다.'
+    : '학생 관측 표시 확인 불가 · PC 자원 측정과 SDP 조회는 별도로 사용할 수 있습니다. 표시만 다시 열거나 기존 화면을 확인하세요.';
   const retry = document.createElement('button');
   retry.type = 'button'; retry.className = 'button ghost';
   retry.textContent = '학생 관측 표시 다시 열기';
-  retry.addEventListener('click', () => renderHostObservation(latestSecurity?.mode, true));
+  retry.disabled = moduleExhausted;
+  retry.addEventListener('click', () => {
+    if (hostPanel) renderHostObservation(latestSecurity?.mode, true);
+    else loadHostModule();
+  });
   const original = document.createElement('a');
   original.href = '/'; original.textContent = '기존 ALEPH 화면 열기';
-  $('integrated-host-root').replaceChildren(notice, retry, original);
+  const fallback = hostLoadingTemplate?.cloneNode(true);
+  const actions = fallback?.querySelector('.host-loading-actions');
+  const status = fallback?.querySelector('[role="status"]');
+  if (actions && status) {
+    for (const value of fallback.querySelectorAll('[data-host-card] strong')) value.textContent = '확인 불가';
+    const hint = fallback.querySelector('p[aria-hidden="true"]');
+    if (hint) hint.textContent = '표시를 다시 열어도 문제가 지속되면 기존 ALEPH 화면에서 상태를 확인하세요. 이 오류는 로컬 PC 측정이나 SDP 연결을 변경하지 않습니다.';
+    actions.removeAttribute('aria-hidden');
+    actions.replaceChildren(retry, original);
+    status.replaceWith(notice);
+    root.replaceChildren(fallback);
+  } else root.replaceChildren(notice, retry, original);
   const detail = document.createElement('p');
   detail.textContent = '보고서 표시 확인 불가 · 예시 값으로 대체하지 않습니다.';
-  $('host-report-content').replaceChildren(detail);
+  report.replaceChildren(detail);
+  if (hadHostFocus) {
+    if (moduleExhausted) { notice.tabIndex = -1; notice.focus?.({ preventScroll: true }); }
+    else retry.focus?.({ preventScroll: true });
+  }
+}
+
+// Loading the optional student view must not prevent independent PC/SDP controls
+// from initializing. Explicit retries use bounded same-origin paths for the
+// same file; distinct HTTP paths avoid joining an earlier stalled fetch.
+function loadHostModule() {
+  if (hostPanel || hostModuleLoading) return;
+  if (hostModuleAttempt >= MAX_HOST_MODULE_ATTEMPTS) { showHostRenderFailure(undefined, true); return; }
+  const attempt = ++hostModuleAttempt;
+  const generation = ++hostModuleGeneration;
+  const hostModuleUrl = attempt === 1 ? '/student/extension.mjs' : `/student/extension-retry-${attempt}.mjs`;
+  hostModuleLoading = true;
+  const root = $('integrated-host-root');
+  const retry = root.querySelector?.('.host-loading-actions')?.querySelector?.('button') || root.querySelector?.('button');
+  const status = root.querySelector?.('[role="status"]');
+  if (retry) {
+    retry.setAttribute('aria-disabled', 'true');
+    retry.textContent = '학생 관측 표시를 다시 불러오는 중…';
+  }
+  if (hostRenderFailed && status) status.textContent = '학생 관측 표시를 다시 불러오는 중입니다.';
+  const fail = () => {
+    if (generation !== hostModuleGeneration || !hostModuleLoading) return;
+    clearTimeout(hostModuleTimer); hostModuleTimer = null; hostModuleLoading = false;
+    showHostRenderFailure(undefined, attempt >= MAX_HOST_MODULE_ATTEMPTS);
+  };
+  hostModuleTimer = setTimeout(fail, 12000);
+  import(hostModuleUrl).then(module => {
+    if (generation !== hostModuleGeneration || !hostModuleLoading) return;
+    if (typeof module?.hostPanel !== 'function') { fail(); return; }
+    clearTimeout(hostModuleTimer); hostModuleTimer = null; hostModuleLoading = false;
+    hostPanel = module.hostPanel;
+    renderHostObservation(latestSecurity?.mode, true);
+  }, fail);
 }
 
 function headerClock() { set('header-clock', new Date().toLocaleString('ko-KR', { hour12: false })); }
@@ -555,6 +629,12 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 window.addEventListener('pagehide', () => {
+  if (hostModuleLoading) {
+    hostModuleGeneration += 1;
+    hostModuleLoading = false;
+    clearTimeout(hostModuleTimer); hostModuleTimer = null;
+    showHostRenderFailure(undefined, hostModuleAttempt >= MAX_HOST_MODULE_ATTEMPTS);
+  }
   stopObserving('페이지를 떠나 관측을 중지했습니다. 복원 후에는 직접 다시 시작하세요.');
   eventGeneration += 1;
   activeRequest?.abort();
@@ -580,6 +660,7 @@ window.addEventListener('pageshow', event => {
 
 updateControls();
 for (const key of ['cpu', 'memory', 'disk']) showMetric(key, null);
+loadHostModule();
 showSecurity();
 renderChart();
 void refreshSecurity();

@@ -26,6 +26,32 @@ test('no configured SDP engine never claims a healthy identity',async()=>{
     assert.match(r.headers.get('cache-control'),/no-store/);
   });
 });
+test('student module retries use bounded same-file GET paths without relaxing URL restrictions',async()=>{
+  await serve({},async base=>{
+    const canonical=await fetch(base+'/student/extension.mjs');
+    assert.equal(canonical.status,200);
+    const expected=await canonical.text();
+    for(let attempt=2;attempt<=8;attempt++){
+      const response=await fetch(base+`/student/extension-retry-${attempt}.mjs`);
+      assert.equal(response.status,200);
+      assert.equal(await response.text(),expected);
+      assert.match(response.headers.get('content-type'),/^text\/javascript/u);
+      assert.match(response.headers.get('cache-control'),/no-store/u);
+      assert.equal(response.headers.get('x-content-type-options'),'nosniff');
+    }
+    for(const path of ['/student/extension-retry-0.mjs','/student/extension-retry-1.mjs',
+      '/student/extension-retry-9.mjs','/student/extension-retry-02.mjs',
+      '/student/extension-retry-999999999999999999999.mjs','/student/extension-retry-2.mjs%2f..%2fserver.mjs']){
+      const response=await fetch(base+path);
+      assert.equal(response.status,404,path);
+      await response.arrayBuffer();
+    }
+    const query=await fetch(base+'/student/extension-retry-2.mjs?attempt=3');
+    assert.equal(query.status,400);assert.equal((await query.json()).error.code,'QUERY_REJECTED');
+    const post=await fetch(base+'/student/extension-retry-2.mjs',{method:'POST',headers:{Origin:base}});
+    assert.equal(post.status,404);await post.arrayBuffer();
+  });
+});
 test('diagnostics use the installed package version; demo is labelled',async()=>{
   const {version}=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
   await serve({engine:demoEngine()},async base=>{

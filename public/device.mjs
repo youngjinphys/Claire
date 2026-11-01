@@ -3,7 +3,7 @@ export function initDeviceAccess({getAccessToken,onAuthorized,onLocked}){
   const node=id=>document.getElementById(id);
   const display=(label,text)=>{node('device-state').textContent=label;node('device-detail').textContent=text;};
   const register=node('device-enroll'),unlock=node('device-unlock'),refresh=node('device-refresh');
-  let busy=false,epoch=0,installedPrompt=null;
+  let busy=false,epoch=0,statusGeneration=0,installedPrompt=null,activePrompt=null;
 
   function controls(approved=false,verified=false){
     const loggedIn=Boolean(getAccessToken());
@@ -13,7 +13,20 @@ export function initDeviceAccess({getAccessToken,onAuthorized,onLocked}){
     refresh.hidden=!loggedIn;
     for(const control of [register,unlock,refresh])control.disabled=busy;
   }
-  function lock(){epoch++;onLocked();controls();}
+  function lock(){
+    epoch++;statusGeneration++;busy=false;
+    if(activePrompt){
+      activePrompt=null;
+      try{window.SimpleWebAuthnBrowser?.WebAuthnAbortService?.cancelCeremony?.();}catch{}
+    }
+    onLocked();controls();
+  }
+
+  async function authenticatorPrompt(start){
+    const prompt={};activePrompt=prompt;
+    try{return await start();}
+    finally{if(activePrompt===prompt)activePrompt=null;}
+  }
 
   async function deviceRequest(action,body,proof){
     const token=getAccessToken();
@@ -31,15 +44,21 @@ export function initDeviceAccess({getAccessToken,onAuthorized,onLocked}){
     return data;
   }
   async function status(){
-    const saved=epoch;
-    if(!getAccessToken()){
+    const saved=epoch,generation=++statusGeneration,token=getAccessToken();
+    if(busy)return;
+    if(!token){
       controls();display('로그인 전','먼저 로그인하면 서버에서 기기 상태를 조회합니다.');return;
+    }
+    function current(){
+      if(saved!==epoch||generation!==statusGeneration||busy)return false;
+      if(token!==getAccessToken()){void status();return false;}
+      return true;
     }
     controls();
     display('기기 확인 중','등록·승인 여부를 서버에서 다시 확인합니다.');
     try{
       const response=await deviceRequest('status');
-      if(saved!==epoch)return;
+      if(!current())return;
       const approved=response?.registration==='approved';
       const verified=response?.verified===true&&response?.canOpenVault===true;
       if(verified)display('기기 확인 완료','서버가 유효한 기기 증명을 확인했습니다.');
@@ -50,7 +69,7 @@ export function initDeviceAccess({getAccessToken,onAuthorized,onLocked}){
       else display('기기 미승인','이 기기에서 WebAuthn 등록을 요청해야 합니다. 설치 여부는 무관합니다.');
       controls(approved,verified);
     }catch(error){
-      if(saved!==epoch)return;
+      if(!current())return;
       onLocked();controls(false,false);
       display('서버 확인 실패','기기 상태 확인이 불가능하여 자료실을 잠갔습니다.');
     }
@@ -62,22 +81,28 @@ export function initDeviceAccess({getAccessToken,onAuthorized,onLocked}){
       return;
     }
     busy=true;
-    const oldEpoch=epoch;
+    statusGeneration++;
+    const oldEpoch=epoch,token=getAccessToken();
+    const current=()=>epoch===oldEpoch&&token===getAccessToken();
     let opened=false;
     controls(true,false);
     display('기기 검증 중','브라우저의 PIN 또는 생체인증 안내를 완료하세요. 버튼만으로 승인되지 않습니다.');
     try{
       if(kind==='register'){
         const opts=await deviceRequest('registration-options',{});
-        const credential=await window.SimpleWebAuthnBrowser.startRegistration({optionsJSON:opts});
-        if(epoch!==oldEpoch)return;
+        if(!current())return;
+        const credential=await authenticatorPrompt(()=>window.SimpleWebAuthnBrowser.startRegistration({optionsJSON:opts}));
+        if(!current())return;
         const registration=await deviceRequest('registration-verify',{credential});
+        if(!current())return;
         if(registration.registration!=='approved')throw Error('DEVICE_NOT_APPROVED');
       }
       const options=await deviceRequest('assertion-options',{});
-      const signed=await window.SimpleWebAuthnBrowser.startAuthentication({optionsJSON:options});
-      if(epoch!==oldEpoch)return;
+      if(!current())return;
+      const signed=await authenticatorPrompt(()=>window.SimpleWebAuthnBrowser.startAuthentication({optionsJSON:options}));
+      if(!current())return;
       const result=await deviceRequest('assertion-verify',{credential:signed});
+      if(!current())return;
       if(result?.schema!=='aleph.device.proof.v1'||result.approved!==true||
          typeof result.proof!=='string'||!result.proof||
          !Number.isFinite(result.expiresInSeconds)||result.expiresInSeconds<=0)
@@ -87,12 +112,17 @@ export function initDeviceAccess({getAccessToken,onAuthorized,onLocked}){
       display('인증기 확인 완료','서버가 기기 서명을 검증했으며 기존 자료실이 열렸습니다.');
       controls(true,true);
     }catch(error){
+      if(!current())return;
       onLocked();
       display('자료실 잠김',error?.name==='NotAllowedError'
         ?'인증이 취소되었습니다. 승인된 기기에서 다시 시도할 수 있습니다.'
         :'기기 승인 또는 서명 확인에 실패했습니다. 보호 자료는 표시하지 않습니다.');
     }finally{
+      if(epoch!==oldEpoch)return;
       busy=false;
+      if(token!==getAccessToken()){
+        controls();void status();return;
+      }
       if(getAccessToken()){
         for(const b of [register,unlock,refresh])b.disabled=false;
         if(!opened)void status(); // rediscover approved status from server, never from badge

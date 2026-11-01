@@ -259,6 +259,13 @@ footer { padding: 14px 0 7px; border-top: 1px solid var(--line); color: #667c96;
   grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
   gap: 14px !important; margin-bottom: 16px !important;
 }
+#integrated-host-root .host-loading-grid { display: grid; }
+#integrated-host-root .host-loading strong { display: block; }
+#integrated-host-root .host-loading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#integrated-host-root .host-loading-actions span {
+  width: 150px; height: 40px; margin-bottom: 6px; border-radius: 8px;
+  background: rgba(162, 191, 223, .09);
+}
 #integrated-host-root [data-host-card] {
   background: linear-gradient(145deg, #182840 0%, #101c2e 88%) !important;
   border: 1px solid var(--line) !important;
@@ -362,6 +369,8 @@ footer { padding: 14px 0 7px; border-top: 1px solid var(--line); color: #667c96;
 }
 @media (max-width: 560px) {
   .integrated-host { padding: 15px; }
+  #integrated-host-root .host-loading p[role="status"] { min-height: 3.4em; }
+  .sdp-policy-detail { min-height: calc(14px + 3.4em); }
   #integrated-host-root .student-host-cards > div { gap: 8px !important; }
   #integrated-host-root [data-host-card] { padding: 13px 11px !important; min-height: 145px; }
   #integrated-host-root [data-host-card] strong { font-size: 18px; }

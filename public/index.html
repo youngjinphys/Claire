@@ -11,6 +11,12 @@
   <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
   <link rel="stylesheet" href="/operations.css">
   <link rel="stylesheet" href="/observatory-theme.css">
+  <style>#notes input,#notes textarea,#notes button { scroll-margin:8px } button.secondary[aria-disabled="true"],button.secondary[aria-disabled="true"]:hover,button.danger[aria-disabled="true"],button.danger[aria-disabled="true"]:hover { opacity:1; color:var(--quiet); border-color:var(--line); background:transparent; cursor:not-allowed }</style>
+  <style>#create-submit[aria-disabled="true"] { filter:saturate(.45); cursor:not-allowed }</style>
+  <style>
+    #vault-title { scroll-margin:8px }
+    #vault-title:focus { outline:2px solid var(--mint); outline-offset:3px }
+  </style>
 </head>
 <body>
   <a class="skip" href="#main">본문으로 이동</a>
@@ -149,7 +155,7 @@
         </section>
       </div>
       <section class="vault-section" id="vault" aria-labelledby="vault-title">
-        <div class="vault-top"><div><h2 class="section-title" id="vault-title">기존 학생 자료실</h2><p class="micro">보존된 인증 메모 CRUD · 작전실 기록과 논리적으로 분리</p></div><span class="badge">AUTHENTICATED</span></div>
+        <div class="vault-top"><div><h2 class="section-title" id="vault-title" tabindex="-1">기존 학생 자료실</h2><p class="micro">보존된 인증 메모 CRUD · 작전실 기록과 논리적으로 분리</p></div><span class="badge">AUTHENTICATED</span></div>
         <section class="panel install-panel" aria-label="웹앱 설치 정보">
           <span id="pwa-state">설치 여부는 기기 승인과 무관합니다.</span>
           <button class="secondary" id="pwa-install" type="button" hidden>웹앱 설치</button>
@@ -168,6 +174,9 @@
           </div>
           <p class="device-note">WebAuthn 인증기에서 기기 확인을 완료해야 합니다. 앱 설치 버튼만으로는 승인이 되지 않습니다.</p>
         </section>
+        <p id="existing-edit-held" class="device-note" role="status" hidden></p>
+        <p id="auth-coordination-state" class="device-note" role="status" aria-live="polite" hidden></p>
+        <p id="session-revalidation-state" class="device-note" role="status" aria-live="polite" hidden></p>
         <div class="vault-grid">
           <section id="signed-out" class="panel">
             <h3>학생 로그인</h3>
@@ -191,12 +200,23 @@
         </div>
         <section id="workspace" class="panel" hidden style="padding:22px;margin-top:15px">
           <h3 style="margin:0 0 15px;font-size:14px">내 메모 편집</h3>
+          <div id="draft-warning" class="status" role="status" hidden></div>
           <form id="create-form" class="composer">
             <label for="new-title">제목<input id="new-title" maxlength="120" required></label>
             <label for="new-body">본문<textarea id="new-body" maxlength="2000" required></textarea></label>
-            <button class="primary" type="submit">메모 추가</button>
+            <button id="create-submit" class="primary" type="submit">메모 추가</button>
           </form>
+          <section id="create-retry-panel" hidden aria-label="확인되지 않은 추가 요청">
+            <h4>확인되지 않은 추가 요청</h4>
+            <p>이 탭에만 보관됩니다. 목록 확인만으로 이전 요청의 처리가 끝났다고 단정할 수 없습니다.</p>
+            <div id="create-retry-list"></div>
+          </section>
           <div id="workspace-status" class="status" aria-live="polite"></div>
+          <div id="notes-lookup-status" class="status error" role="status" hidden></div>
+          <div id="delete-operation-status" class="status error" role="status" style="white-space:pre-wrap" hidden></div>
+          <div id="save-operation-status" class="status" role="status" style="white-space:pre-wrap" hidden></div>
+          <div id="save-uncertainty-state" class="status error" role="status" hidden></div>
+          <div id="delete-uncertainty-state" class="status error" role="status" hidden></div>
           <div id="notes"></div>
         </section>
       </section>
@@ -205,6 +225,7 @@
   </div>
   <script src="/vendor/simplewebauthn.umd.min.js"></script>
   <script>
+  (() => {
 
     const signedOut = document.querySelector('#signed-out');
     const signedIn = document.querySelector('#signed-in');
@@ -213,26 +234,241 @@
     const logoutButton = document.querySelector('#logout');
     const loginStatus = document.querySelector('#login-status');
     const workspaceStatus = document.querySelector('#workspace-status');
+    const draftWarning = document.querySelector('#draft-warning');
+    const existingEditHeld = document.querySelector('#existing-edit-held');
     const sessionLabel = document.querySelector('#session-label');
     const notesRoot = document.querySelector('#notes');
     const createForm = document.querySelector('#create-form');
+    const draftTitle = document.querySelector('#new-title');
+    const draftBody = document.querySelector('#new-body');
+    let draftRevision = 0;
+    for (const field of [draftTitle,draftBody])
+      field.addEventListener('input', () => {
+        draftRevision += 1;
+        if (!draftTitle.value && !draftBody.value) draftWarning.hidden = true;
+      });
     let session = null;
     let deviceProof = null;
     let deviceAccess = null;
     let deviceTimer = null;
     let vaultEpoch = 0;
+    let sessionEpoch = 0;
+    let pendingRestore = null;
+    let sessionRevalidation = null;
+    const isSessionRevalidating = () => Boolean(sessionRevalidation && sessionRevalidation.session === session);
+    const syncSessionRevalidationNotice = () => {
+      const notice = document.getElementById('session-revalidation-state');
+      if (!notice) return;
+      notice.hidden = !isSessionRevalidating();
+      notice.textContent = notice.hidden ? '' : '서버 인증을 다시 확인하는 동안 자료실과 기기 인증을 잠갔습니다.';
+    };
+    let heldDraftLockNotice = '';
+    // Unsent new-note drafts remain in this tab's memory, never browser storage.
+    const interruptedDrafts = new Map();
+    // Existing-note drafts remain only in this tab, scoped by validated owner.
+    const existingEdits = new Map();
+    const unboundEdits = new Map();
+    let notesGeneration = 0;
+    const mountedEditors = new Set();
+    const snapshotMountedEditors = () => {
+      for (const editor of mountedEditors) { editor.snapshot(); editor.active = false; }
+      mountedEditors.clear();
+    };
+    const noteIdValid = value => typeof value === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
+    const editsFor = owner => {
+      if (!owner) return unboundEdits;
+      if (!existingEdits.has(owner)) existingEdits.set(owner, new Map());
+      return existingEdits.get(owner);
+    };
+    const ownerId = value => typeof value === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value)
+      ? value.toLowerCase() : null;
+    const pendingCreates = new Map();
+    const creationBlocked = owner => owner
+      ? pendingCreates.has(owner) || pendingCreates.has('')
+      : pendingCreates.size > 0;
+    const nextNoteId = () => {
+      if (typeof globalThis.crypto?.getRandomValues !== 'function')
+        throw Error('안전한 메모 식별자를 만들 수 없어 추가하지 않았습니다.');
+      const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 15) | 64;
+      bytes[8] = (bytes[8] & 63) | 128;
+      const hex = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+      return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    };
+    const syncCreatePendingState = () => {
+      const button = document.getElementById('create-submit');
+      if (!button) return;
+      const pending = Boolean(session?.access_token && creationBlocked(ownerId(session?.user?.id)));
+      if (pending) button.setAttribute('aria-disabled', 'true');
+      else button.removeAttribute('aria-disabled');
+      button.textContent = pending ? '추가 요청 처리 중…' : '메모 추가';
+    };
+    const uncertainCreations = new Map();
+    const creationScope = (owner, epoch) => owner ? 'owner:' + owner : 'unidentified-session:' + epoch;
+    const currentCreationScope = () => creationScope(ownerId(session?.user?.id), sessionEpoch);
+    const rememberUncertainCreation = attempt => {
+      if (!uncertainCreations.has(attempt.scope)) uncertainCreations.set(attempt.scope, new Map());
+      const attempts = uncertainCreations.get(attempt.scope);
+      if (!attempts.has(attempt.id)) attempts.set(attempt.id, attempt);
+      renderUncertainCreations();
+    };
+    const uncertainCreationStatus = status => status < 400 || status === 408 || status === 409 || status >= 500;
+    const sendCreationAttempt = async (attempt, onDispatch, onUncertain, verifyResponseId = false) => {
+      const controller = new AbortController(); let timeoutId, settled = false;
+      const request = (async () => {
+        const response = await authFetch('/api/notes', {method:'POST', signal:controller.signal,
+          body:JSON.stringify({id:attempt.id,title:attempt.title,body:attempt.body})}, true, onDispatch);
+        if (!settled && !response.ok && uncertainCreationStatus(response.status)) {
+          rememberUncertainCreation(attempt); onUncertain?.(response);
+        }
+        let verified = false;
+        if (verifyResponseId && response.status === 201) {
+          let payload = null;
+          try { payload = await response.json(); } catch { /* Treat unreadable bodies as unconfirmed. */ }
+          verified = Boolean(payload && typeof payload === 'object' && !Array.isArray(payload) &&
+            typeof payload.id === 'string' && payload.id.toLowerCase() === attempt.id.toLowerCase());
+        }
+        return {response, verified, message:response.ok ? '' : await apiError(response, '추가에 실패했습니다.')};
+      })();
+      const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => {
+        controller.abort(); reject(Error('추가 응답 대기 시간이 지났습니다.'));
+      }, 30000); });
+      try { return await Promise.race([request,timeout]); }
+      finally { settled = true; clearTimeout(timeoutId); }
+    };
+    const retryFocus = new WeakMap();
+    const renderUncertainCreations = () => {
+      const panel = document.getElementById('create-retry-panel');
+      const root = document.getElementById('create-retry-list');
+      if (!panel || !root) return;
+      const scope = currentCreationScope();
+      const attempts = session?.access_token && deviceProof ? uncertainCreations.get(scope) : null;
+      panel.hidden = !attempts?.size;
+      if (!attempts?.size) { root.replaceChildren(); return; }
+      const active = document.activeElement, wantedFocus = retryFocus.get(active);
+      let newFocus = null;
+      const cards = [];
+      for (const attempt of attempts.values()) {
+        const card = document.createElement('article'); card.className = 'note';
+        const title = document.createElement('p'); title.textContent = '전송한 제목: ' + attempt.title;
+        if (title.style) title.style.overflowWrap = 'anywhere';
+        const body = document.createElement('pre'); body.textContent = attempt.body;
+        if (body.style) { body.style.whiteSpace = 'pre-wrap'; body.style.overflowWrap = 'anywhere'; }
+        const state = document.createElement('p'); state.setAttribute('role','status'); state.setAttribute('tabindex','-1');
+        retryFocus.set(state, {scope,attempt,kind:'state'});
+        if (wantedFocus?.scope === scope && wantedFocus.attempt === attempt && wantedFocus.kind === 'state') newFocus = state;
+        state.textContent = attempt.confirmed ? (attempt.confirmedByRetry ? '이번 재시도는' : '이전 추가 요청은') + ' 생성 성공 응답을 받았습니다. 이전 요청은 나중에 반영될 수 있습니다. 목록을 확인하세요.' :
+          attempt.conflict ? '이번 재시도는 충돌 응답을 받았지만 이전 요청의 결과는 확인되지 않았습니다. 이전 요청은 나중에 반영될 수 있습니다.' :
+          attempt.rejected ? '이번 재시도는 거절됐지만 이전 요청은 나중에 반영될 수 있습니다.' :
+          attempt.unconfirmed ? '이번 재시도 결과도 확인하지 못했습니다. 이전 요청은 나중에 반영될 수 있습니다.' :
+          attempt.retrying ? '재시도 중… 이전 요청은 나중에 반영될 수 있습니다.' :
+          attempt.initialUnconfirmed ? '추가 응답의 상태나 식별자를 확인하지 못했습니다. 이전 요청은 나중에 반영될 수 있습니다.' :
+          '이전 요청이 이미 저장됐거나 나중에 반영될 수 있습니다.';
+        const retry = document.createElement('button'); retry.type = 'button'; retry.className='secondary'; retry.textContent = '이 요청 다시 시도';
+        retryFocus.set(retry, {scope,attempt,kind:'retry'});
+        if (wantedFocus?.scope === scope && wantedFocus.attempt === attempt && wantedFocus.kind === 'retry')
+          newFocus = attempt.confirmed ? state : retry;
+        retry.hidden = Boolean(attempt.confirmed);
+        if (creationBlocked(ownerId(session?.user?.id))) retry.setAttribute('aria-disabled','true');
+        retry.addEventListener('click', async () => {
+          const owner = ownerId(session?.user?.id);
+          const valid = () => Boolean(deviceProof && session?.access_token) && currentCreationScope() === scope &&
+            uncertainCreations.get(scope)?.get(attempt.id) === attempt && !attempt.confirmed && !creationBlocked(owner);
+          if (!valid()) return;
+          if (!window.confirm('이전에 보낸 제목과 본문을 같은 요청으로 다시 보낼까요? 삭제된 메모가 다시 생길 수 있습니다.')) return;
+          if (!valid()) return;
+          const identity = owner || '', ticket = {};
+          attempt.conflict = false; attempt.rejected = false; attempt.unconfirmed = false; attempt.retrying = true;
+          pendingCreates.set(identity, ticket); syncCreatePendingState(); renderUncertainCreations();
+          const isCurrent = currentVaultRequest();
+          try {
+            const {response, verified} = await sendCreationAttempt(attempt, undefined, received => {
+              attempt.retrying = false;
+              if (received.status === 409) attempt.conflict = true;
+              else attempt.unconfirmed = true;
+              if (isCurrent()) renderUncertainCreations();
+            }, true);
+            attempt.retrying = false;
+            if (response.status === 201 && verified) { attempt.confirmed = true; attempt.confirmedByRetry = true; }
+            else if (response.ok) attempt.unconfirmed = true;
+            else if (uncertainCreationStatus(response.status)) attempt.unconfirmed = true;
+            else attempt.rejected = true;
+            // A conflict is not proof that our earlier request succeeded.
+            if (isCurrent()) {
+              renderUncertainCreations();
+              if (attempt.confirmedByRetry) void loadNotes({statusGuard:()=>false});
+            }
+          } catch { attempt.retrying = false; attempt.unconfirmed = true; if (isCurrent()) renderUncertainCreations(); }
+          finally {
+            attempt.retrying = false;
+            if (pendingCreates.get(identity) === ticket) pendingCreates.delete(identity);
+            syncCreatePendingState(); renderUncertainCreations();
+          }
+        });
+        const discard = document.createElement('button'); discard.type='button'; discard.className='danger'; discard.textContent='이 기록 보관 중단';
+        retryFocus.set(discard, {scope,attempt,kind:'discard'});
+        if (wantedFocus?.scope === scope && wantedFocus.attempt === attempt && wantedFocus.kind === 'discard') newFocus = discard;
+        if (creationBlocked(ownerId(session?.user?.id))) discard.setAttribute('aria-disabled','true');
+        discard.addEventListener('click', () => {
+          if (!deviceProof || creationBlocked(ownerId(session?.user?.id)) || currentCreationScope() !== scope || uncertainCreations.get(scope)?.get(attempt.id) !== attempt) return;
+          if (!window.confirm('이 기록을 지울까요? 이전 요청이 나중에 반영될 수 있으며 이 탭에서 같은 요청으로 재시도할 수 없게 됩니다.')) return;
+          if (!deviceProof || creationBlocked(ownerId(session?.user?.id)) || currentCreationScope() !== scope || uncertainCreations.get(scope)?.get(attempt.id) !== attempt) return;
+          const returnFocus = document.activeElement === discard && document.hasFocus?.();
+          uncertainCreations.get(scope).delete(attempt.id); renderUncertainCreations();
+          if (returnFocus && document.hasFocus?.() && (document.activeElement === document.body || document.activeElement === discard))
+            document.getElementById('create-submit')?.focus?.({preventScroll:true});
+        });
+        const actions = document.createElement('div'); actions.className='form-actions'; actions.append(retry,discard);
+        card.append(title,body,state,actions); cards.push(card);
+      }
+      root.replaceChildren(...cards);
+      if (newFocus && !newFocus.hidden && document.hasFocus?.() &&
+          (document.activeElement === document.body || document.activeElement === active)) newFocus.focus?.({preventScroll:true});
+    };
+    const syncExistingEditNotice = () => {
+      if (!existingEditHeld) return;
+      const owner = ownerId(session?.user?.id);
+      const hasEdits = owner ? Boolean(existingEdits.get(owner)?.size) : Boolean(unboundEdits.size);
+      existingEditHeld.hidden = !session?.access_token || Boolean(deviceProof) || !hasEdits;
+      existingEditHeld.textContent = owner
+        ? '기존 메모의 수정 내용은 이 탭에 보관됩니다. 기기를 다시 확인하세요. 탭을 닫으면 사라집니다.'
+        : '계정 식별 정보가 없어 수정 내용을 자동 복구할 수 없습니다. 탭을 닫으면 사라집니다.';
+    };
     const lockVault = () => {
+      const previousFocus = document.activeElement;
+      const returnFocus = typeof workspace.contains === 'function' && workspace.contains(previousFocus);
+      snapshotMountedEditors();
+      notesGeneration += 1;
       vaultEpoch += 1;
       deviceProof = null;
       if (deviceTimer !== null) clearTimeout(deviceTimer);
       deviceTimer = null;
       notesRoot.replaceChildren();
       workspace.hidden = true;
+      syncExistingEditNotice();
+      if (returnFocus) Promise.resolve().then(() => {
+        if (!document.hasFocus() || !workspace.hidden ||
+            (document.activeElement !== document.body && document.activeElement !== previousFocus)) return;
+        const title = document.getElementById('vault-title');
+        if (!title) return;
+        title.focus({preventScroll:true});
+        requestAnimationFrame(() => {
+          if (!document.hasFocus() || !workspace.hidden || document.activeElement !== title) return;
+          const bounds = title.getBoundingClientRect();
+          if (bounds.top < 4 || bounds.bottom > window.innerHeight - 4)
+            title.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+        });
+      });
     };
     const verifiedVault = (proof, expiresInSeconds) => {
+      if (isSessionRevalidating()) return;
       lockVault();
       deviceProof = proof;
       renderAuth();
+      recoverInterruptedDraft();
+      renderUncertainCreations();
       const remainingMs = Number.isFinite(Number(session?.expires_at))
         && Number(session.expires_at) > 0
         ? Number(session.expires_at) * 1000 - Date.now() : Infinity;
@@ -242,31 +478,306 @@
       void loadNotes();
     };
 
+    let workspaceStatusRevision = 0;
     const setStatus = (element, message = '', error = false) => {
+      if (element === workspaceStatus) workspaceStatusRevision += 1;
       element.textContent = message;
       element.classList.toggle('error', error);
+    };
+
+    const draftHoldingNotice = kind => kind === 'bound'
+      ? '작성 내용이 이 탭에 보관됩니다. 같은 계정과 기기를 다시 확인하세요. 탭을 닫으면 사라집니다.'
+      : kind === 'unbound'
+        ? '계정 식별 정보가 없어 작성 내용을 자동 복구할 수 없습니다. 탭을 닫으면 보관 내용이 사라집니다.'
+        : '';
+    const setAuthLockNotice = (message, heldDraft, error = true) => {
+      const draftNotice = draftHoldingNotice(heldDraft);
+      if (draftNotice) heldDraftLockNotice = draftNotice;
+      setStatus(loginStatus, heldDraftLockNotice ? heldDraftLockNotice + ' ' + message : message,
+        error || Boolean(heldDraftLockNotice));
     };
 
     const parseJson = async (response) => {
       try { return await response.json(); } catch { return null; }
     };
 
-    const applySession = (data) => {
-      if (!data?.accessToken) {
-        lockVault();
-        session = null;
-        return false;
+    const clearDraft = () => {
+      draftRevision += 1;
+      draftTitle.value = '';
+      draftBody.value = '';
+      draftWarning.hidden = true;
+    };
+    const showDraftWarning = (subject = '복구된 내용') => {
+      draftWarning.textContent = subject + '은 이미 저장됐거나 이전 요청이 나중에 반영될 수 있습니다. 메모 목록을 확인하세요. 다시 추가하면 중복될 수 있습니다.';
+      draftWarning.hidden = false;
+    };
+    const quarantineInterruptedDraft = () => {
+      const owner = ownerId(session?.user?.id);
+      const title = draftTitle.value;
+      const body = draftBody.value;
+      if (!title && !body) return null;
+      const drafts = interruptedDrafts.get(owner) || [];
+      drafts.push({title, body});
+      interruptedDrafts.set(owner, drafts);
+      return owner ? 'bound' : 'unbound';
+    };
+    const recoverInterruptedDraft = () => {
+      const owner = ownerId(session?.user?.id);
+      const drafts = owner && interruptedDrafts.get(owner);
+      const title = draftTitle;
+      const body = draftBody;
+      if (!deviceProof || !drafts?.length) return;
+      if (title.value || body.value) {
+        setStatus(workspaceStatus, '복구할 작성 내용이 대기 중입니다. 현재 작성 내용을 먼저 처리하세요.');
+        return;
       }
+      const draft = drafts.shift();
+      draftRevision += 1;
+      title.value = draft.title;
+      body.value = draft.body;
+      if (!drafts.length) interruptedDrafts.delete(owner);
+      showDraftWarning();
+      setStatus(workspaceStatus, '작성 내용을 복구했습니다.');
+    };
+
+    const applySession = (data) => {
+      if (!data?.accessToken) return false;
+      const previousOwner = ownerId(session?.user?.id);
+      const nextOwner = ownerId(data.user?.id);
+      let heldDraft = null;
+      if (!previousOwner || !nextOwner || previousOwner !== nextOwner) {
+        heldDraft = quarantineInterruptedDraft();
+        clearDraft();
+      }
+      sessionEpoch += 1;
       lockVault();
+      if (!previousOwner || !nextOwner || previousOwner !== nextOwner) setStatus(workspaceStatus);
       session = {
         access_token: data.accessToken,
         expires_at: data.expiresAt ?? null,
         user: data.user ?? null,
       };
+      if (heldDraft === 'bound') setStatus(workspaceStatus,
+        '이전 계정의 작성 내용은 이 탭에 보관되며 다른 계정에 표시되지 않습니다. 탭을 닫으면 사라집니다.');
+      else if (heldDraft === 'unbound') setStatus(workspaceStatus,
+        '이전 작성 내용의 계정 식별 정보가 없어 자동 복구할 수 없습니다. 탭을 닫으면 보관 내용이 사라집니다.', true);
       return true;
     };
 
-    const authApi = async (action, body) => {
+    // Every auth response can update the shared HttpOnly cookie. Keep its
+    // network response ordered, including across cooperating same-origin tabs.
+    const authLockName = 'aleph.auth.cookie.v1';
+    const authVersionKey = 'aleph.auth.version.v1';
+    const authLogoutIntentPrefix = 'aleph.auth.logout.v1:';
+    const fallbackIntentKey = 'aleph.auth.fallback.intent.v1';
+    const fallbackAckKey = 'aleph.auth.fallback.ack.v1';
+    let authTail = Promise.resolve();
+    const authTickets = new Set();
+    let activeAuthAction = null;
+    let authPageHidden = false;
+    let loginInterruptedByHide = false;
+    let restoreInterruptedByHide = false;
+    let authLock = typeof globalThis.navigator?.locks?.request === 'function' ? globalThis.navigator.locks : null;
+    let authCoordinationBroken = false;
+    let authStorage = null, fallbackStorage = null, authVersion = null;
+    try {
+      fallbackStorage = window.localStorage || null;
+      if (authLock && fallbackStorage && globalThis.crypto?.getRandomValues) {
+        authStorage = fallbackStorage;
+        authVersion = authStorage.getItem(authVersionKey) || '';
+        if (authVersion.startsWith('pending:')) authVersion = null;
+      }
+    } catch { authStorage = null; }
+    const authCoordinationLimited = () => !authLock || !authStorage || authCoordinationBroken;
+    const authCoordinationNotice = '이 브라우저에서는 다른 탭과 인증 순서를 보장할 수 없습니다. 한 탭만 사용하세요.';
+    const authLockUnavailableNotice = '인증 잠금을 사용할 수 없어 인증 요청을 보내지 않습니다. 브라우저의 잠금 기능을 확인하세요.';
+    const showCoordinationNotice = () => {
+      const notice = document.getElementById('auth-coordination-state');
+      if (!notice) return;
+      notice.hidden = !authCoordinationLimited();
+      notice.textContent = notice.hidden ? '' : authCoordinationBroken ? authLockUnavailableNotice : authCoordinationNotice;
+    };
+    const isAuthLockFailure = error => ['SecurityError','NotSupportedError','TypeError'].includes(error?.name);
+    const markAuthCoordinationBroken = () => {
+      authCoordinationBroken = true;
+      showCoordinationNotice();
+    };
+    showCoordinationNotice();
+    const nextAuthVersion = () => {
+      const bytes = new Uint8Array(16);
+      globalThis.crypto.getRandomValues(bytes);
+      return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+    };
+    const canPersistFallback = () => {
+      if (!fallbackStorage || !globalThis.crypto?.getRandomValues) return false;
+      try {
+        const value = nextAuthVersion();
+        const key = 'aleph.auth.probe.v1:' + value;
+        if (fallbackStorage.getItem(key) !== null) return false;
+        fallbackStorage.setItem(key, value);
+        if (fallbackStorage.getItem(key) !== value) return false;
+        fallbackStorage.removeItem(key);
+        return fallbackStorage.getItem(key) === null;
+      } catch { return false; }
+    };
+    const authLineage = version => {
+      const value = version || '';
+      const separator = value.indexOf('~');
+      return (separator < 0 ? value : value.slice(separator + 1)) || 'initial';
+    };
+    const logoutIntentKey = version => authLogoutIntentPrefix + authLineage(version);
+    const readFallbackState = () => {
+      if (!fallbackStorage) return null;
+      const first = fallbackStorage.getItem(fallbackIntentKey);
+      const ack = fallbackStorage.getItem(fallbackAckKey);
+      let legacy = '';
+      if (!authStorage) {
+        const version = fallbackStorage.getItem(authVersionKey) || '';
+        if (version.length > 256) throw Error('AUTH_STORAGE_UNAVAILABLE');
+        if (/^(?:pending:|logout-unconfirmed:|login-unconfirmed:)/u.test(version)) legacy = version;
+        else {
+          const intent = fallbackStorage.getItem(logoutIntentKey(version));
+          if (intent) {
+            if (intent.length > 256) throw Error('AUTH_STORAGE_UNAVAILABLE');
+            legacy = JSON.stringify([version, intent]);
+          }
+        }
+      }
+      const last = fallbackStorage.getItem(fallbackIntentKey);
+      if (first !== last || (first !== null && !/^[a-f0-9]{32}$/u.test(first)))
+        throw Error('AUTH_STORAGE_UNAVAILABLE');
+      const signature = JSON.stringify([first, legacy]);
+      return {signature, allowed: first === null && !legacy ? ack === null || ack === signature : ack === signature};
+    };
+    const recordFallbackLogout = () => {
+      if (!fallbackStorage || !globalThis.crypto?.getRandomValues) return false;
+      try {
+        const intent = nextAuthVersion();
+        fallbackStorage.setItem(fallbackIntentKey, intent);
+        return fallbackStorage.getItem(fallbackIntentKey) === intent;
+      } catch { return false; }
+    };
+    const requireFallbackState = (snapshot, mustBeAllowed = false) => {
+      let state;
+      try { state = readFallbackState(); }
+      catch { throw Error('AUTH_STORAGE_UNAVAILABLE'); }
+      if (snapshot && (!state || snapshot.signature !== state.signature)) throw Error('AUTH_CONTEXT_CHANGED');
+      if (mustBeAllowed && state && !state.allowed) throw Error('AUTH_LOGOUT_UNCONFIRMED');
+      return state;
+    };
+    const recordLogoutIntent = () => {
+      if (!authStorage || authVersion === null) return null;
+      try {
+        const intent = {key:logoutIntentKey(authVersion),value:nextAuthVersion()};
+        authStorage.setItem(intent.key,intent.value);
+        return intent;
+      } catch { return null; }
+    };
+    const clearLogoutIntent = intent => {
+      if (!authStorage || !intent) return;
+      try { if (authStorage.getItem(intent.key) === intent.value) authStorage.removeItem(intent.key); }
+      catch { /* A remaining intent safely prevents automatic restoration. */ }
+    };
+    const checkAuthVersion = () => {
+      if (!authStorage) return true;
+      let current;
+      try { current = authStorage.getItem(authVersionKey) || ''; }
+      catch {
+        const heldDraft = invalidateSession();
+        setAuthLockNotice('인증 저장 상태를 확인할 수 없어 이 탭을 잠갔습니다.', heldDraft);
+        return false;
+      }
+      if (current.startsWith('pending:')) {
+        authVersion = null;
+        const heldDraft = invalidateSession();
+        setAuthLockNotice('이전 인증 요청의 완료 상태를 확인할 수 없어 이 탭을 잠갔습니다.', heldDraft);
+        return false;
+      }
+      if (current === authVersion) return true;
+      authVersion = current;
+      const heldDraft = invalidateSession();
+      setAuthLockNotice('다른 탭에서 인증이 변경되었습니다. 이 탭은 잠겼으며 서버 로그아웃은 확인되지 않았습니다.', heldDraft, false);
+      return false;
+    };
+    const checkAuthVersionAfterPending = () => {
+      if (!authStorage) return;
+      // A page first opened during an in-flight transaction has no prior
+      // identity; its bootstrap adopts the stable value under the auth lock.
+      if (authVersion === null && !session) return;
+      let current;
+      try { current = authStorage.getItem(authVersionKey) || ''; }
+      catch { checkAuthVersion(); return; }
+      if (current.startsWith('pending:') && authLock) {
+        const observedSession = session, observedEpoch = sessionEpoch, observedVersion = authVersion;
+        const sameSession = () => session === observedSession && sessionEpoch === observedEpoch && authVersion === observedVersion;
+        void Promise.resolve().then(() => authLock.request(authLockName, {mode:'exclusive'}, () => {
+          if (sameSession()) checkAuthVersion();
+        })).catch(error => {
+          if (isAuthLockFailure(error)) markAuthCoordinationBroken();
+          if (sameSession()) checkAuthVersion();
+        });
+      } else checkAuthVersion();
+    };
+    const checkFallbackSession = () => {
+      if (!fallbackStorage || !session) return;
+      try {
+        const state = readFallbackState();
+        if (state && !state.allowed) {
+          const heldDraft = invalidateSession();
+          setAuthLockNotice('다른 탭의 인증 요청을 확인해 이 탭을 잠갔습니다. 다시 로그인해 주세요.', heldDraft);
+        }
+      } catch {
+        const heldDraft = invalidateSession();
+        setAuthLockNotice('인증 저장 상태를 확인할 수 없어 이 탭을 잠갔습니다.', heldDraft);
+      }
+    };
+    window.addEventListener('storage', event => {
+      if (event.key === fallbackIntentKey || event.key === fallbackAckKey || event.key === null ||
+          (!authStorage && (event.key === authVersionKey || event.key?.startsWith(authLogoutIntentPrefix))))
+        checkFallbackSession();
+      if (!authStorage) return;
+      if (event.key === authVersionKey || event.key === null) checkAuthVersionAfterPending();
+      else if (event.key === logoutIntentKey(authVersion) && event.newValue) {
+        let heldDraft;
+        if (activeAuthAction === 'login') {
+          // Keep the deliberate new login alive, but immediately hide the old vault.
+          heldDraft = quarantineInterruptedDraft();clearDraft();lockVault();
+          window.dispatchEvent(new Event('aleph:identity'));
+        } else heldDraft = invalidateSession();
+        setAuthLockNotice('다른 탭에서 로그아웃을 요청해 이 탭의 자료실을 잠갔습니다.', heldDraft);
+      }
+    });
+    window.addEventListener('pagehide', () => {
+      authPageHidden = true;
+      for (const ticket of authTickets) {
+        if (ticket.action === 'login') loginInterruptedByHide = true;
+        if (ticket.action === 'session') restoreInterruptedByHide = true;
+        ticket.fetchController?.abort();
+        ticket.waitController.abort();
+      }
+    });
+    window.addEventListener('pageshow', () => {
+      authPageHidden = false;
+      checkFallbackSession();
+      checkAuthVersionAfterPending();
+      if (loginInterruptedByHide && !session) {
+        setAuthLockNotice('화면 이동으로 로그인 요청이 취소됐습니다. 서버 처리 여부는 확인되지 않았습니다. 다시 로그인해 주세요.');
+      } else if (restoreInterruptedByHide && !session) {
+        setAuthLockNotice('화면 이동으로 세션 복원 요청이 취소됐습니다. 서버 처리 여부는 확인되지 않았습니다. 다시 로그인해 주세요.');
+      }
+      loginInterruptedByHide = false;
+      restoreInterruptedByHide = false;
+    });
+    document.addEventListener?.('visibilitychange', () => {
+      if (!document.hidden) { checkFallbackSession(); checkAuthVersionAfterPending(); }
+    });
+
+    const authApi = (action, body, epoch = sessionEpoch, logoutIntent = null) => {
+      const waitController = new AbortController();
+      if (authPageHidden) return Promise.reject(Error('AUTH_PAGE_HIDDEN'));
+      const ticket = {action,version:authVersion,logoutIntent,waitController,fetchController:null};
+      authTickets.add(ticket);
+      const waitTimer = setTimeout(() => waitController.abort(), 45000);
       const headers = { Accept: 'application/json' };
       const init = {
         method: 'POST',
@@ -279,22 +790,216 @@
         headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(body);
       }
-      return fetch(`/api/auth/${action}`, init);
+      const run = async () => {
+        clearTimeout(waitTimer);
+        if (waitController.signal.aborted) throw Error('AUTH_WAIT_TIMEOUT');
+        // A new, still-anonymous page may have opened while another tab held
+        // the lock. Adopt only the stable generation observed under that lock.
+        if (authStorage && action === 'session' && epoch === 0 && sessionEpoch === 0 && authVersion === null) {
+          try {
+            const stable = authStorage.getItem(authVersionKey) || '';
+            if (!stable.startsWith('pending:')) { authVersion = stable;ticket.version = stable; }
+          } catch { /* checkAuthVersion fails closed below */ }
+        }
+        if (action !== 'logout' && epoch !== sessionEpoch) throw Error('AUTH_STALE');
+        // A page opened during a pending transaction has no prior identity.
+        // An explicit login may adopt a stable value only under the auth lock.
+        if (authStorage && action === 'login' && authVersion === null && !session) {
+          try {
+            const stable = authStorage.getItem(authVersionKey) || '';
+            if (!stable.startsWith('pending:')) { authVersion = stable; ticket.version = stable; }
+          } catch { /* checkAuthVersion handles unreadable storage below */ }
+        }
+        if (authStorage && (!checkAuthVersion() || ticket.version !== authVersion))
+          throw Error('AUTH_CONTEXT_CHANGED');
+        if (action === 'session' && authStorage) {
+          let logoutUnconfirmed = authVersion.startsWith('logout-unconfirmed:') ||
+            authVersion.startsWith('login-unconfirmed:');
+          try { logoutUnconfirmed ||= Boolean(authStorage.getItem(logoutIntentKey(authVersion))); }
+          catch {
+            setStatus(loginStatus, '인증 저장 상태를 확인할 수 없어 요청을 보내지 않았습니다.', true);
+            throw Error('AUTH_STORAGE_UNAVAILABLE');
+          }
+          if (logoutUnconfirmed) {
+            setStatus(loginStatus, '이전 로그인 또는 서버 로그아웃 결과를 확인하지 못했습니다. 다시 로그인해 주세요.', true);
+            throw Error('AUTH_LOGOUT_UNCONFIRMED');
+          }
+        }
+        const previous = authVersion;
+        let pending = null;
+        let finishFailed = false;
+        if (authStorage) {
+          try {
+            pending = 'pending:' + nextAuthVersion();
+            authStorage.setItem(authVersionKey, pending);
+          } catch {
+            setStatus(loginStatus, '인증 순서를 기록할 수 없어 요청을 보내지 않았습니다.', true);
+            throw Error('AUTH_STORAGE_UNAVAILABLE');
+          }
+        }
+        const finish = (changed, prefix = '', freshLineage = false) => {
+          if (!authStorage || pending === null) return;
+          try {
+            if (authStorage.getItem(authVersionKey) !== pending) throw Error('AUTH_PENDING_CHANGED');
+            const lineage = freshLineage ? nextAuthVersion() : authLineage(previous);
+            const next = changed ? prefix + nextAuthVersion() + '~' + lineage : previous;
+            authStorage.setItem(authVersionKey, next);
+            authVersion = next;
+            for (const queued of authTickets) {
+              if (queued.version === previous &&
+                  (!queued.logoutIntent || queued.logoutIntent.key === logoutIntentKey(next))) queued.version = next;
+            }
+            pending = null;
+          } catch {
+            finishFailed = true;
+            const heldDraft = invalidateSession();
+            setAuthLockNotice('인증 완료 상태를 기록할 수 없어 이 탭을 잠갔습니다.', heldDraft);
+            throw Error('AUTH_STORAGE_UNAVAILABLE');
+          }
+        };
+        const controller = new AbortController();
+        ticket.fetchController = controller;
+        const timeout = setTimeout(() => controller.abort(), 45000);
+        activeAuthAction = action;
+        try {
+          const sessionAtRequest = session;
+          const response = await fetch(`/api/auth/${action}`, {...init, signal:controller.signal});
+          if (action === 'session' && response.status === 401 && sessionAtRequest?.access_token && session === sessionAtRequest) {
+            const newerIntent = epoch !== sessionEpoch;
+            const priorStatus = loginStatus.textContent;
+            const heldDraft = invalidateSession(!newerIntent);
+            setAuthLockNotice(newerIntent ? priorStatus : '서버에서 세션을 거부해 자료실을 잠갔습니다. 다시 로그인해 주세요.', heldDraft, !newerIntent);
+          }
+          const data = await parseJson(response);
+          if (controller.signal.aborted) throw Error('AUTH_REQUEST_TIMEOUT');
+          const knownTransient = response.status === 503 &&
+            ['AUTH_BACKEND_UNAVAILABLE','AUTH_BACKEND_NOT_CONFIGURED'].includes(data?.error);
+          const knownNoCookie = response.status === 401 && data?.error === 'NO_SESSION';
+          const priorOwner = ownerId(session?.user?.id), nextOwner = ownerId(data?.user?.id);
+          const differentOwner = Boolean(session && priorOwner && nextOwner && priorOwner !== nextOwner);
+          const changed = action === 'logout' || (action === 'login' && response.ok) ||
+            (action === 'session' && ((!response.ok && !knownTransient && !knownNoCookie) || (response.ok && !data?.accessToken) || (response.ok && session &&
+              (!priorOwner || !nextOwner || priorOwner !== nextOwner))));
+          const loginUnconfirmed = action === 'login' && response.ok && !data?.accessToken;
+          finish(changed, action === 'logout' && !response.ok ? 'logout-unconfirmed:' :
+            loginUnconfirmed ? 'login-unconfirmed:' : '',
+            (action === 'login' && response.ok) || (action === 'logout' && response.ok) || differentOwner);
+          if (action === 'logout') clearLogoutIntent(logoutIntent);
+          return {ok:response.ok,status:response.status,data};
+        } catch (error) {
+          // A failed or aborted request may already have reached the server.
+          if (pending !== null && !finishFailed) {
+            finish(true, action === 'logout' ? 'logout-unconfirmed:' :
+              action === 'login' ? 'login-unconfirmed:' : '');
+            if (action === 'logout') clearLogoutIntent(logoutIntent);
+          }
+          if (controller.signal.aborted) throw Error('AUTH_REQUEST_TIMEOUT');
+          throw error;
+        } finally { activeAuthAction = null;ticket.fetchController = null;clearTimeout(timeout); }
+      };
+      const task = authTail.then(async () => {
+        if (waitController.signal.aborted) throw Error('AUTH_WAIT_TIMEOUT');
+        if (authCoordinationBroken) throw Error('AUTH_LOCK_UNAVAILABLE');
+        if (!authLock) return run();
+        let entered = false;
+        try {
+          return await authLock.request(authLockName, {mode:'exclusive',signal:waitController.signal}, () => {
+            entered = true;
+            return run();
+          });
+        } catch (error) {
+          if (!entered && !waitController.signal.aborted && isAuthLockFailure(error)) {
+            markAuthCoordinationBroken();
+            if (epoch === sessionEpoch) setAuthLockNotice('인증 잠금을 사용할 수 없어 요청을 보내지 않았습니다.');
+            throw Error('AUTH_LOCK_UNAVAILABLE');
+          }
+          throw error;
+        }
+      });
+      authTail = task.catch(() => {});
+      const waitExpired = new Promise((_, reject) => {
+        waitController.signal.addEventListener('abort', () => {
+          // A queued request that timed out must not later send credentials.
+          init.body = undefined;
+          reject(Error(authPageHidden ? 'AUTH_PAGE_HIDDEN' : 'AUTH_WAIT_TIMEOUT'));
+        }, {once:true});
+      });
+      return Promise.race([task,waitExpired]).finally(() => {clearTimeout(waitTimer);authTickets.delete(ticket);});
     };
 
-    const restoreSession = async () => {
-      try {
-        const response = await authApi('session');
-        const data = await parseJson(response);
-        if (!response.ok || !applySession(data)) {
-          session = null;
-          return false;
-        }
-        return true;
-      } catch {
-        session = null;
-        return false;
+    const invalidateSession = (advanceEpoch = true) => {
+      snapshotMountedEditors();
+      const savedDraft = quarantineInterruptedDraft();
+      const priorOwner = ownerId(session?.user?.id);
+      const heldExisting = priorOwner ? Boolean(existingEdits.get(priorOwner)?.size) : Boolean(unboundEdits.size);
+      if (advanceEpoch) sessionEpoch += 1;
+      session = null;
+      clearDraft();
+      renderAuth();
+      window.dispatchEvent(new Event('aleph:identity'));
+      if (savedDraft || heldExisting) {
+        heldDraftLockNotice = savedDraft ? draftHoldingNotice(savedDraft) :
+          priorOwner ? '기존 메모의 수정 내용은 이 탭에 보관됩니다. 같은 계정과 기기를 다시 확인하세요. 탭을 닫으면 사라집니다.' :
+          '계정 식별 정보가 없어 기존 메모 수정 내용을 자동 복구할 수 없습니다. 탭을 닫으면 사라집니다.';
+        setStatus(loginStatus, heldDraftLockNotice, true);
       }
+      return savedDraft;
+    };
+
+    const restoreSession = (invalidateOnPageHide = false) => {
+      // A fresh document without durable coordination cannot know whether an
+      // earlier page requested logout before its network request was sent.
+      if (!session && (!fallbackStorage || (!authStorage && !canPersistFallback()))) {
+        setAuthLockNotice('브라우저 저장 상태를 사용할 수 없어 자동 복원을 중단했습니다. 다시 로그인해 주세요.');
+        return Promise.resolve(false);
+      }
+      if (pendingRestore?.epoch === sessionEpoch) {
+        if (invalidateOnPageHide) pendingRestore.invalidateOnPageHide = true;
+        return pendingRestore.promise;
+      }
+      const epoch = sessionEpoch;
+      const restoration = {epoch,invalidateOnPageHide,sessionAtStart:session,promise:null};
+      const promise = (async () => {
+        try {
+          const fallbackSnapshot = requireFallbackState(null, true);
+          const response = await authApi('session', undefined, epoch);
+          const data = response.data;
+          if (epoch !== sessionEpoch) return null;
+          requireFallbackState(fallbackSnapshot, true);
+          if (!response.ok || !applySession(data)) {
+            invalidateSession();
+            return false;
+          }
+          return true;
+        } catch (error) {
+          if (error?.message === 'AUTH_PAGE_HIDDEN') {
+            if (restoration.invalidateOnPageHide && epoch === sessionEpoch) {
+              const heldDraft = invalidateSession();
+              setAuthLockNotice('화면 이동으로 서버 인증 확인이 중단되어 자료실을 잠갔습니다. 서버 처리 여부는 확인되지 않았습니다.', heldDraft);
+            } else if (restoration.invalidateOnPageHide && session && session === restoration.sessionAtStart) {
+              // Remove only the rejected session, preserving the newer login's epoch.
+              const pendingStatus = loginStatus.textContent;
+              const heldDraft = invalidateSession(false);
+              setAuthLockNotice(pendingStatus, heldDraft, false);
+            } else if (epoch === sessionEpoch && !session && !authPageHidden) {
+              setAuthLockNotice('화면 이동으로 세션 복원 요청이 취소됐습니다. 서버 처리 여부는 확인되지 않았습니다. 다시 로그인해 주세요.');
+            }
+            return null;
+          }
+          if (epoch !== sessionEpoch) return null;
+          const heldDraft = invalidateSession();
+          if (error?.message === 'AUTH_LOGOUT_UNCONFIRMED' || error?.message === 'AUTH_CONTEXT_CHANGED')
+            setAuthLockNotice('이전 로그아웃 요청이 있어 자동으로 세션을 복원하지 않았습니다. 다시 로그인해 주세요.', heldDraft);
+          else if (error?.message === 'AUTH_STORAGE_UNAVAILABLE')
+            setAuthLockNotice('인증 저장 상태를 확인할 수 없어 자동 복원을 중단했습니다.', heldDraft);
+          return false;
+        } finally {
+          if (pendingRestore?.epoch === epoch) pendingRestore = null;
+        }
+      })();
+      restoration.promise = promise;
+      pendingRestore = restoration;
+      return promise;
     };
 
     const apiError = async (response, fallback) => {
@@ -302,10 +1007,14 @@
       return typeof data?.error === 'string' ? data.error : fallback;
     };
 
-    const authFetch = async (path, init = {}, retry = true) => {
-      if (!session?.access_token && !(await restoreSession())) {
+    const authFetch = async (path, init = {}, retry = true, onDispatch = null) => {
+      if (init.signal?.aborted) throw Error('저장 응답 대기 시간이 지났습니다.');
+      if (!session?.access_token && !(await restoreSession()) && !session?.access_token) {
         throw new Error('로그인이 필요합니다.');
       }
+      const requestEpoch = sessionEpoch;
+      const requestSession = session;
+      const requestVaultEpoch = vaultEpoch;
       const headers = new Headers(init.headers || {});
       headers.set('Accept', 'application/json');
       headers.set('Authorization', `Bearer ${session.access_token}`);
@@ -315,6 +1024,7 @@
         if (!deviceProof) throw Error('기기 서명 인증이 필요합니다.');
         headers.set('x-aleph-device-proof', deviceProof);
       }
+      onDispatch?.();
       const response = await fetch(path, {
         ...init,
         headers,
@@ -322,203 +1032,712 @@
         credentials: 'omit',
         redirect: 'error',
       });
+      if (init.signal?.aborted) throw Error('저장 응답 대기 시간이 지났습니다.');
       if (response.status === 403 && isProtected) {
         const payload = await response.clone().json().catch(() => null);
-        if (payload?.error === 'DEVICE_NOT_VERIFIED') {
+        if (requestEpoch === sessionEpoch && requestVaultEpoch === vaultEpoch &&
+            payload?.error === 'DEVICE_NOT_VERIFIED') {
           lockVault(); renderAuth(); void deviceAccess?.status();
         }
       }
-      if (response.status === 401 && retry && await restoreSession()) {
+      if (response.status === 401 && retry && isProtected && session && session === requestSession &&
+          requestVaultEpoch === vaultEpoch) {
+        if (requestEpoch !== sessionEpoch) {
+          const priorStatus = loginStatus.textContent;
+          const heldDraft = invalidateSession(false);
+          setAuthLockNotice(priorStatus, heldDraft, false);
+        } else {
+          const pending = {session, epoch:sessionEpoch};
+          sessionRevalidation = pending;
+          lockVault(); renderAuth(); window.dispatchEvent(new Event('aleph:identity'));
+          let restored;
+          try { restored = await restoreSession(true); }
+          finally {
+            if (sessionRevalidation === pending) sessionRevalidation = null;
+            syncSessionRevalidationNotice();
+          }
+          if (restored) {
+            window.dispatchEvent(new Event('aleph:identity'));
+            return authFetch(path, init, false, onDispatch);
+          }
+        }
+      } else if (response.status === 401 && retry && !isProtected && requestEpoch === sessionEpoch && await restoreSession(true)) {
         window.dispatchEvent(new Event('aleph:identity'));
-        return authFetch(path, init, false);
+        return authFetch(path, init, false, onDispatch);
       }
       return response;
     };
 
     const renderAuth = () => {
+      syncSessionRevalidationNotice();
+      syncDeleteUncertaintyNotice();
+      syncSaveUncertaintyNotice();
+      renderSeparateSaveResults();
+      renderSeparateDeleteFailures();
+      syncCreatePendingState();
+      renderUncertainCreations();
       const loggedIn = Boolean(session?.access_token);
       signedOut.hidden = loggedIn;
       signedIn.hidden = !loggedIn;
       workspace.hidden = !(loggedIn && Boolean(deviceProof));
+      syncExistingEditNotice();
       sessionLabel.textContent = loggedIn
         ? `로그인됨 · ${session.user?.email || 'Supabase 계정'}`
         : '로그아웃됨';
+      if (loggedIn && authCoordinationLimited()) sessionLabel.textContent += ' · 다른 탭 동기화 불가';
       if (!loggedIn) {
         lockVault();
         notesRoot.replaceChildren();
         setStatus(workspaceStatus);
+        const lookupNotice = document.getElementById('notes-lookup-status');
+        if (lookupNotice) { lookupNotice.hidden = true; lookupNotice.textContent = ''; }
+        const deleteNotice = document.getElementById('delete-operation-status');
+        if (deleteNotice) { deleteNotice.hidden = true; deleteNotice.textContent = ''; }
+        separateDeleteFailures.clear();
+        separateSaveResults.clear();
+        renderSeparateSaveResults();
       }
       window.dispatchEvent(new Event('aleph:session'));
     };
 
-    const noteEditor = (note) => {
-      const article = document.createElement('article');
-      article.className = 'note';
-      const grid = document.createElement('div');
-      grid.className = 'note-grid';
-
-      const titleLabel = document.createElement('label');
-      titleLabel.textContent = '제목';
-      const title = document.createElement('input');
-      title.maxLength = 120;
-      title.value = note.title;
-      titleLabel.append(title);
-
-      const bodyLabel = document.createElement('label');
-      bodyLabel.textContent = '본문';
-      const body = document.createElement('textarea');
-      body.maxLength = 2000;
-      body.value = note.body;
-      bodyLabel.append(body);
-
-      const actions = document.createElement('div');
-      actions.className = 'note-actions';
-      const save = document.createElement('button');
-      save.type = 'button';
-      save.className = 'secondary';
-      save.textContent = '수정 저장';
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'danger';
-      remove.textContent = '삭제';
-      actions.append(save, remove);
-      grid.append(titleLabel, bodyLabel, actions);
-      article.append(grid);
-
-      save.addEventListener('click', async () => {
-        try {
-          setStatus(workspaceStatus, '수정 중…');
-          const response = await authFetch(`/api/notes/${encodeURIComponent(note.id)}`, {
-            method: 'PUT',
-            body: JSON.stringify({ title: title.value, body: body.value }),
-          });
-          if (!response.ok) {
-            setStatus(workspaceStatus, await apiError(response, '수정에 실패했습니다.'), true);
-            return;
-          }
-          setStatus(workspaceStatus, '수정했습니다.');
-          await loadNotes();
-        } catch (error) {
-          setStatus(workspaceStatus, error.message, true);
-        }
-      });
-
-      remove.addEventListener('click', async () => {
-        if (!window.confirm('이 가상 메모를 삭제할까요?')) return;
-        try {
-          setStatus(workspaceStatus, '삭제 중…');
-          const response = await authFetch(`/api/notes/${encodeURIComponent(note.id)}`, { method: 'DELETE' });
-          if (!response.ok) {
-            setStatus(workspaceStatus, await apiError(response, '삭제에 실패했습니다.'), true);
-            return;
-          }
-          setStatus(workspaceStatus, '삭제했습니다.');
-          await loadNotes();
-        } catch (error) {
-          setStatus(workspaceStatus, error.message, true);
-        }
-      });
-
-      return article;
+    const currentVaultRequest = () => {
+      const sessionAtStart = sessionEpoch, vaultAtStart = vaultEpoch;
+      return () => sessionAtStart === sessionEpoch && vaultAtStart === vaultEpoch;
     };
 
-    async function loadNotes() {
+    // A reservation is made before any await and shared by all editors of the same note.
+    const savingNotes = new Map();
+    const savingSet = owner => {
+      const identity = owner || '';
+      if (!savingNotes.has(identity)) savingNotes.set(identity, new Set());
+      return savingNotes.get(identity);
+    };
+    const uncertainDeletes = new Map();
+    // A late PUT may still change the server after an editor is discarded or retried.
+    const uncertainSaves = new Map();
+    const separateSaveResults = new Map();
+    function syncSaveUncertaintyNotice() {
+      const notice = document.getElementById('save-uncertainty-state');
+      if (!notice) return;
+      const owner = ownerId(session?.user?.id);
+      const unknown = Boolean(uncertainSaves.get('')?.size);
+      const hasUncertainty = Boolean(session?.access_token && (owner
+        ? uncertainSaves.get(owner)?.size || unknown
+        : [...uncertainSaves.values()].some(items => items.size)));
+      notice.hidden = !hasUncertainty;
+      notice.textContent = hasUncertainty
+        ? (owner && !unknown ? '' : '계정 식별 정보가 없어 이전 요청과 현재 계정이 같은지 확인할 수 없습니다. ') +
+          '이전 수정 요청의 처리 여부가 확인되지 않아 서버 내용이 나중에 바뀔 수 있습니다. 새로고침하거나 탭을 닫으면 이 안내가 사라집니다.' : '';
+    }
+    function markSaveUncertain(owner, key) {
+      const identity = owner || '';
+      if (!uncertainSaves.has(identity)) uncertainSaves.set(identity, new Set());
+      uncertainSaves.get(identity).add(key);
+      syncSaveUncertaintyNotice();
+    }
+    function renderSeparateSaveResults() {
+      const notice = document.getElementById('save-operation-status');
+      if (!notice) return;
+      const scope = creationScope(ownerId(session?.user?.id), sessionEpoch);
+      const messages = session?.access_token && deviceProof ? [...(separateSaveResults.get(scope)?.values() || [])] : [];
+      notice.hidden = messages.length === 0;
+      notice.textContent = messages.map(message => '수정 요청: ' + message).join('\n');
+    }
+    function setSeparateSaveResult(scope, key, message) {
+      if (!separateSaveResults.has(scope)) separateSaveResults.set(scope, new Map());
+      separateSaveResults.get(scope).set(key, message);
+      renderSeparateSaveResults();
+    }
+    const uncertainDeletesFor = owner => {
+      const identity = owner || '';
+      if (!uncertainDeletes.has(identity)) uncertainDeletes.set(identity, new Set());
+      return uncertainDeletes.get(identity);
+    };
+    const ownerScopeHas = (map, owner, key) => owner
+      ? Boolean(map.get(owner)?.has(key) || map.get('')?.has(key))
+      : [...map.values()].some(items => items.has(key));
+    const ownerScopeAmbiguous = (map, owner, key) => owner
+      ? Boolean(map.get('')?.has(key))
+      : [...map.entries()].some(([identity, items]) => Boolean(identity) && items.has(key));
+    const updateMutationEditors = (owner, key) => {
+      for (const editor of mountedEditors)
+        if ((!owner || !editor.owner || editor.owner === owner) && editor.key === key) editor.updateSave();
+    };
+    function syncDeleteUncertaintyNotice() {
+      const notice = document.getElementById('delete-uncertainty-state');
+      if (!notice) return;
+      const owner = ownerId(session?.user?.id);
+      const unknownUncertainty = Boolean(uncertainDeletes.get('')?.size);
+      const hasUncertainty = Boolean(session && (owner
+        ? uncertainDeletes.get(owner)?.size || unknownUncertainty
+        : [...uncertainDeletes.values()].some(items => items.size)));
+      notice.hidden = !hasUncertainty;
+      notice.textContent = hasUncertainty
+        ? (owner && !unknownUncertainty ? '' : '계정 식별 정보가 없어 이전 요청과 현재 계정이 같은지 확인할 수 없습니다. ') +
+          '이전 삭제 요청이 나중에 서버에서 메모를 삭제할 수 있습니다. 이 탭에서는 해당 메모의 저장과 삭제를 막았습니다. 새로고침하거나 탭을 닫으면 이 보호가 사라집니다.' : '';
+    }
+    // A confirmed delete stays reserved until a later list is successfully read.
+    const deleteCheckingNotice = '삭제 응답을 받았습니다. 서버 목록을 다시 확인하는 중입니다.';
+    let failedDeleteListStatus = null;
+    const separateDeleteFailures = new Map();
+    const renderSeparateDeleteFailures = () => {
+      const notice = document.getElementById('delete-operation-status');
+      if (!notice) return;
+      const scope = creationScope(ownerId(session?.user?.id), sessionEpoch);
+      const messages = session?.access_token && deviceProof ? [...(separateDeleteFailures.get(scope)?.values() || [])] : [];
+      notice.hidden = messages.length === 0;
+      notice.textContent = messages.map(message => '삭제 요청: ' + message).join('\n');
+    };
+    const showSeparateDeleteFailure = (scope, key, message) => {
+      if (!separateDeleteFailures.has(scope)) separateDeleteFailures.set(scope, new Map());
+      separateDeleteFailures.get(scope).set(key, message);
+      renderSeparateDeleteFailures();
+    };
+    const clearSeparateDeleteFailure = (scope, key) => {
+      const failures = separateDeleteFailures.get(scope);
+      if (!failures?.delete(key)) return;
+      renderSeparateDeleteFailures();
+    };
+    const deletedNotesAwaitingList = new Map();
+    const deletedNotesFor = owner => {
+      const identity = owner || '';
+      if (!deletedNotesAwaitingList.has(identity)) deletedNotesAwaitingList.set(identity, new Map());
+      return deletedNotesAwaitingList.get(identity);
+    };
+    const noteEditor = (note, ambiguousIds = new Set()) => {
+      const owner = ownerId(session?.user?.id);
+      const resultScope = creationScope(owner, sessionEpoch);
+      const valid = noteIdValid(note.id) && !ambiguousIds.has(note.id.toLowerCase());
+      const key = valid ? note.id.toLowerCase() : Symbol('unknown-note');
+      const deleteUncertain = () => ownerScopeHas(uncertainDeletes, owner, key);
+      const blocked = () => ownerScopeHas(savingNotes, owner, key) || deleteUncertain();
+      const edits = editsFor(owner);
+      let edit = valid && owner ? edits.get(key) : null;
+      let baseTitle = note.title, baseBody = note.body;
+      const article = document.createElement('article'); article.className = 'note';
+      const grid = document.createElement('div'); grid.className = 'note-grid';
+      const titleLabel = document.createElement('label'); titleLabel.textContent = '제목';
+      const title = document.createElement('input'); title.maxLength = 120; title.value = edit?.title ?? note.title; titleLabel.append(title);
+      const bodyLabel = document.createElement('label'); bodyLabel.textContent = '본문';
+      const body = document.createElement('textarea'); body.maxLength = 2000; body.value = edit?.body ?? note.body; bodyLabel.append(body);
+      const actions = document.createElement('div'); actions.className = 'note-actions';
+      const save = document.createElement('button'); save.type = 'button'; save.className = 'secondary'; save.textContent = '수정 저장';
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = '삭제';
+      actions.append(save, remove); grid.append(titleLabel, bodyLabel, actions); article.append(grid);
+      const deleteWarning = document.createElement('p');
+      const updateDeleteWarning = () => {
+        const unidentifiedDelete = !owner && deletedNotesFor(null).get(key);
+        const ambiguous = ownerScopeAmbiguous(savingNotes, owner, key) || ownerScopeAmbiguous(uncertainDeletes, owner, key) ||
+          Boolean(unidentifiedDelete && unidentifiedDelete.sessionEpoch !== sessionEpoch);
+        deleteWarning.hidden = !deleteUncertain() && !ambiguous;
+        deleteWarning.textContent = ambiguous
+          ? '계정 식별 정보가 없어 이전 요청과 현재 계정이 같은지 확인할 수 없습니다. 이 메모의 저장과 삭제를 막았습니다.'
+          : '이 메모는 삭제 요청의 처리 여부를 확인하지 못해 이 탭에서 저장과 삭제가 차단됩니다.';
+      };
+      updateDeleteWarning();
+      article.append(deleteWarning);
+      const conflict = Boolean(edit && (edit.baseTitle !== note.title || edit.baseBody !== note.body || edit.uncertain || edit.pending > 0));
+      let approved = !conflict, approve = null, discard = null;
+      if (conflict) {
+        const notice = document.createElement('p'); notice.textContent = '서버 내용이 변경됐거나 저장 여부가 확인되지 않았습니다. 아래 최신 서버 내용과 이 탭의 수정을 비교하세요.';
+        const latestTitle = document.createElement('p'); latestTitle.textContent = '서버 제목: ' + note.title;
+        if (latestTitle.style) latestTitle.style.overflowWrap = 'anywhere';
+        const latestBody = document.createElement('pre'); latestBody.textContent = note.body;
+        if (latestBody.style) { latestBody.style.whiteSpace = 'pre-wrap'; latestBody.style.overflowWrap = 'anywhere'; }
+        approve = document.createElement('button'); approve.type = 'button'; approve.className = 'secondary'; approve.textContent = '서버 내용 확인 후 수정 허용';
+        approve.disabled = blocked();
+        approve.addEventListener('click', () => {
+          if (blocked() || Number.isInteger(edit?.reviewAfter)) return;
+          if (!window.confirm('현재 표시된 서버 내용과 수정 내용을 비교했습니까? 저장 전 서버가 다시 바뀌면 덮어쓸 수 있습니다.')) return;
+          approved = true; save.disabled = blocked(); approve.disabled = true;
+        });
+        discard = document.createElement('button'); discard.type = 'button'; discard.className = 'secondary'; discard.textContent = '서버 내용 유지하고 수정 버리기';
+        discard.disabled = blocked();
+        discard.addEventListener('click', () => {
+          const currentEditor = () => mounted.active && mounted.epoch === vaultEpoch && Boolean(deviceProof) &&
+            ownerId(session?.user?.id) === owner && edits.get(key) === edit && !blocked() && !Number.isInteger(edit?.reviewAfter);
+          if (!currentEditor()) return;
+          const uncertain = Boolean(edit?.uncertain);
+          const warning = uncertain ? ' 이전 요청이 나중에 서버 내용을 바꿀 수 있습니다.' : '';
+          if (!window.confirm('이 탭에 보관된 수정 내용을 버리고 서버 내용을 다시 읽을까요?' + warning + ' 버린 내용은 복구할 수 없습니다.')) return;
+          if (!currentEditor()) return;
+          edits.delete(key); edit = null;
+          title.value = baseTitle; body.value = baseBody;
+          save.disabled = true; approve.disabled = true; discard.disabled = true;
+          title.focus?.({preventScroll:true});
+          setStatus(workspaceStatus, '보관한 수정을 버리고 서버 내용을 다시 읽는 중입니다.' + warning, uncertain);
+          void loadNotes();
+        });
+        article.append(notice, latestTitle, latestBody, approve, discard); save.disabled = true;
+      }
+      if (!valid) { save.disabled = true; remove.disabled = true; }
+      if (valid && approved && blocked()) save.setAttribute('aria-disabled','true');
+      if (valid && blocked()) remove.setAttribute('aria-disabled','true');
+      const mounted = { active:true, epoch:vaultEpoch, owner, key, title, body, save, remove, snapshot:null,
+        updateSave: () => {
+          const saving = blocked();
+          updateDeleteWarning();
+          const waitingForFreshList = Number.isInteger(edit?.reviewAfter);
+          const holdFocusedUntilReview = !approved && Boolean(edit?.uncertain) && mounted.active && document.activeElement === save;
+          save.disabled = !valid || ((!approved || waitingForFreshList) && !holdFocusedUntilReview);
+          if ((saving || !approved || waitingForFreshList) && !save.disabled) save.setAttribute('aria-disabled','true');
+          else save.removeAttribute('aria-disabled');
+          if (saving && valid) remove.setAttribute('aria-disabled','true');
+          else remove.removeAttribute('aria-disabled');
+          if (approve && !approved) approve.disabled = saving || waitingForFreshList;
+          if (discard) discard.disabled = saving || waitingForFreshList;
+        } };
+      const remember = () => {
+        if (!mounted.active || mounted.epoch !== vaultEpoch || !deviceProof || ownerId(session?.user?.id) !== owner) return;
+        if (edit && edit.title === title.value && edit.body === body.value) return;
+        if (!edit) {
+          if (title.value === baseTitle && body.value === baseBody) return;
+          edit = {baseTitle,baseBody,title:title.value,body:body.value,revision:0,uncertain:false,pending:0};
+        }
+        edit.title = title.value; edit.body = body.value; edit.revision += 1;
+        if (edit.title === edit.baseTitle && edit.body === edit.baseBody && !edit.uncertain && !edit.pending && !conflict) { edits.delete(key); edit = null; }
+        else edits.set(key, edit);
+      };
+      mounted.snapshot = remember; mountedEditors.add(mounted);
+      save.addEventListener('blur', () => { if (!approved && !blocked()) mounted.updateSave(); });
+      title.addEventListener('input', remember); body.addEventListener('input', remember);
+      save.addEventListener('click', async () => {
+        if (!valid || !approved || !mounted.active || mounted.epoch !== vaultEpoch || !deviceProof ||
+            ownerId(session?.user?.id) !== owner || blocked() || Number.isInteger(edit?.reviewAfter)) return;
+        savingSet(owner).add(key);
+        updateMutationEditors(owner, key);
+        remember();
+        if (!edit) {
+          edit = {baseTitle,baseBody,title:title.value,body:body.value,revision:0,uncertain:false,pending:0};
+          edits.set(key, edit);
+        }
+        const current = currentVaultRequest();
+        const sentTitle = title.value, sentBody = body.value, sentRevision = edit.revision, sentEdit = edit;
+        let dispatched = false, timeoutId, reload = false;
+        let saveStatusRevision, ownsSaveStatus = false;
+        const reportSave = (message, error = false) => {
+          if (!current()) return;
+          if (workspaceStatusRevision === saveStatusRevision) { setStatus(workspaceStatus, message, error); ownsSaveStatus = true; }
+          else setSeparateSaveResult(resultScope, key, message);
+        };
+        const markUncertain = () => {
+          if (!sentEdit) return;
+          sentEdit.uncertain = true; sentEdit.reviewAfter = notesGeneration;
+          markSaveUncertain(owner, key);
+        };
+        const controller = new AbortController();
+        try {
+          setStatus(workspaceStatus, '수정 중…');
+          saveStatusRevision = workspaceStatusRevision;
+          separateSaveResults.get(resultScope)?.delete(key);
+          renderSeparateSaveResults();
+          const request = authFetch(`/api/notes/${encodeURIComponent(note.id)}`, {
+            method:'PUT',body:JSON.stringify({title:sentTitle,body:sentBody}),signal:controller.signal,
+          }, true, () => { if (!dispatched) { dispatched = true; if (sentEdit) sentEdit.pending += 1; } });
+          const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => {
+            controller.abort(); reject(Error('저장 응답 대기 시간이 지났습니다.'));
+          }, 30000); });
+          const response = await Promise.race([request, timeout]);
+          if (sentEdit && dispatched) sentEdit.pending -= 1;
+          if (!current()) { if (sentEdit && (response.ok || response.status === 408 || response.status >= 500)) markUncertain(); return; }
+          if (!response.ok) {
+            if (sentEdit && (response.status === 408 || response.status >= 500)) { markUncertain(); approved = false; reload = true; }
+            const message = await apiError(response, '수정에 실패했습니다.');
+            if (sentEdit && !sentEdit.uncertain && !sentEdit.pending && sentEdit.title === sentEdit.baseTitle && sentEdit.body === sentEdit.baseBody && edits.get(key) === sentEdit) { edits.delete(key); edit = null; }
+            reportSave((response.status === 408 || response.status >= 500) ? message + ' 저장 여부가 확인되지 않았습니다.' : message, true);
+            return;
+          }
+          baseTitle = sentTitle.trim(); baseBody = sentBody.trim();
+          if (edit && edits.get(key) === edit) {
+            if (edit.revision === sentRevision && !edit.uncertain && !edit.pending) { edits.delete(key); edit = null; }
+            else { edit.baseTitle = sentTitle.trim(); edit.baseBody = sentBody.trim(); }
+          }
+          const laterEdits = Boolean(edit && edit.revision !== sentRevision);
+          const earlierRequestUncertain = Boolean(sentEdit?.uncertain || edit?.uncertain);
+          const savedNotice = earlierRequestUncertain
+            ? '이번 수정은 성공 응답을 받았습니다. 이전 요청의 처리 여부가 확인되지 않아 서버 내용이 나중에 바뀔 수 있습니다.' +
+              (laterEdits ? ' 이후 작성한 내용은 이 탭에 남아 있습니다.' : '')
+            : laterEdits ? '이전 수정은 저장했습니다. 이후 수정은 이 탭에 남아 있습니다.' : '수정했습니다.';
+          reportSave(savedNotice, earlierRequestUncertain); reload = true;
+        } catch (error) {
+          if (sentEdit && dispatched) { sentEdit.pending = Math.max(0, sentEdit.pending - 1); markUncertain(); approved = false; reload = true; }
+          reportSave(error.message + (dispatched ? ' 저장 여부가 확인되지 않았습니다.' : ''), true);
+        } finally {
+          clearTimeout(timeoutId);
+          savingSet(owner).delete(key);
+          updateMutationEditors(owner, key);
+          if (deviceProof && ((reload && current()) || (owner && !current() && ownerId(session?.user?.id) === owner))) {
+            const listStatusRevision = workspaceStatusRevision;
+            void loadNotes({statusGuard:()=>current() && ownsSaveStatus && workspaceStatusRevision === listStatusRevision});
+          }
+        }
+      });
+      remove.addEventListener('click', async () => {
+        const attachedToCurrentVault = () => valid && mounted.active && mounted.epoch === vaultEpoch &&
+          Boolean(deviceProof) && ownerId(session?.user?.id) === owner && !blocked();
+        if (!attachedToCurrentVault() || !window.confirm('이 가상 메모를 삭제할까요?')) return;
+        if (!attachedToCurrentVault()) return;
+        savingSet(owner).add(key);
+        updateMutationEditors(owner, key);
+        const current = currentVaultRequest();
+        const requestSessionEpoch = sessionEpoch;
+        const controller = new AbortController();
+        let dispatched = false, timeoutId, deleteStatusRevision;
+        const markUncertain = () => {
+          if (!dispatched) return;
+          uncertainDeletesFor(owner).add(key);
+          syncDeleteUncertaintyNotice();
+          updateMutationEditors(owner, key);
+        };
+        try {
+          setStatus(workspaceStatus, '삭제 중…');
+          deleteStatusRevision = workspaceStatusRevision;
+          const request = (async () => {
+            const response = await authFetch(`/api/notes/${encodeURIComponent(note.id)}`,
+              { method:'DELETE', signal:controller.signal }, true, () => { dispatched = true; });
+            if (response.status >= 500) markUncertain();
+            const message = response.ok ? '' : await apiError(response, '삭제에 실패했습니다.');
+            return {response, message};
+          })();
+          const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => {
+            controller.abort(); reject(Error('삭제 응답 대기 시간이 지났습니다.'));
+          }, 30000); });
+          const {response, message} = await Promise.race([request, timeout]);
+          clearTimeout(timeoutId);
+          if (response.ok) {
+            if (current()) clearSeparateDeleteFailure(resultScope, key);
+            deletedNotesFor(owner).set(key, {after:notesGeneration, sessionEpoch:requestSessionEpoch});
+            const currentOwner = ownerId(session?.user?.id);
+            const sameKnownOwner = owner && currentOwner && owner === currentOwner;
+            const ambiguousNewSession = sessionEpoch !== requestSessionEpoch && (!owner || !currentOwner);
+            if (current() || (deviceProof && (sameKnownOwner || ambiguousNewSession))) {
+              const ownsStatus = workspaceStatusRevision === deleteStatusRevision || (!current() && !workspaceStatus.textContent);
+              if (ownsStatus) setStatus(workspaceStatus, deleteCheckingNotice);
+              const listStatusRevision = workspaceStatusRevision;
+              await loadNotes({statusGuard:() => ownsStatus && workspaceStatusRevision === listStatusRevision});
+            }
+            return;
+          }
+          if (!current()) return;
+          if (!response.ok) {
+            if (workspaceStatusRevision === deleteStatusRevision) setStatus(workspaceStatus, message, true);
+            else showSeparateDeleteFailure(resultScope, key, message);
+            return;
+          }
+        } catch (error) {
+          markUncertain();
+          if (current()) {
+            if (workspaceStatusRevision === deleteStatusRevision) setStatus(workspaceStatus, error.message, true);
+            else showSeparateDeleteFailure(resultScope, key, error.message);
+          }
+        }
+        finally {
+          clearTimeout(timeoutId);
+          if (!deletedNotesFor(owner).has(key)) savingSet(owner).delete(key);
+          updateMutationEditors(owner, key);
+        }
+      });
+      return article;
+    };
+    const unavailableEdits = (notes, owner, ambiguousIds) => {
+      if (!owner) return [];
+      const edits = existingEdits.get(owner);
+      if (!edits) return [];
+      const known = new Set(notes.filter(note=>note && noteIdValid(note.id) && !ambiguousIds.has(note.id.toLowerCase())).map(note=>note.id.toLowerCase()));
+      const pending = [];
+      for (const [key,edit] of edits) {
+        if (typeof key === 'string' && known.has(key)) continue;
+        const article = document.createElement('article'); article.className = 'note';
+        const notice = document.createElement('p'); notice.textContent = '서버 목록에 없거나 식별이 확인되지 않은 메모의 수정 내용입니다. 자동으로 다시 저장하지 않습니다.';
+        const title = document.createElement('pre'); title.textContent = edit.title;
+        const body = document.createElement('pre'); body.textContent = edit.body;
+        for (const field of [title,body]) if (field.style) { field.style.whiteSpace = 'pre-wrap'; field.style.overflowWrap = 'anywhere'; }
+        const discard = document.createElement('button'); discard.type = 'button'; discard.textContent = '보관한 수정 버리기';
+        const epoch = vaultEpoch;
+        discard.addEventListener('click', () => {
+          if (epoch !== vaultEpoch || !deviceProof || ownerId(session?.user?.id) !== owner) return;
+          const uncertain = Boolean(edit.uncertain || edit.pending > 0);
+          const warning = uncertain ? ' 이전 요청이 나중에 서버 내용을 바꿀 수 있습니다.' : '';
+          if (!window.confirm('이 탭에 보관된 수정 내용을 버릴까요?' + warning)) return;
+          edits.delete(key); article.remove?.();
+          if (uncertain) setStatus(workspaceStatus, '보관한 수정을 버렸습니다.' + warning, true);
+        });
+        article.append(notice,title,body,discard); pending.push(article);
+      }
+      return pending;
+    };
+
+    async function loadNotes({statusGuard = null} = {}) {
       if (!session?.access_token || !deviceProof) return;
-      const epoch = vaultEpoch;
+      const epoch = vaultEpoch, authEpoch = sessionEpoch, generation = ++notesGeneration;
+      const owner = ownerId(session?.user?.id);
+      const current = () => epoch === vaultEpoch && generation === notesGeneration && Boolean(deviceProof) && owner === ownerId(session?.user?.id);
+      const ownsFailedDeleteListStatus = () => failedDeleteListStatus?.sessionEpoch === authEpoch &&
+        failedDeleteListStatus.owner === owner && failedDeleteListStatus.revision === workspaceStatusRevision && failedDeleteListStatus.text === workspaceStatus.textContent;
+      const reportListFailure = message => {
+        if (statusGuard && !statusGuard()) {
+          const notice = document.getElementById('notes-lookup-status');
+          if (notice) {
+            notice.textContent = '메모 목록을 읽지 못했습니다. 기기를 다시 확인한 뒤 목록을 확인하세요.';
+            notice.hidden = false;
+          }
+          return;
+        }
+        const tracksDelete = workspaceStatus.textContent === deleteCheckingNotice || ownsFailedDeleteListStatus();
+        setStatus(workspaceStatus, message, true);
+        if (tracksDelete) failedDeleteListStatus = {sessionEpoch:authEpoch, owner, revision:workspaceStatusRevision, text:message};
+      };
       try {
         const response = await authFetch('/api/notes');
-        if (epoch !== vaultEpoch || !deviceProof) return;
+        if (!current()) return;
         if (!response.ok) {
           const message = await apiError(response, '자료를 읽을 수 없습니다.');
-          if (epoch !== vaultEpoch || !deviceProof) return;
-          setStatus(workspaceStatus, message, true);
+          if (!current()) return;
+          const activeBeforeRemoval = document.activeElement;
+          const focusWasInNotes = typeof notesRoot.contains === 'function' && notesRoot.contains(activeBeforeRemoval);
+          snapshotMountedEditors();
+          reportListFailure(message + (owner && existingEdits.get(owner)?.size ? ' 수정 내용은 이 탭에 보관되어 있습니다.' : ''));
           notesRoot.replaceChildren();
+          if (focusWasInNotes) Promise.resolve().then(() => {
+            if (!current() || !document.hasFocus() || (document.activeElement !== document.body && document.activeElement !== activeBeforeRemoval)) return;
+            const target = document.getElementById('vault-title');
+            if (!target || typeof target.focus !== 'function') return;
+            target.focus({preventScroll:true});
+            requestAnimationFrame(() => {
+              if (!current() || !document.hasFocus() || document.activeElement !== target) return;
+              const bounds = target.getBoundingClientRect();
+              if (bounds.top < 8 || bounds.bottom > window.innerHeight - 8)
+                target.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+            });
+          });
           return;
         }
         const notes = await response.json();
-        if (epoch !== vaultEpoch || !deviceProof) return;
-        if (!Array.isArray(notes)) {
-          setStatus(workspaceStatus, '자료 형식이 맞지 않습니다.', true);
+        if (!current()) return;
+        if (!Array.isArray(notes) || notes.some(note => !note || typeof note !== 'object' || Array.isArray(note) ||
+            typeof note.title !== 'string' || typeof note.body !== 'string')) {
+          reportListFailure('자료 형식이 맞지 않습니다.');
           return;
         }
-        notesRoot.replaceChildren(...notes.map(noteEditor));
-        if (!notes.length) setStatus(workspaceStatus, '메모가 없습니다.');
+        const lookupNotice = document.getElementById('notes-lookup-status');
+        if (lookupNotice) { lookupNotice.hidden = true; lookupNotice.textContent = ''; }
+        const pendingDeletes = deletedNotesFor(owner);
+        let confirmedDeleteListed = false;
+        for (const [key, pending] of pendingDeletes) if (generation > pending.after && (owner || pending.sessionEpoch === sessionEpoch)) {
+          pendingDeletes.delete(key);
+          savingSet(owner).delete(key);
+          confirmedDeleteListed = true;
+        }
+        const ambiguousDeleteListed = [...deletedNotesAwaitingList.entries()].some(([identity, pending]) =>
+          [...pending.values()].some(item => generation > item.after && (
+            (identity !== (owner || '') && (!identity || !owner)) ||
+            (!owner && !identity && item.sessionEpoch !== sessionEpoch))));
+        const active = document.activeElement;
+        let focus = null;
+        for (const editor of mountedEditors) {
+          if (typeof editor.key !== 'string' || editor.owner !== owner) continue;
+          for (const name of ['title','body','save','remove']) if (editor[name] === active) {
+            focus = {key:editor.key,name,start:active.selectionStart,end:active.selectionEnd};
+          }
+        }
+        snapshotMountedEditors();
+        const edits = owner && existingEdits.get(owner);
+        if (edits) for (const edit of edits.values())
+          if (Number.isInteger(edit.reviewAfter) && generation > edit.reviewAfter) delete edit.reviewAfter;
+        const counts = new Map();
+        for (const note of notes) if (note && noteIdValid(note.id)) {
+          const key = note.id.toLowerCase(); counts.set(key, (counts.get(key) || 0) + 1);
+        }
+        const ambiguous = new Set([...counts].filter(([,count])=>count>1).map(([key])=>key));
+        const articles = notes.map(note=>noteEditor(note, ambiguous));
+        const orphans = unavailableEdits(notes, owner, ambiguous);
+        if (articles.length) articles[0].append(...orphans); else articles.push(...orphans);
+        notesRoot.replaceChildren(...articles);
+        if (focus && document.hasFocus() && (document.activeElement === document.body || document.activeElement === active)) {
+          const editor = !ambiguous.has(focus.key) ? [...mountedEditors].find(item=>item.owner===owner && item.key===focus.key) : null;
+          let target = editor?.[focus.name];
+          if (target?.disabled && focus.name === 'save') target = editor?.title;
+          if (!target) target = document.getElementById('vault-title');
+          if (target && !target.disabled && typeof target.focus === 'function') {
+            target.focus({preventScroll:true});
+            if (target === editor?.[focus.name] && typeof focus.start === 'number' && typeof focus.end === 'number')
+              target.setSelectionRange?.(focus.start,focus.end);
+            requestAnimationFrame(() => {
+              if (!document.hasFocus() || document.activeElement !== target) return;
+              if (typeof target.getBoundingClientRect !== 'function' || typeof target.scrollIntoView !== 'function') return;
+              const bounds = target.getBoundingClientRect();
+              if (bounds.top < 8 || bounds.bottom > window.innerHeight - 8)
+                target.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+            });
+          }
+        }
+        if (!notes.length && !workspaceStatus.textContent) setStatus(workspaceStatus, '메모가 없습니다.');
+        if ((!statusGuard || statusGuard()) && (workspaceStatus.textContent === deleteCheckingNotice || ownsFailedDeleteListStatus())) {
+          if (ambiguousDeleteListed)
+            setStatus(workspaceStatus, '목록을 다시 읽었습니다. 계정 식별 정보가 없어 이전 요청과 현재 계정이 같은지 확인할 수 없어 해당 메모의 작업을 계속 막습니다.', true);
+          else if (confirmedDeleteListed) setStatus(workspaceStatus, '삭제했습니다.');
+        }
       } catch (error) {
-        if (epoch !== vaultEpoch) return;
-        setStatus(workspaceStatus, error.message, true);
-        session = null;
-        renderAuth();
+        if (!current()) return;
+        reportListFailure(error.message + (owner && existingEdits.get(owner)?.size ? ' 수정 내용은 이 탭에 보관되어 있습니다.' : ''));
       }
     }
 
     loginForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+      const epoch = ++sessionEpoch;
       setStatus(loginStatus, '로그인 중…');
       try {
+        const fallbackSnapshot = requireFallbackState(null);
         const response = await authApi('login', {
           email: document.querySelector('#email').value,
           password: document.querySelector('#password').value,
-        });
-        const data = await parseJson(response);
+        }, epoch);
+        const data = response.data;
+        if (epoch !== sessionEpoch) return;
         document.querySelector('#password').value = '';
+        if (response.ok && data?.accessToken && fallbackSnapshot) {
+          requireFallbackState(fallbackSnapshot);
+          if (!fallbackSnapshot.allowed) {
+            try { fallbackStorage.setItem(fallbackAckKey, fallbackSnapshot.signature); }
+            catch { throw Error('AUTH_STORAGE_UNAVAILABLE'); }
+          }
+          requireFallbackState(fallbackSnapshot, true);
+        }
         if (!response.ok || !applySession(data)) {
-          setStatus(loginStatus, response.status === 429
+          setAuthLockNotice(response.ok && !data?.accessToken
+            ? '로그인 응답을 확인하지 못했습니다. 다시 로그인해 주세요.'
+            : response.status === 429
             ? '로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.'
             : response.status === 503 && data?.error === 'AUTH_RISK_GUARD_UNAVAILABLE'
               ? '로그인 보안 확인이 불가능하여 접근을 일시 중단했습니다.'
               : data?.error === 'LOGIN_FAILED'
                 ? '로그인 정보가 일치하지 않습니다.'
-                : data?.error || '로그인에 실패했습니다.', true);
+                : data?.error || '로그인에 실패했습니다.', undefined, true);
           return;
         }
+        heldDraftLockNotice = '';
         setStatus(loginStatus);
         renderAuth();
         window.dispatchEvent(new Event('aleph:identity'));
-      } catch {
-        setStatus(loginStatus, '로그인 서버에 연결할 수 없습니다.', true);
+      } catch (error) {
+        if (epoch !== sessionEpoch) return;
+        if (error?.message === 'AUTH_LOCK_UNAVAILABLE') {
+          setAuthLockNotice('인증 잠금을 사용할 수 없어 요청을 보내지 않았습니다.');
+          return;
+        }
+        if (error?.message === 'AUTH_STORAGE_UNAVAILABLE') {
+          setAuthLockNotice('인증 저장 상태를 확인할 수 없어 로그인을 완료하지 않았습니다.');
+          return;
+        }
+        if (error?.message === 'AUTH_CONTEXT_CHANGED' || error?.message === 'AUTH_LOGOUT_UNCONFIRMED') {
+          setAuthLockNotice('로그인 중 다른 로그아웃 요청이 있어 자료실을 열지 않았습니다. 다시 로그인해 주세요.');
+          return;
+        }
+        if (error?.message === 'AUTH_PAGE_HIDDEN') return;
+        setAuthLockNotice(error?.message === 'AUTH_WAIT_TIMEOUT'
+          ? '이전 인증 요청이 끝나지 않아 대기 시간이 초과되었습니다. 다시 시도하세요.'
+          : error?.message === 'AUTH_REQUEST_TIMEOUT'
+            ? '인증 응답 시간이 초과되었습니다. 서버의 처리 여부는 확인되지 않았습니다.'
+            : '로그인 서버에 연결할 수 없습니다.', undefined, true);
       }
     });
 
     logoutButton.addEventListener('click', async () => {
-      try { await authApi('logout'); } catch {}
-      session = null;
-      lockVault();
-      renderAuth();
-      window.dispatchEvent(new Event('aleph:identity'));
+      const logoutIntent = recordLogoutIntent();
+      const fallbackLogout = !logoutIntent && recordFallbackLogout();
+      const logoutProtected = Boolean(logoutIntent || fallbackLogout);
+      const heldDraft = invalidateSession();
+      const draftNotice = heldDraftLockNotice ? heldDraftLockNotice + ' ' : '';
+      setStatus(loginStatus, draftNotice + '자료실은 잠겼습니다. 서버 로그아웃 확인 중입니다.');
+      const epoch = sessionEpoch;
+      try {
+        const response = await authApi('logout', undefined, epoch, logoutIntent);
+        if (epoch === sessionEpoch) setStatus(loginStatus, draftNotice + (response.ok
+          ? '자료실을 잠그고 서버 응답을 받았습니다. 원격 세션 종료는 별도 확인이 필요합니다.' +
+            (!logoutProtected ? ' 새로고침하면 기존 세션이 다시 열릴 수 있습니다.' : '')
+          : '자료실은 잠겼지만 서버 로그아웃을 확인하지 못했습니다.' +
+            (!logoutProtected ? ' 새로고침하면 기존 세션이 다시 열릴 수 있습니다.' : '')), !response.ok);
+      } catch {
+        if (epoch === sessionEpoch) setStatus(loginStatus, draftNotice + '자료실은 잠겼지만 서버 로그아웃을 확인하지 못했습니다.' +
+          (!logoutProtected ? ' 새로고침하면 기존 세션이 다시 열릴 수 있습니다.' : ''), true);
+      }
     });
 
     createForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+      const owner = ownerId(session?.user?.id);
+      if (creationBlocked(owner)) return;
+      const confirmedSession = session, confirmedVaultEpoch = vaultEpoch;
+      if (uncertainCreations.get(currentCreationScope())?.size &&
+          !window.confirm('이전 요청도 나중에 반영될 수 있습니다. 현재 입력을 별도의 새 메모로 추가할까요?')) return;
+      if (session !== confirmedSession || vaultEpoch !== confirmedVaultEpoch || creationBlocked(owner)) return;
+      const identity = owner || '', ticket = {};
+      pendingCreates.set(identity, ticket);
+      syncCreatePendingState();
       const title = document.querySelector('#new-title');
       const body = document.querySelector('#new-body');
+      const submittedTitle = title.value, submittedBody = body.value, submittedRevision = draftRevision;
+      const current = currentVaultRequest();
+      let dispatched = false, attempt = null;
       try {
+        const id = nextNoteId();
+        attempt = {id, title:submittedTitle, body:submittedBody, scope:creationScope(owner, sessionEpoch), confirmed:false};
         setStatus(workspaceStatus, '추가 중…');
-        const response = await authFetch('/api/notes', {
-          method: 'POST',
-          body: JSON.stringify({ title: title.value, body: body.value }),
-        });
-        if (!response.ok) {
-          setStatus(workspaceStatus, await apiError(response, '추가에 실패했습니다.'), true);
+        const {response, message, verified} = await sendCreationAttempt(attempt, () => { dispatched = true; },
+          () => { if (current()) showDraftWarning('전송한 내용'); }, true);
+        const confirmed = response.ok && response.status === 201 && verified;
+        if (response.ok && !confirmed) {
+          attempt.initialUnconfirmed = true;
+          rememberUncertainCreation(attempt);
+          if (current()) {
+            showDraftWarning('전송한 내용');
+            setStatus(workspaceStatus, '추가 응답을 확인하지 못했습니다. 요청이 처리됐을 수 있습니다.', true);
+          }
           return;
         }
-        title.value = '';
-        body.value = '';
-        setStatus(workspaceStatus, '추가했습니다.');
-        await loadNotes();
+        if (!current()) {
+          if (confirmed) { attempt.confirmed = true; rememberUncertainCreation(attempt); }
+          return;
+        }
+        if (!response.ok) {
+          if (uncertainCreationStatus(response.status)) showDraftWarning('전송한 내용');
+          if (current()) {
+            setStatus(workspaceStatus, message, true);
+          }
+          return;
+        }
+        if (draftRevision === submittedRevision && title.value === submittedTitle && body.value === submittedBody) {
+          clearDraft();
+          setStatus(workspaceStatus, '추가했습니다.');
+        } else {
+          setStatus(workspaceStatus, '추가했습니다. 이후 작성한 내용은 유지합니다.');
+        }
+        recoverInterruptedDraft();
+        const listStatusRevision = workspaceStatusRevision;
+        void loadNotes({statusGuard:()=>workspaceStatusRevision === listStatusRevision});
       } catch (error) {
-        setStatus(workspaceStatus, error.message, true);
+        if (dispatched && attempt) rememberUncertainCreation(attempt);
+        if (current()) {
+          if (dispatched) showDraftWarning('전송한 내용');
+          setStatus(workspaceStatus, error.message, true);
+        }
+      } finally {
+        if (pendingCreates.get(identity) === ticket) pendingCreates.delete(identity);
+        syncCreatePendingState();
       }
     });
 
     (async () => {
-      await restoreSession();
-      renderAuth();
-      window.dispatchEvent(new Event('aleph:identity'));
+      if (await restoreSession() === true) {
+        renderAuth();
+        window.dispatchEvent(new Event('aleph:identity'));
+      }
     })();
 
     import('/device.mjs').then(({initDeviceAccess}) => {
       deviceAccess = initDeviceAccess({
-        getAccessToken: () => session?.access_token ?? null,
+        getAccessToken: () => isSessionRevalidating() ? null : session?.access_token ?? null,
         onAuthorized: verifiedVault,
         onLocked: () => { lockVault(); renderAuth(); }
       });
@@ -527,9 +1746,9 @@
       if (status) status.textContent = '기기 검증 구성 오류';
     });
     import('/operations.mjs').then(({ initOperations }) => {
-      initOperations({getToken: () => session?.access_token ?? null, getDeviceProof: () => deviceProof});
+      initOperations({getToken: () => isSessionRevalidating() ? null : session?.access_token ?? null, getDeviceProof: () => deviceProof});
     }).catch(() => { const el = document.querySelector('#ops-state'); if (el) el.textContent = '동적 화면을 불러오지 못했습니다.'; });
-
+  })();
   </script>
 </body>
 </html>

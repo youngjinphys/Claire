@@ -1,10 +1,16 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, isAuthApiError, isAuthSessionMissingError } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { createAuthRiskGuard, suspiciousAuthInput, validLoginInput, verifiedEdgeAddress } from '../src/auth-xdr.mjs';
 
 const COOKIE = 'aleph_refresh';
 const MAX_BODY_BYTES = 8192;
 const MAX_REFRESH_AGE = 7 * 24 * 60 * 60;
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const INVALID_REFRESH_CODES = new Set(['session_expired','refresh_token_not_found',
+  'refresh_token_already_used','invalid_grant']);
+const invalidRefresh = error => isAuthSessionMissingError(error) ||
+  (isAuthApiError(error) && (error.status === 400 || error.status === 401)
+    && INVALID_REFRESH_CODES.has(error.code));
 
 const noStore = (response) => {
   response.setHeader('Cache-Control', 'no-store');
@@ -67,7 +73,9 @@ const requestOriginAllowed = (request) => {
 const publicSession = (session) => ({
   accessToken: session.access_token,
   expiresAt: session.expires_at ?? null,
-  user: { email: session.user?.email ?? null },
+  user: { email: session.user?.email ?? null,
+    ...(typeof session.user?.id === 'string' && USER_ID.test(session.user.id)
+      ? {id: session.user.id.toLowerCase()} : {}) },
 });
 
 export function createAuthHandler({
@@ -75,14 +83,14 @@ export function createAuthHandler({
   supabaseFactory = createClient,
   riskGuardFactory = createAuthRiskGuard,
 } = {}) {
-  let client;
   let risk;
   const backend = () => {
     if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) return null;
-    if (!client) client = supabaseFactory(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
+    // Supabase Auth keeps mutable session and refresh state on the client.
+    // Each request needs its own instance so concurrent users cannot share it.
+    return supabaseFactory(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    return client;
   };
   const guard = () => {
     if (!risk) risk = riskGuardFactory({env, supabaseFactory});
@@ -99,8 +107,13 @@ export function createAuthHandler({
     const action = request.query?.action;
     if (typeof action !== 'string' || !['login','session','logout'].includes(action))
       return response.status(404).json({ error: 'AUTH_ROUTE_NOT_FOUND' });
-    const supabase = backend();
-    if (!supabase) return response.status(503).json({ error: 'AUTH_BACKEND_NOT_CONFIGURED' });
+    let supabase;
+    try { supabase = backend(); }
+    catch { supabase = null; }
+    if (!supabase) {
+      if (action === 'logout') clearRefreshCookie(response, env);
+      return response.status(503).json({ error: 'AUTH_BACKEND_NOT_CONFIGURED' });
+    }
 
     if (action === 'login') {
       const contentType = request.headers?.['content-type'];
@@ -144,13 +157,19 @@ export function createAuthHandler({
       if (!refreshToken) return response.status(401).json({ error: 'NO_SESSION' });
       try {
         const {data, error} = await supabase.auth.refreshSession({refresh_token:refreshToken});
-        if (error || !data.session?.access_token || !data.session?.refresh_token)
-          throw new Error('SESSION_EXPIRED');
+        if (error) {
+          if (invalidRefresh(error)) {
+            clearRefreshCookie(response, env);
+            return response.status(401).json({error:'SESSION_EXPIRED'});
+          }
+          return response.status(503).json({error:'AUTH_BACKEND_UNAVAILABLE'});
+        }
+        if (!data?.session?.access_token || !data.session?.refresh_token)
+          return response.status(503).json({error:'AUTH_BACKEND_UNAVAILABLE'});
         setRefreshCookie(response, data.session.refresh_token, env);
         return response.status(200).json(publicSession(data.session));
       } catch {
-        clearRefreshCookie(response, env);
-        return response.status(401).json({ error: 'SESSION_EXPIRED' });
+        return response.status(503).json({error:'AUTH_BACKEND_UNAVAILABLE'});
       }
     }
 
@@ -158,10 +177,15 @@ export function createAuthHandler({
     clearRefreshCookie(response, env);
     if (refreshToken) {
       try {
-        const {data} = await supabase.auth.refreshSession({refresh_token:refreshToken});
-        if (data.session?.access_token && data.session?.refresh_token)
-          await supabase.auth.signOut({scope:'local'});
-      } catch { /* cookie revocation is still performed locally */ }
+        const {data, error} = await supabase.auth.refreshSession({refresh_token:refreshToken});
+        if (error || !data?.session?.access_token || !data.session.refresh_token)
+          return response.status(503).json({error:'REMOTE_LOGOUT_UNCONFIRMED'});
+        const result = await supabase.auth.signOut({scope:'local'});
+        if (!result || result.error)
+          return response.status(503).json({error:'REMOTE_LOGOUT_UNCONFIRMED'});
+      } catch {
+        return response.status(503).json({error:'REMOTE_LOGOUT_UNCONFIRMED'});
+      }
     }
     return response.status(200).json({ok:true});
   };

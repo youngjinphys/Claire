@@ -34,12 +34,14 @@ async function browser(){
     region.querySelector=selector=>selector==='[data-host-report-details]'?details:null;
     return region;
   };
-  const context=vm.createContext({...model,hostPanel,console,document,window,fetch,AbortController,URL,Blob,Response,TextDecoder,performance,
+  const loadStudentModule=()=>Promise.resolve({hostPanel});
+  const context=vm.createContext({...model,hostPanel,loadStudentModule,console,document,window,fetch,AbortController,URL,Blob,Response,TextDecoder,performance,
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay,type:'timeout'});return id},clearTimeout:id=>timers.delete(id),
     setInterval:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay,type:'interval'});return id},clearInterval:id=>timers.delete(id),
   });
   const source=(await readFile(new URL('../public/dashboard.mjs',import.meta.url),'utf8'))
-    .replace(/^(?:import\s*\{[\s\S]*?\}\s*from\s*['"][^'"]+['"];\s*)+/u, '');
+    .replace(/^(?:import\s*\{[\s\S]*?\}\s*from\s*['"][^'"]+['"];\s*)+/u, '')
+    .replace('import(hostModuleUrl)','loadStudentModule(hostModuleUrl)');
   vm.runInContext(source,context);await flush();
   return {get:document.getElementById,requests,window,document,timers,context,hostModes};
 }

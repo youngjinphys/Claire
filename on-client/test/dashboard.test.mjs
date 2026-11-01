@@ -75,7 +75,7 @@ test('unified dashboard reuses four student host cards and three measured resour
   assert.match(html, /로컬 JSON 보고서/u);
   assert.match(html, /예제 DEMO|DEMO/u);
   const js = readFileSync(new URL('dashboard.mjs', base), 'utf8');
-  assert.match(js, /import \{ hostPanel \} from '\/student\/extension\.mjs'/u);
+  assert.match(js, /\/student\/extension\.mjs/u);
   assert.match(js, /hostPanel\(hostState, normalizedMode\)/u);
   const student = readFileSync(new URL('../student/extension.mjs', base), 'utf8');
   assert.match(student, /data-host-report-details/u);

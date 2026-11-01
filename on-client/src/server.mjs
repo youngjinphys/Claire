@@ -27,6 +27,8 @@ const id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.te
 const record=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const text=value=>typeof value==='string'&&value.length<=2000;
 const files=new Map([['/','public/index.html'],['/index.html','public/index.html'],['/app.js','public/app.js'],['/style.css','public/style.css'],['/vulnerabilities-view.mjs','public/vulnerabilities-view.mjs'],['/student/extension.mjs','student/extension.mjs'],
+  // Bounded alternate module URLs let an explicit retry avoid a stalled fetch.
+  ...Array.from({length:7},(_,index)=>[`/student/extension-retry-${index+2}.mjs`,'student/extension.mjs']),
   ['/ai-connect.mjs','public/ai-connect.mjs'],
   ['/dashboard.html','public/dashboard.html'],
   ['/dashboard.css','public/dashboard.css'],

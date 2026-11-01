@@ -59,7 +59,21 @@
         <section class="panel integrated-host" id="host-panel" aria-labelledby="host-overview-title">
           <h2 id="host-overview-title" class="visually-hidden">네트워크·방화벽·Windows 기록·SDP</h2>
           <div id="integrated-host-root">
-            <p class="records-note" role="status">학생 수집기 보고서와 SDP 연결 정보를 확인하는 중입니다. 읽지 못한 값은 예시 숫자로 바꾸지 않습니다.</p>
+            <div class="student-host-panel host-loading">
+              <h3>내 PC 관제 · 학생 추가 기능</h3>
+              <p>최근 Windows System·Application의 경고·오류 건수는 OS 기록 집계입니다. 침해나 공격 탐지 결과가 아닙니다.</p>
+              <div class="student-host-cards" aria-hidden="true">
+                <div class="host-loading-grid">
+                  <article data-host-card="network"><h4>01 · 네트워크</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>출처: 조회 전</p></article>
+                  <article data-host-card="firewall"><h4>02 · 방화벽</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>출처: 조회 전</p></article>
+                  <article data-host-card="windows-events"><h4>03 · Windows 기록</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>System·Application, 경고(Level 3)·오류(Level 2)</p></article>
+                  <article data-host-card="sdp"><h4>04 · SDP</h4><strong>확인 중</strong><p>SDP 연결 상태와 보안 정보를 확인 중입니다.</p><p>PC 조회와 독립 · 실제 연결·정책은 기존 화면에서 별도 확인</p></article>
+                </div>
+              </div>
+              <div class="host-loading-actions" aria-hidden="true"><span></span><span></span></div>
+              <p role="status">학생 수집기 보고서와 SDP 연결 정보를 확인 중입니다.<span class="visually-hidden"> 읽지 못한 값은 예시 숫자로 바꾸지 않습니다.</span></p>
+              <p aria-hidden="true">새 OS 조회: 일반 권한 터미널에서 node student/collect-host.mjs 실행 → 새 observation.json 선택. 이 버튼은 기존 로컬 JSON만 읽으며 OS·방화벽 설정을 변경하지 않습니다.</p>
+            </div>
           </div>
           <p id="sdp-policy-detail" class="sdp-policy-detail" role="status" aria-live="polite">SDP 정책 상태는 아직 조회되지 않았습니다.</p>
         </section>
