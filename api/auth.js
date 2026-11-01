@@ -1,6 +1,7 @@
 import { createClient, isAuthApiError, isAuthSessionMissingError } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { createAuthRiskGuard, suspiciousAuthInput, validLoginInput, verifiedEdgeAddress } from '../src/auth-xdr.mjs';
+import { createAuthCookieGeneration } from '../src/auth-cookie-generation.mjs';
 
 const COOKIE = 'aleph_refresh';
 const MAX_BODY_BYTES = 8192;
@@ -82,8 +83,19 @@ export function createAuthHandler({
   env = process.env,
   supabaseFactory = createClient,
   riskGuardFactory = createAuthRiskGuard,
+  generationFactory = createAuthCookieGeneration,
 } = {}) {
-  let risk;
+  let risk, cookieGenerations;
+  // Production refuses to silently downgrade when its shared generation DB is
+  // unavailable. Test/local legacy mode is kept for installed clients and
+  // offline exercises; AUTH_COOKIE_GENERATION_MODE=legacy is an explicit rollback.
+  const mode = env.AUTH_COOKIE_GENERATION_MODE;
+  const invalidMode = mode != null && !['enforce', 'legacy'].includes(mode);
+  const generationEnabled = mode === 'enforce' || (mode == null && env.NODE_ENV === 'production');
+  const generations = () => {
+    if (!cookieGenerations) cookieGenerations = generationFactory({ env, supabaseFactory });
+    return cookieGenerations;
+  };
   const backend = () => {
     if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) return null;
     // Supabase Auth keeps mutable session and refresh state on the client.
@@ -107,11 +119,40 @@ export function createAuthHandler({
     const action = request.query?.action;
     if (typeof action !== 'string' || !['login','session','logout'].includes(action))
       return response.status(404).json({ error: 'AUTH_ROUTE_NOT_FOUND' });
+    if (invalidMode) {
+      if (action === 'logout') clearRefreshCookie(response, env);
+      return response.status(503).json({ error: 'AUTH_GENERATION_UNAVAILABLE' });
+    }
+    let generation = null, existingCookies = null;
+    if (generationEnabled) {
+      try {
+        generation = generations();
+        existingCookies = generation.parse(request.headers?.cookie);
+      } catch {
+        if (action === 'logout') clearRefreshCookie(response, env);
+        return response.status(503).json({ error: 'AUTH_GENERATION_UNAVAILABLE' });
+      }
+      if (existingCookies.invalid && action === 'session')
+        return response.status(401).json({ error: 'NO_SESSION' });
+      // A logout must leave a newer tombstone even if the provider is down or
+      // an old login/session response arrives after this response.
+      if (action === 'logout') {
+        try { generation.write(response, existingCookies, await generation.next(), { revoked: true }); }
+        catch {
+          clearRefreshCookie(response, env);
+          return response.status(503).json({ error: 'AUTH_GENERATION_UNAVAILABLE' });
+        }
+      }
+    }
+    const requestRefreshToken = () => generation
+      ? generation.refreshToken(existingCookies)
+      : refreshTokenCookie(request.headers?.cookie);
     let supabase;
     try { supabase = backend(); }
     catch { supabase = null; }
     if (!supabase) {
-      if (action === 'logout') clearRefreshCookie(response, env);
+      // Preserve the already-written generation tombstone on provider outage.
+      if (action === 'logout' && !generation) clearRefreshCookie(response, env);
       return response.status(503).json({ error: 'AUTH_BACKEND_NOT_CONFIGURED' });
     }
 
@@ -139,6 +180,11 @@ export function createAuthHandler({
         return response.status(429).json({ error: 'AUTH_RATE_LIMITED' });
       }
 
+      let issueGeneration = null;
+      if (generation) {
+        try { issueGeneration = await generation.next(); }
+        catch { return response.status(503).json({ error: 'AUTH_GENERATION_UNAVAILABLE' }); }
+      }
       let result;
       try { result = await supabase.auth.signInWithPassword({email, password: body.password}); }
       catch { return response.status(503).json({ error: 'AUTH_BACKEND_UNAVAILABLE' }); }
@@ -148,33 +194,41 @@ export function createAuthHandler({
       catch { return response.status(503).json({ error: 'AUTH_RISK_GUARD_UNAVAILABLE' }); }
       // Never forward arbitrary provider error strings or verbose account existence hints.
       if (!success) return response.status(401).json({ error: 'LOGIN_FAILED' });
-      setRefreshCookie(response, session.refresh_token, env);
+      if (generation) generation.write(response, existingCookies, issueGeneration, { token: session.refresh_token });
+      else setRefreshCookie(response, session.refresh_token, env);
       return response.status(200).json(publicSession(session));
     }
 
     if (action === 'session') {
-      const refreshToken = refreshTokenCookie(request.headers?.cookie);
+      const refreshToken = requestRefreshToken();
       if (!refreshToken) return response.status(401).json({ error: 'NO_SESSION' });
+      let issueGeneration = null;
+      if (generation) {
+        try { issueGeneration = await generation.next(); }
+        catch { return response.status(503).json({ error: 'AUTH_GENERATION_UNAVAILABLE' }); }
+      }
       try {
         const {data, error} = await supabase.auth.refreshSession({refresh_token:refreshToken});
         if (error) {
           if (invalidRefresh(error)) {
-            clearRefreshCookie(response, env);
+            if (generation) generation.write(response, existingCookies, issueGeneration, { revoked: true });
+            else clearRefreshCookie(response, env);
             return response.status(401).json({error:'SESSION_EXPIRED'});
           }
           return response.status(503).json({error:'AUTH_BACKEND_UNAVAILABLE'});
         }
         if (!data?.session?.access_token || !data.session?.refresh_token)
           return response.status(503).json({error:'AUTH_BACKEND_UNAVAILABLE'});
-        setRefreshCookie(response, data.session.refresh_token, env);
+        if (generation) generation.write(response, existingCookies, issueGeneration, { token: data.session.refresh_token });
+        else setRefreshCookie(response, data.session.refresh_token, env);
         return response.status(200).json(publicSession(data.session));
       } catch {
         return response.status(503).json({error:'AUTH_BACKEND_UNAVAILABLE'});
       }
     }
 
-    const refreshToken = refreshTokenCookie(request.headers?.cookie);
-    clearRefreshCookie(response, env);
+    const refreshToken = requestRefreshToken();
+    if (!generation) clearRefreshCookie(response, env);
     if (refreshToken) {
       try {
         const {data, error} = await supabase.auth.refreshSession({refresh_token:refreshToken});

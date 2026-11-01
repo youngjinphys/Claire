@@ -160,7 +160,7 @@ test('a delayed observation lock rejection cannot invalidate a newer authenticat
   } finally {gate.resolve();await tick();await tick();}
 });
 
-test('an abandoned authentication marker permits a deliberate new login',async()=>{
+test('an abandoned authentication marker refuses a new cookie mutation until its outcome is verified',async()=>{
   let sessions=0,logins=0;
   const shared=sharedContext();
   const fetch=async path=>{
@@ -175,10 +175,14 @@ test('an abandoned authentication marker permits a deliberate new login',async()
   await tick();await tick();
   next.login();
   for(let i=0;i<20;i++)await tick();
-  assert.equal(logins,1,'a deliberate new login should recover from an abandoned marker');
+  // The pending value may still represent an in-flight Set-Cookie. The page
+  // cannot prove it is abandoned; explicit login must not bypass that boundary.
+  assert.equal(logins,0,'unresolved pending state cannot safely send credentials');
+  assert.equal(next.nodes.get('signed-in').hidden,true);
+  assert.match(next.nodes.get('login-status').textContent,/완료 상태|잠금|인증/);
 });
 
-test('pagehide does not abort a started logout or block a later login',async()=>{
+test('pagehide cancels an active logout and leaves subsequent restoration fail closed',async()=>{
   const logout=deferred();
   let sessions=0,logins=0,logoutSignal;
   const shared=sharedContext();
@@ -199,11 +203,12 @@ test('pagehide does not abort a started logout or block a later login',async()=>
     first.click('logout');
     await until(()=>logoutSignal);
     first.win.dispatchEvent(new Event('pagehide'));
-    assert.equal(logoutSignal.aborted,false,'pagehide must not cancel an in-flight logout');
+    assert.equal(logoutSignal.aborted,true,'pagehide cancels the request to release the browser auth lock');
     const next=shared.page(fetch);
     for(let i=0;i<20;i++)await tick();
-    next.login();
-    await until(()=>logins===2);
+    assert.equal(next.nodes.get('signed-in').hidden,true,
+      'an unconfirmed logout must not silently restore an older cookie');
+    assert.equal(logins,1,'a cancelled logout is not permission to start another auth automatically');
   } finally {logout.resolve(reply({ok:true}));}
 });
 

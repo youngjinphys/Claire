@@ -63,6 +63,8 @@ jobs:
         env:
           CLAIRE_QA_CAPTURE_DIR: ${{ runner.temp }}/claire-observatory-qa
         run: node on-client/tools/dashboard-browser-smoke.mjs
+      - name: Chrome HttpOnly cookie generation race smoke test
+        run: node scripts/auth-cookie-browser-smoke.mjs
       - name: Upload synthetic-browser QA screenshots
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
