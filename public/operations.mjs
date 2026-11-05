@@ -48,10 +48,12 @@ function dataCell(tr, cls, value) { tr.append($('td',cls,value)); }
 function chart(snapshot, onFilter) {
   const svg=byId('outcomes-chart');
   svg.replaceChildren();
-  const total=['verified','failed','inconclusive','unrun'].map(x=>snapshot.summary[x]);
+  const records=new Map(snapshot.records.map(record=>[record.id,record]));
+  const states=cases.map(item=>records.get(item.probeId)?.outcome||'unrun');
+  const total=['verified','failed','inconclusive','unrun'].map(state=>states.filter(value=>value===state).length);
   const labels=['HTTP 일치','불일치','보류','미실행'];
-  const colors=['#a1dbd1','#df8e8e','#e2ad72','#71848f'];
-  const max=Math.max(1,...total);
+  const colors=['#9fd4c8','#e09898','#e2ad72','#8ea0ad'];
+  const max=Math.max(4,Math.ceil(Math.max(...total)/4)*4);
   svg.setAttribute('viewBox','0 0 580 240');
   svg.setAttribute('role','img');
   svg.setAttribute('aria-label',labels.map((v,i)=>v+' '+total[i]+'건').join(', '));
@@ -141,7 +143,7 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
     byId('ops-info').textContent= '서버 HTTP '+x.summary.httpCount+'건 · 불일치 '+x.summary.failed+'건 · 판정보류 '+x.summary.inconclusive+'건';
     byId('ops-state').textContent= '실측 관측 완료 · 공식 심판 판정 별도';
     byId('ops-state').classList.remove('status-failed');
-    chart(x,value=>{outcome.value=value;rows();byId('evidence').scrollIntoView({block:'start',behavior:'smooth'});});
+    chart(x,value=>{stage.value='all';kind.value='all';outcome.value=value;rows();byId('evidence').scrollIntoView({block:'start',behavior:'smooth'});});
     showRecords(x.records);
     rows();
   }

@@ -11,12 +11,6 @@
   <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
   <link rel="stylesheet" href="/operations.css">
   <link rel="stylesheet" href="/observatory-theme.css">
-  <style>#notes input,#notes textarea,#notes button { scroll-margin:8px } button.secondary[aria-disabled="true"],button.secondary[aria-disabled="true"]:hover,button.danger[aria-disabled="true"],button.danger[aria-disabled="true"]:hover { opacity:1; color:var(--quiet); border-color:var(--line); background:transparent; cursor:not-allowed }</style>
-  <style>#create-submit[aria-disabled="true"] { filter:saturate(.45); cursor:not-allowed }</style>
-  <style>
-    #vault-title { scroll-margin:8px }
-    #vault-title:focus { outline:2px solid var(--mint); outline-offset:3px }
-  </style>
 </head>
 <body>
   <a class="skip" href="#main">본문으로 이동</a>
@@ -50,7 +44,7 @@
       <section id="overview" aria-labelledby="overview-title">
         <div class="hero">
           <div>
-            <p class="section-kicker">SECURITY OPERATIONS / STAGE 12</p>
+            <p class="section-kicker">12단계 증적 원장</p>
             <h1 id="overview-title">탈환 작전실</h1>
             <p class="lead">판정 규칙, 탐지, 회수, 복구를 하나의 증적 원장에서 확인합니다. 서버가 관측한 응답과 실행하지 않은 검사를 구별하며, 표시된 성공 문구는 통과 근거로 쓰지 않습니다.</p>
           </div>
@@ -93,7 +87,7 @@
         <div class="section-row"><h2 class="section-title" id="telemetry-title">관측 및 방어 계층</h2><span class="section-note" id="ops-info">실측 기록을 연결하는 중</span></div>
         <div class="analysis-grid">
           <div class="panel">
-            <div class="panel-head"><div><h3>HTTP 응답 검증 분포</h3><p>가린 서버 응답만으로 계산 · 각 막대를 선택하면 원장을 필터링합니다.</p></div><span class="badge">LIVE HTTP</span></div>
+            <div class="panel-head"><div><h3>검증 원장 관측 분포</h3><p>1–11단계 원장 22개 항목 기준 · 막대를 선택하면 다른 필터를 초기화합니다.</p></div><span class="badge">원장 기준</span></div>
             <div class="panel-content">
               <svg id="outcomes-chart" viewBox="0 0 580 240" role="img" aria-label="API 결과를 불러오기 전"></svg>
               <div class="chart-key"><i class="square"></i><span>자체 HTTP 일치 ≠ 공식 12단계 통과</span></div>

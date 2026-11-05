@@ -2,13 +2,16 @@
   "schema": "aleph.defense.commit-files.v1",
   "files": [
     "README.md",
-    "api/auth.js",
-    "docs/AUTH_COOKIE_GENERATIONS.md",
-    "docs/AUTH_RECENT_COMMITS_AUDIT_2026-11-01.md",
+    "on-client/public/dashboard.css",
+    "on-client/public/dashboard.html",
+    "package-lock.json",
+    "package.json",
     "package/bundle-commit-files.json",
-    "scripts/auth-cookie-browser-smoke.mjs",
-    "src/auth-cookie-generation.mjs",
-    "test/auth-cookie-hardening.test.mjs"
+    "public/index.html",
+    "public/observatory-theme.css",
+    "public/operations.css",
+    "public/operations.mjs",
+    "test/operations-chart-ui.test.mjs"
   ],
-  "releaseNote": "2026-11-01: audit the last 15 Claire main commits; repair bounded signed-cookie cleanup, restrict invalid refresh tombstones to their input generation, best-effort clear observed signed cookies on generation DB logout outage, update compatibility documentation and real Chromium concurrency regression. Preserve existing JSON/auth routes, SQL rights, old submissions, and default branch. No branch creation, packaging or deployment."
+  "releaseNote": "2026-11-06: the outcome chart counts the 22 ledger rows and a bar click clears the stage and kind filters. The operations theme and local dashboard drop the decorative glow, hover lift, and poster English. Direct dependencies are pinned to @supabase/supabase-js@2.119.0, jose@6.2.15, @simplewebauthn/server@14.0.3, and @simplewebauthn/browser@14.0.0. No deployment and no official judge result."
 }

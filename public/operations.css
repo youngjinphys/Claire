@@ -196,6 +196,12 @@ textarea { min-height:95px; resize:vertical }
   html { scroll-behavior:auto }
   button,.bar-column { transition:none!important }
 }
+#notes input,#notes textarea,#notes button,#vault-title { scroll-margin:8px }
+#vault-title:focus { outline:2px solid var(--mint); outline-offset:3px }
+button.secondary[aria-disabled="true"],button.secondary[aria-disabled="true"]:hover,button.danger[aria-disabled="true"],button.danger[aria-disabled="true"]:hover {
+  opacity:1; color:var(--quiet); border-color:var(--line); background:transparent; cursor:not-allowed
+}
+#create-submit[aria-disabled="true"] { filter:saturate(.45); cursor:not-allowed }
 /* Stage 11 authentication surface: same restrained audit language as Recon Ledger */
 .install-panel {display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 16px;padding:13px 20px}
 .install-panel span {color:var(--muted);font-size:12px;line-height:1.5}

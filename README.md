@@ -1,3 +1,18 @@
+## 2026-11-06 · 원장 차트, 차분한 화면, 의존성 고정
+
+- **작동하는 기능**: 작전실 결과 차트는 API 요약 건수가 아니라 검증 원장 22개 항목을 셉니다. 막대를 누르면 단계·종류 필터를 모두로 되돌리고 그 결과만 표에 남깁니다. 작전실과 로컬 관제는 회전 고리, 빛 번짐, 호버 들림, 영문 포스터 문구 대신 한글 이름과 단색 버튼을 씁니다. 관측 중 상태 표시등만 움직이며, 움직임 줄이기를 켜면 멈춥니다. 1024px 미만의 한 열 배치와 기존 판정·기록 동작은 그대로입니다.
+- **의존성**: `@supabase/supabase-js@2.119.0`, `jose@6.2.15`, `@simplewebauthn/server@14.0.3`, `@simplewebauthn/browser@14.0.0`에 정확히 고정했습니다. 학생 앱(`on-client`)에는 외부 npm 의존성이 없습니다.
+- **다시 실행하는 방법**:
+  ```bash
+  npm test
+  npm --prefix on-client test
+  node on-client/tools/dashboard-browser-smoke.mjs
+  ```
+  예제 화면은 `cd on-client && npm run demo` 후 `http://127.0.0.1:5189/` 와 `/dashboard.html` 입니다. 정적 작전실만 열면 `/api/ops` 가 없어 증적 갱신은 HTTP 404로 실패하며, 그 실패를 새 관측으로 취급하지 않습니다. 차트 막대는 작전실의 “검증 원장 관측 분포”에서 누릅니다.
+- **검증 범위**: 위 명령, 차트 단위 검사, 로컬 Chrome의 화면·프레임 확인입니다. 예제(demo) 판정·공식 심판 판정·운영 배포 성공이 아닙니다.
+
+---
+
 ## 2026-11-05 · 좁은 화면에서 본문이 짓눌리지 않도록 배치
 
 - **작동하는 기능**: 1024px 미만 Claire 화면은 데스크톱 가로 캔버스 대신 한 열로 쌓입니다. 작전실은 옆 레일이 남아 있는 900px 이하에서 제목·본문 아래로 버튼을 내리고, 한글 문장은 어절 단위로 줄바꿈합니다. 1440px의 2열 관제와 기존 판정·기록 동작은 그대로입니다.
@@ -17,7 +32,7 @@
 - **작동하는 기능**: Local Observatory (`on-client/public/dashboard.html`) 및 루트 작전실 UI의 시각적 완성도와 프레임 레이트 최적화.
   - `@keyframes led-ripple`: 기존 `box-shadow` 메인 스레드 리페인트 애니메이션을 GPU 합성 레이어(Composited layer, `transform: scale()` + `opacity`)로 전환하여 리페인트 0 및 120fps 완벽 지원.
   - 실시간 자원 차트(`dashboard.mjs`의 `renderChart()`): 단일 원자적 `replaceChildren(...elements)` 배치 갱신을 통해 중간 상태 깜빡임(flicker) 및 DOM 트래싱 방지.
-  - 인터랙션 가속: 메트릭 카드 및 호스트 카드 호버 트랜지션에 `will-change: transform, box-shadow; backface-visibility: hidden;` 하드웨어 가속 적용. 버튼 클릭 시 스케일 피드백 마이크로 인터랙션 추가.
+  - 당시 인터랙션: 메트릭 카드와 호스트 카드 호버에 `will-change`와 버튼 스케일 피드백을 넣었습니다. 2026-11-06 이후 화면은 그 들림 효과를 쓰지 않습니다.
   - 타이포그래피 & 스크롤바: 다크 테마 안티앨리어싱 스무딩 및 슬림형 커스텀 스크롤바 적용. 중복 분산되었던 모바일 미디어 쿼리 통합 정리.
 - **다시 실행하는 방법**:
   ```bash
@@ -529,7 +544,7 @@ npm run test:xdr && npm run xdr:run -- exfiltration && npm run xdr:run -- exfilt
 
 ### 10단계 복구 테스트 의존성 분리 (`ERR_MODULE_NOT_FOUND`)
 
-`package.json`과 `package-lock.json`은 이미 `@supabase/supabase-js@2.117.2`와 `jose@6.2.12`를 고정하고 있습니다. `ERR_MODULE_NOT_FOUND`는 사용 중인 로컬 Node 환경이 설치된 패키지를 찾지 못할 때 발생합니다. Node 버전만 교체해도 패키지는 자동 설치되지 않습니다.
+당시 `package.json`과 `package-lock.json`은 `@supabase/supabase-js@2.117.2`와 `jose@6.2.12`에 고정되어 있었습니다. `ERR_MODULE_NOT_FOUND`는 사용 중인 로컬 Node 환경이 설치된 패키지를 찾지 못할 때 발생합니다. Node 버전만 교체해도 패키지는 자동 설치되지 않습니다.
 
 기존 `test:recovery`는 모의 DB 및 토큰 검증 함수를 주입하지만 `api/restore-note.js`가 최상위에서 서버 전용 SDK를 불러와, 의존성이 없는 checkout에서는 테스트 로딩조차 되지 않았습니다. **테스트 주입 시에는 외부 SDK를 로딩하지 않고, 실제 복원 요청 처리 때에는 공식 SDK와 JWT 검증 모듈을 지연 로딩**하도록 수정했습니다. 인증, 백업 검증, 권한 검증, 복원 범위와 데이터 쓰기 계약은 변경하지 않았습니다.
 

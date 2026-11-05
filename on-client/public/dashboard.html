@@ -17,19 +17,19 @@
     <aside class="rail" aria-label="관제 메뉴">
       <div class="identity">
         <div class="logo-mark" aria-hidden="true">C<span>.</span></div>
-        <div><strong>Claire</strong><small>LOCAL OBSERVATORY</small></div>
+        <div><strong>Claire</strong><small>로컬 관제</small></div>
       </div>
-      <div class="rail-section">WORKSPACE</div>
+      <div class="rail-section">화면</div>
       <nav class="rail-nav" aria-label="화면 전환">
-        <a class="active" href="/dashboard.html" aria-current="page"><span class="nav-mark" aria-hidden="true">◈</span> 통합 관제</a>
-        <a href="/"><span class="nav-mark" aria-hidden="true">▤</span> ALEPH 기본 화면</a>
-        <a href="#resource-panel"><span class="nav-mark" aria-hidden="true">▥</span> PC 자원 추이</a>
-        <a href="#records-panel"><span class="nav-mark" aria-hidden="true">≡</span> SDP · XDR 기록</a>
-        <a href="#source-panel"><span class="nav-mark" aria-hidden="true">◎</span> 데이터 출처</a>
+        <a class="active" href="/dashboard.html" aria-current="page">통합 관제</a>
+        <a href="/">ALEPH 기본 화면</a>
+        <a href="#resource-panel">PC 자원 추이</a>
+        <a href="#records-panel">SDP · XDR 기록</a>
+        <a href="#source-panel">데이터 출처</a>
       </nav>
       <div class="rail-bottom">
         <div class="rail-rule"></div>
-        <p>LOCAL · READ ONLY</p>
+        <p>로컬 · 읽기 전용</p>
         <span>관리자 권한 불필요</span>
         <span>자원 실측값 외부 전송 없음</span><span>자동 조치 없음</span>
       </div>
@@ -37,7 +37,7 @@
 
     <div class="workspace">
       <header class="masthead">
-        <div class="path">WORKSPACE <span>/</span> LOCAL OBSERVATORY</div>
+        <div class="path">관제 <span>/</span> 로컬</div>
         <div class="masthead-right">
           <span class="status-led" aria-hidden="true"></span>
           <span id="live-state" role="status" aria-live="polite">관측 대기</span>
@@ -48,8 +48,8 @@
       <main id="dashboard">
         <div class="heading-row">
           <div>
-            <p class="section-index">01 / SYSTEM OVERVIEW</p>
-            <h1>Claire 통합 관제<span class="heading-dot">.</span></h1>
+            <p class="section-index">시스템 개요</p>
+            <h1>Claire 통합 관제</h1>
             <p class="lede">네트워크 · 방화벽 · Windows 기록 · SDP를 한 화면에서 확인하고, 아래에서 CPU·메모리·디스크 추이와 보안 기록을 살펴봅니다.</p>
             <p class="runtime-note">측정 대상: Node 서버 실행 환경. WSL·컨테이너·가상 머신에서는 물리 PC 전체와 다를 수 있습니다.</p>
           </div>
@@ -81,7 +81,7 @@
         <section class="resource-panel" id="resource-panel" aria-labelledby="resource-title">
           <div class="resource-heading">
             <div>
-              <p class="section-index">02 / LOCAL RESOURCE METRICS</p>
+              <p class="section-index">이 PC의 자원</p>
               <h2 id="resource-title">CPU · 메모리 · 디스크</h2>
               <p>로컬 Node 서버가 실행되는 환경의 OS 실측 · 위의 선택 JSON 보고서와는 수집 시각·출처가 다를 수 있습니다.</p>
             </div>
@@ -121,11 +121,11 @@
           <section class="panel chart-panel" aria-labelledby="trend-title">
             <div class="panel-heading">
               <div>
-                <p class="section-index">03 / RESOURCE HISTORY</p>
+                <p class="section-index">자원 이력</p>
                 <h2 id="trend-title">CPU · 메모리 사용률 추이</h2>
                 <p>실측 표본만 표시 · 최근 10분 · 목표 간격 5초 · 실패 시 수동 재개</p>
               </div>
-              <div class="legend" aria-label="차트 계열"><span class="legend-cpu">CPU</span><span class="legend-memory">MEMORY</span></div>
+              <div class="legend" aria-label="차트 계열"><span class="legend-cpu">CPU</span><span class="legend-memory">메모리</span></div>
             </div>
             <div class="chart-frame">
               <svg id="resource-chart" viewBox="0 0 920 260" role="img" aria-label="최근 10분 CPU 실선·메모리 점선 사용률 차트. 수치·시각은 아래 측정 기록에서 확인." preserveAspectRatio="xMidYMid meet"></svg>
@@ -136,10 +136,9 @@
 
           <aside class="panel insight-panel" aria-labelledby="insight-title">
             <div class="panel-heading">
-              <div><p class="section-index">04 / OBSERVATION NOTES</p><h2 id="insight-title">변화 분석</h2></div>
+              <div><p class="section-index">관측 메모</p><h2 id="insight-title">변화 분석</h2></div>
               <span class="small-label">수치 기반</span>
             </div>
-            <div class="analysis-mark" aria-hidden="true">↗</div>
             <p class="analysis-value" id="trend-headline">표본 대기</p>
             <p class="analysis-copy" id="trend-copy">첫 번째 측정값부터 메모리에 축적됩니다. 두 개 이상의 유효한 관측값이 있어야 변화 폭을 계산할 수 있습니다.</p>
             <div class="analysis-rule"></div>
@@ -157,7 +156,7 @@
         <section class="panel host-report-panel" id="host-report-section" aria-labelledby="host-report-title">
           <div class="panel-heading">
             <div>
-              <p class="section-index">05 / SOURCE DETAILS</p>
+              <p class="section-index">데이터 출처</p>
               <h2 id="host-report-title">네트워크 · 방화벽 · Windows 기록 근거</h2>
               <p>선택한 OS 보고서의 세부사항과 이동 집계 비교. 새 관측은 터미널에서 수집기를 직접 실행해야 합니다.</p>
             </div>
@@ -169,7 +168,7 @@
 
         <section class="panel records-panel measurement-log" aria-labelledby="measurement-title">
           <div class="panel-heading">
-            <div><p class="section-index">06 / MEASURED EVIDENCE</p><h2 id="measurement-title">추이의 근거 · 측정 기록</h2><p>센서별 시각·단위·실패 이유를 그대로 확인합니다.</p></div>
+            <div><p class="section-index">측정 기록</p><h2 id="measurement-title">추이의 근거 · 측정 기록</h2><p>센서별 시각·단위·실패 이유를 그대로 확인합니다.</p></div>
             <button type="button" class="button ghost" id="export-measurements" disabled>측정 기록 JSON 저장</button>
           </div>
           <p id="measurement-note" class="records-note">관측 기록 없음 · 계정/보안 로그는 내보내지 않습니다.</p>
@@ -187,7 +186,7 @@
 
         <section class="panel records-panel" id="records-panel" aria-labelledby="records-title">
           <div class="panel-heading">
-            <div><p class="section-index">07 / SECURITY EVENTS</p><h2 id="records-title">최근 접속 · XDR 기록</h2><p>기존 Claire의 본인 범위 조회 재사용 · 최대 40건</p></div>
+            <div><p class="section-index">보안 기록</p><h2 id="records-title">최근 접속 · XDR 기록</h2><p>기존 Claire의 본인 범위 조회 재사용 · 최대 40건</p></div>
             <div class="record-tools">
               <span class="record-origin" id="events-origin">원천 확인 중</span>
               <label for="event-filter">종류</label>
