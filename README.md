@@ -1,3 +1,17 @@
+## 2026-11-05 · 좁은 화면에서 본문이 짓눌리지 않도록 배치
+
+- **작동하는 기능**: 1024px 미만 Claire 화면은 데스크톱 가로 캔버스 대신 한 열로 쌓입니다. 작전실은 옆 레일이 남아 있는 900px 이하에서 제목·본문 아래로 버튼을 내리고, 한글 문장은 어절 단위로 줄바꿈합니다. 1440px의 2열 관제와 기존 판정·기록 동작은 그대로입니다.
+- **다시 실행하는 방법**:
+  ```bash
+  npm test
+  npm --prefix on-client test
+  node on-client/tools/dashboard-browser-smoke.mjs
+  ```
+  예제 화면은 `cd on-client && npm run demo` 후 `http://127.0.0.1:5189/` 와 `/dashboard.html` 입니다. 정적 작전실만 열면 `/api/ops` 가 없어 증적 갱신은 HTTP 404로 실패하며, 그 실패를 새 관측으로 취급하지 않습니다.
+- **검증 범위**: 위 명령과 로컬 Chrome 확인입니다. 예제(demo) 판정·공식 심판 판정·운영 배포 성공이 아닙니다.
+
+---
+
 ## 2026-10-31 · 관제 UI 렌더링 파이프라인 및 동적 애니메이션 최적화
 
 - **작동하는 기능**: Local Observatory (`on-client/public/dashboard.html`) 및 루트 작전실 UI의 시각적 완성도와 프레임 레이트 최적화.

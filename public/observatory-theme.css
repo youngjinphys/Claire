@@ -100,6 +100,10 @@ table th {background:#132c46;color:#b5cbe1}
 tbody tr:hover {background:rgba(102,178,242,.09)}
 .table-wrap {scrollbar-color:#497295 var(--surface)}
 @media(max-width:1160px) {.hero-orbit {right:10%;opacity:.36}}
+@media(max-width:900px) {
+  .hero { align-items:flex-start; flex-direction:column; min-height:auto }
+  .hero-orbit { right:-72px; top:-64px; width:220px; height:220px; opacity:.22 }
+}
 @media(max-width:730px) {
   body {background-attachment:scroll}
   .hero {min-height:auto;padding:25px 20px;border-radius:21px;align-items:flex-start}

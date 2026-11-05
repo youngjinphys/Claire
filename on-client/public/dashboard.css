@@ -20,6 +20,7 @@
 html { scroll-behavior: smooth; }
 body {
   margin: 0; background: var(--bg); color: var(--ink); min-width: 320px;
+  word-break: keep-all; overflow-wrap: anywhere;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
 }
 button, select { font: inherit; }
@@ -377,4 +378,7 @@ footer { padding: 14px 0 7px; border-top: 1px solid var(--line); color: #667c96;
   #integrated-host-root [data-host-card] h4 { font-size: 11px; }
   .resource-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .provenance-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 420px) {
+  .resource-metrics { grid-template-columns: minmax(0, 1fr); }
 }

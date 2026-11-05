@@ -1,4 +1,5 @@
-/* Alekov 학생 클라이언트 — 자체 작성 CSS. 외부 폰트·라이브러리·이미지 없음. PC 1280px 이상 기준. */
+/* Alekov 학생 클라이언트 — 자체 작성 CSS. 외부 폰트·라이브러리·이미지 없음.
+   1024px 이상은 기존 2열 배치. 더 좁은 화면은 아래 미디어 쿼리에서 한 열로 쌓는다. */
 
 :root {
   --bg: #f5f6f8;
@@ -28,7 +29,7 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 1024px; }
+body { margin: 0; min-width: 320px; word-break: keep-all; overflow-wrap: anywhere; }
 h1 { font-size: 1.5rem; margin: 0 0 16px; }
 h2 { font-size: 1.05rem; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 h3 { font-size: 1rem; margin: 0; }
@@ -211,3 +212,31 @@ main:focus { outline: none; }
 .state-ok { background: var(--allow-soft); color: var(--allow); }
 .ai-result[data-state="connected"] { border-left: 3px solid var(--allow); padding-left: 12px; }
 .ai-result[data-state="unknown"] { border-left: 3px solid var(--unknown); padding-left: 12px; }
+
+/* 1024px 미만은 데스크톱 캔버스를 가로로 스크롤하지 않고 한 열로 쌓는다. */
+@media (max-width: 1023px) {
+  .topbar {
+    height: auto; min-height: 56px; padding: 10px 16px;
+    flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  }
+  .brand, .brand-name, .topbar-status { min-width: 0; }
+  .brand-name small { display: block; margin-left: 0; }
+  .topbar-status { flex-wrap: wrap; justify-content: flex-start; gap: 8px; }
+  .checked-at { overflow-wrap: anywhere; }
+  .layout { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--border); padding: 10px 12px 12px; }
+  #nav { flex-direction: row; flex-wrap: wrap; }
+  #nav [role="tab"] { flex: 1 1 8rem; text-align: center; min-height: 44px; }
+  .sidebar-note { margin: 8px 4px 0; }
+  main { padding: 16px 16px 40px; min-width: 0; }
+  .grid-2, .event .grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .connect-layout { flex-direction: column; }
+  .connect-art { flex-basis: auto; }
+  .plain-list li { align-items: flex-start; }
+  .art-explain { float: none; margin: 0 0 8px; }
+}
+@media (max-width: 560px) {
+  .identity, .kv { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .identity dt, .kv dt { margin-top: 8px; }
+  .mode-badge { max-width: 100%; overflow-wrap: anywhere; text-align: center; }
+}
