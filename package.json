@@ -29,7 +29,7 @@
     "test:bundle-isolated": "node --test test/bundle-stage12-isolated.test.mjs"
   },
   "engines": {
-    "node": ">=22 <25"
+    "node": ">=22 <25 || >=26 <27"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.119.0",

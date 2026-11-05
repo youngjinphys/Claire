@@ -2,16 +2,16 @@
   "schema": "aleph.defense.commit-files.v1",
   "files": [
     "README.md",
-    "on-client/public/dashboard.css",
-    "on-client/public/dashboard.html",
+    "on-client/docs/CONNECTION_TROUBLESHOOT.md",
+    "on-client/docs/FINAL_PRODUCT_GUIDE.md",
+    "on-client/docs/STUDENT_LAUNCH_GUIDE.md",
+    "on-client/docs/STUDENT_RELEASE_RECORD.md",
+    "on-client/docs/STUDENT_RUNBOOK.md",
+    "on-client/package.json",
+    "on-client/tools/start-alekov.ps1",
     "package-lock.json",
     "package.json",
-    "package/bundle-commit-files.json",
-    "public/index.html",
-    "public/observatory-theme.css",
-    "public/operations.css",
-    "public/operations.mjs",
-    "test/operations-chart-ui.test.mjs"
+    "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-11-06: the outcome chart counts the 22 ledger rows and a bar click clears the stage and kind filters. The operations theme and local dashboard drop the decorative glow, hover lift, and poster English. Direct dependencies are pinned to @supabase/supabase-js@2.119.0, jose@6.2.15, @simplewebauthn/server@14.0.3, and @simplewebauthn/browser@14.0.0. No deployment and no official judge result."
+  "releaseNote": "2026-11-06: npm EBADENGINE on Node.js 26 came from engines declaring only the class baseline. The supported range is now >=22 <25 || >=26 <27, matching the suite that passed on 26.7.0. Node 25 and 27 or newer stay outside the range. The class and CI baseline remains 24.19.0. No deployment and no official judge result."
 }

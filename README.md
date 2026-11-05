@@ -1,3 +1,12 @@
+## 2026-11-06 · Node.js 26 엔진 경고
+
+- **원인**: `engines`에 수업 기준 버전만 적혀 있어, 전체 테스트가 경고 없이 통과하는 Node.js 26.7.0에서 `npm install`이 `EBADENGINE`을 냈습니다.
+- **작동하는 기능**: 루트와 학생 앱의 지원 범위는 `>=22 <25 || >=26 <27`입니다. 22~24와 26을 허용하고, 시험하지 않은 25와 27 이상은 제외합니다. 수업·CI 기준은 24.19.0입니다. Windows 실행 도구도 같은 범위만 통과시킵니다.
+- **다시 실행하는 방법**: `npm install`과 `npm --prefix on-client install`이 엔진 경고 없이 끝나야 합니다. 이어서 `npm test`와 `npm --prefix on-client test`를 실행합니다.
+- **검증 범위**: 위 설치와 이 저장소의 Node.js 26.7.0 테스트입니다. 공식 심판 판정이나 운영 배포 성공이 아닙니다.
+
+---
+
 ## 2026-11-06 · 원장 차트, 차분한 화면, 의존성 고정
 
 - **작동하는 기능**: 작전실 결과 차트는 API 요약 건수가 아니라 검증 원장 22개 항목을 셉니다. 막대를 누르면 단계·종류 필터를 모두로 되돌리고 그 결과만 표에 남깁니다. 작전실과 로컬 관제는 회전 고리, 빛 번짐, 호버 들림, 영문 포스터 문구 대신 한글 이름과 단색 버튼을 씁니다. 관측 중 상태 표시등만 움직이며, 움직임 줄이기를 켜면 멈춥니다. 1024px 미만의 한 열 배치와 기존 판정·기록 동작은 그대로입니다.
@@ -172,7 +181,7 @@ git rev-parse HEAD^         # 반드시 287bedb8e69a2c5bc3b44ea5586ac382987cf8b0
 | 자료실 | Vercel `/api/notes`, `/api/announcements/:id`, `/api/restore/notes/:id` | SDP 경유 강제 연결, 공식 공격·심판 환경 |
 | 작전실 | `GET /api/ops` · `public/operations.*` · `npm run test:operations` | 공식 통과/회수/복구 증적이 제공되기 전까지 별도 |
 
-1. **점검 및 설치:** Node.js 22~24와 Git를 준비하고 `git status --porcelain && git log -1 --format='%H %s'`로 해당 소스를 확인합니다. `npm ci`로 잠금파일의 의존성을 설치합니다. 운영 비밀값은 공식 Vercel/Supabase 비밀 환경설정에만 입력합니다.
+1. **점검 및 설치:** Node.js 22~24 또는 26과 Git를 준비하고 `git status --porcelain && git log -1 --format='%H %s'`로 해당 소스를 확인합니다. `npm ci`로 잠금파일의 의존성을 설치합니다. 운영 비밀값은 공식 Vercel/Supabase 비밀 환경설정에만 입력합니다.
 2. **정상 실행:** `npm run test:operations && npm run test:package && npm run judge:check` 후 `npm run build -- --local`로 프론트엔드를 빌드합니다. 정적 화면만 살펴보려면 `python3 -m http.server 4173 --directory public`을 사용하지만 이 명령은 Vercel API를 실행하지 않습니다. 서버 함수까지 테스트하려면 공식 Vercel 프로젝트 연결 후 `vercel dev`를 사용합니다. 실제 동작은 배포된 `https://skt-aleph-defense.vercel.app/`에서 API 응답으로 확인합니다.
 3. **정지:** 정적 미리보기 및 로컬 `vercel dev`는 터미널에서 `Ctrl+C`로 중지합니다. 배포 서비스 중지는 Vercel 프로젝트 관리자의 승인을 거쳐 배포/도메인 설정에서 별도로 수행합니다. 표의 갱신은 실측 GET만 실행하며 회수나 복구를 명령하지 않습니다.
 4. **복구/되돌리기:** `git status`와 `git diff`로 작업 구분 후 이전 정상 커밋을 새 검사본으로 체크아웃해 검증합니다. 운영 배포 되돌리기는 해당 검증된 deployment를 Vercel의 롤백 기능으로 선택합니다. DB·인증·엔진 정책은 Git 롤백으로 복원되지 않습니다. 정책/메모 복구는 `npm run recovery:preview`로 사전 검증하고, 검증된 침해 전 백업·권한·정확한 적용 범위가 있을 때에만 별도 승인 후 실행합니다. `git reset --hard`는 사용하지 않습니다.
@@ -701,7 +710,7 @@ npm run bundle
 - `npm ci && npm run judge:check`는 `decider.mjs`, `detect.mjs` 및 XDR 판정 파일 여섯 개를 각각 다른 임시 폴더에 단독 복사해 Node에서 실행합니다. 공식 18필드·5필드 계약, 9단계 120/121건 경계, XDR 0~1 확신도·행동 규칙을 검사하되 비공개 심판을 호출하거나 합격을 선언하지 않습니다.
 - `npm run bundle`은 기존 Git 제외 `bundle-notes.json`이 있으면 사용자 작성 문구를 우선 사용합니다. 새 checkout처럼 파일이 없으면 비밀값 없는 `package/bundle-notes.template.json`의 정확히 세 줄만 사용합니다. 부정확한 사용자 파일은 자동 무시하지 않고 오류로 중단합니다.
 - 8단계 두 자원 구역 ID와 API 경로는 현재 활성 10단계에서도 `/aleph.json.resourceZones`에 포함되며, 키의 순서는 중요하지 않지만 예상하지 못한 경로·필드가 들어오면 배포 검증이 실패합니다.
-- Node 지원 범위는 `>=22 <25`로 제한해 공급자가 미래 Node 25로 자동 변경하는 것을 피하면서 실습에서 사용한 22/24 환경을 허용합니다. `package-lock.json`을 함께 보존합니다.
+- Node 지원 범위는 `>=22 <25 || >=26 <27`입니다. 수업에서 쓴 22/24와, 이 저장소 테스트로 확인한 26을 허용하고, 시험하지 않은 25와 27 이상은 제외합니다. 수업·CI 기준은 24.19.0입니다. `package-lock.json`을 함께 보존합니다.
 - **해결되지 않은 실환경 조건:** 공식 운영 `allowedReasonCodes`, 실제 심판 JWT/계정 매핑, 독립 검증된 침해 전 B 백업, 10단계 SQL RPC·Vercel 복원 설정은 이 명령이 생성하지 않습니다. 현재 접근 판정은 기본 거부를 유지하고 `RESTORE_DISABLED` 503을 복원 성공으로 기록하지 않습니다.
 
 로컬 실행 순서: `npm ci && npm run judge:check && npm run test:package && npm run bundle`. 제출 결과의 미실행 항목은 채점 통과가 아닙니다.

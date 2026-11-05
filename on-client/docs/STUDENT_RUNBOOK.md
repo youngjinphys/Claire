@@ -25,7 +25,7 @@ Claire는 본인 계정·기기·현재 세션, 업무 앱 접근 판정, 본인
 
 | 대상 | 소스에서 확인한 버전·계약 | 사용자 PC 실제 상태 |
 |---|---|---|
-| Node.js | `on-client/package.json`: `engines.node=24.19.0`; `start-alekov.ps1`은 **22~24 허용**, 권장 **24.19.0** | `node --version` 출력 미확인 |
+| Node.js | `on-client/package.json`의 `engines.node`는 22 이상 25 미만, 또는 26 이상 27 미만. `start-alekov.ps1`은 **22~24와 26 허용**, 권장 **24.19.0** | `node --version` 출력 미확인 |
 | npm | `on-client/package.json`: `start`, `demo`, `check`, `test`. 앱 패키지에 외부 npm `dependencies` 선언 없음 | `npm --version` 미확인 |
 | Linux 터미널 | `on-client/package.json`의 `npm start`(Node.js 서버), 기본·예제 경로 | Linux 실제 실행 미확인 |
 | Windows PowerShell | 공식 실행 도구 `on-client/tools/start-alekov.ps1` | Windows PC가 없어 미실행 |
@@ -81,7 +81,7 @@ test -f on-client/src/ai/service.mjs
 test -f on-client/student/extension.mjs
 ~~~
 
-`test -f`는 파일이 있으면 종료 코드 0이고 출력이 없는 것이 정상이다. 파일이 누락되면 판정용 경량화 커밋일 수 있다. 기존 파일이나 미커밋 작업을 덮어쓰지 말고 전체 프로젝트인지 확인한다. 앱 `package.json`에는 외부 npm 의존성 설치 단계가 없으며, 기준 Node 버전은 **24.19.0**이다. 실제 Linux의 버전은 `node --version` 출력으로만 확인한다.
+`test -f`는 파일이 있으면 종료 코드 0이고 출력이 없는 것이 정상이다. 파일이 누락되면 판정용 경량화 커밋일 수 있다. 기존 파일이나 미커밋 작업을 덮어쓰지 말고 전체 프로젝트인지 확인한다. 앱 `package.json`에는 외부 npm 의존성 설치 단계가 없으며, 지원 범위는 22~24와 26이고 수업 기준 버전은 **24.19.0**이다. 실제 Linux의 버전은 `node --version` 출력으로만 확인한다.
 
 ~~~bash
 cd on-client
@@ -216,7 +216,7 @@ git ls-files -- 'on-client/.env.example'
 | 화면/오류 | 의미와 확인할 것 | 다음 한 가지 행동 |
 |---|---|---|
 | `앱 폴더가 아닙니다`·파일 없음 | `on-client` 위치 또는 임시 경량화본 | `Test-Path`로 실행 파일 확인, 기존 작업 보존 |
-| Node 없음/버전 다름 | `node --version`·Node 22~24 확인 | 기준 24.19.0 준비 후 새 PowerShell |
+| Node 없음/버전 다름 | `node --version`·Node 22~24 또는 26 확인 | 기준 24.19.0 준비 후 새 PowerShell |
 | 포트 충돌 | 5189 사용 중 | 다른 프로그램을 끄지 않고 `-Port 5190` |
 | 시작 시간 초과 | 서버 HTTP 200 검증 실패 | 첫 오류와 서버 시작 창 기록 확인 |
 | `ENGINE_NOT_CONNECTED`·`disconnected` | 기본 SDP 미연결 | 담당자가 준비한 SDP 호스트 설정 유무 확인 |

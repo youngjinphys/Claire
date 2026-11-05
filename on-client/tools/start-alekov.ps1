@@ -89,7 +89,7 @@ if (-not $node) { Stop-With 'Node.js 가 없습니다. https://nodejs.org 에서
 $versionText = (& $node.Source --version 2>$null | Out-String).Trim()
 if ($versionText -notmatch '^v(\d+)\.(\d+)\.(\d+)$') { Stop-With "Node.js 버전을 확인하지 못했습니다($versionText). Node.js 24.19.0 을 설치해 주세요." }
 $major = [int]$Matches[1]
-if ($major -lt 22 -or $major -gt 24) { Stop-With "지금 Node.js 는 $versionText 입니다. 앱은 Node.js 22~24 에서 실행합니다. Node.js 24.19.0 을 권장합니다." }
+if (-not (($major -ge 22 -and $major -le 24) -or $major -eq 26)) { Stop-With "지금 Node.js 는 $versionText 입니다. 앱은 Node.js 22~24와 26에서 실행합니다. Node.js 24.19.0 을 권장합니다." }
 if ($versionText -ne 'v24.19.0') { Say "참고: 지금 Node.js 는 $versionText 입니다. 수업 기준은 v24.19.0 입니다." }
 
 # 3) 포트 확인: 사용 중이면 다른 프로그램을 끄지 않고 다른 번호를 안내합니다.

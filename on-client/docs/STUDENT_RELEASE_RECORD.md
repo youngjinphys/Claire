@@ -18,7 +18,7 @@
 | **문서 갱신으로 생성되는 최종 제출 커밋** | 평가 대상 `HEAD`의 40자리 SHA를 `git rev-parse HEAD`로 동적 확정·대조. 자기 Git SHA를 파일에 직접 기입할 수 없음 |
 | 앱 패키지 버전 | `on-client/package.json`: `0.2.11` (이번 단계에서 변경 없음) |
 | 진단 응답 버전 | `src/server.mjs`의 `/api/diagnostics`: `0.1.0` 고정값. 패키지 버전과 다르며 실제 HTTP 응답에서도 관측했다. |
-| 명세 런타임 | `engines.node`: `24.19.0`; PowerShell 도구 허용 범위와 정확 버전 일치는 별개 |
+| 명세 런타임 | `engines.node`는 22 이상 25 미만, 또는 26 이상 27 미만. 수업·CI 기준은 24.19.0이고 PowerShell도 22~24와 26만 실행합니다 |
 | 최초 실측 환경 | Linux 6.18.55 x86_64, Node.js `v24.22.1`, npm `11.9.0`, Git `2.51.1` |
 | 직전 제출 커밋 재실측 환경 | 별도 Linux 샌드박스, Node.js `v24.22.1`, npm `11.19.1`, 작업 트리 변경 0건 |
 | **현재 Linux PC 실측 환경** | Linux 7.0.0-38-generic x86_64, Node.js `v26.7.0`, npm `11.19.0`, Git `2.53.0`, Google Chrome `155.0.8059.84` (`/usr/bin/google-chrome --headless=new`) |
