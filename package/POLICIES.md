@@ -1,15 +1,7 @@
-# 검문소·탐지 규칙
+# 정책 문서의 정본과 범위
 
-공식 SDP 입력 계약(`docs/DECIDER_REQUEST.md`)에서 확인한 조건만 판정합니다. 엔진이 제공하지 않는 사용자 소유자·강사 역할을 학생 코드가 추측하지 않습니다.
+루트 판정 규칙은 [src/decider.mjs](../src/decider.mjs)와 [원 입력 계약](../docs/DECIDER_REQUEST.md)이 정본입니다. API의 인증·소유권·기기 승인과 SDP 판정은 별도 경계이며, UI 상태로 권한을 만들지 않습니다.
 
-| 규칙 | 단계 | 막는 공격·제약 | 확인 방법 |
-|---|---:|---|---|
-| `device_registered` | 6 | 등록·사용자 결합이 확인되지 않은 기기의 보호된 요청 거부 | `npm run decider:test` |
-| `step_up_required` | 7 | 가상 사건에서 낯선 네트워크·비정상 시간·최근 위험 신호가 결합되면 추가 확인 | `npm run fixture:7` |
-| `memo_zone` | 8 | 허용된 개별 메모 GET/PUT 경로 이외 거부; 저장된 소유권은 메모 API에서 재검사 | `npm run test:zone` |
-| `announcement_read` | 8 | 허용된 공지 GET 경로 이외 거부; 조회 권한·객체 존재는 API에서 확인 | `npm run test:zone` |
-| `announcement_instructor_write` | 8 | 공식 SDP v1 요청에 검증된 강사 역할이 없으므로 공지 변경은 기본 거부 | `npm run test:zone` |
+[자원 구역](../docs/STAGE8_RESOURCE_ZONES.md), [기기 승인](../docs/STAGE11_DEVICE.md), [로그인 경계](../docs/STAGE12_AUTH_XDR.md), [쿠키 세대](../docs/AUTH_COOKIE_GENERATIONS.md)를 구분합니다. 이 문서에 소스와 별도로 정책 허용 목록을 중복 관리하지 않습니다.
 
-**별도 9단계 탐지 함수:** `detect(events)`는 `burst_read`를 제안할 수 있지만 실제 회수를 집행하지 않습니다. `burst_read`는 `RULE_IDS`에 넣는 SDP 규칙이 아니라 별도 탐지 결과입니다.
-
-브라우저에서 버튼을 숨기는 것만으로 서버 접근이 차단됐다고 적지 마세요. 공식 엔진의 `allowedReasonCodes` 등록부는 이 저장소에 없으므로 실제 코드 목록의 일치 여부는 별도 확인이 필요합니다.
+Claire의 PC 자원·방화벽 읽기와 Windows 경고·오류 집계는 정책 집행이나 침해 판정이 아닙니다. 관측 실패는 확인 불가이며 관리자 권한·보안 설정 변경으로 성공 표시를 만들지 않습니다.

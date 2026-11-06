@@ -1,31 +1,13 @@
-# Stage 8 — resource-zone boundary and verified API ownership
+# 자원 구역: SDP 판정과 API 소유권의 분리
 
-This checkpoint uses the original 18-field ALEPH engine contract.
-It does **not** contain a verified instructor role or memo owner.
+근거: [decider.mjs](../src/decider.mjs), [resource-zones.mjs](../src/resource-zones.mjs), [메모 API](../api/notes.js), [공지 API](../api/announcements.js). 원 수업의 [판정 입력 계약](DECIDER_REQUEST.md)은 변경하지 않습니다.
 
-The isolated `src/decider.mjs` checks the server-attested service, subject,
-registered device, method, exact canonical resource path, route and empty
-query fingerprint. It preserves stage-6 device and stage-7 step-up checks.
+| 경계 | 역할 |
+|---|---|
+| SDP 판정 | 서버가 확인한 서비스·사용자·기기·메서드·정규 자원 경로·위험 신호 |
+| 메모 API | 인증 사용자와 저장된 owner_id를 대조하여 본인 자료만 반환/수정 |
+| 공지 API | 직접 API 작업에서 필요한 인증·역할·소유권 검사 |
 
-| SDP route | Decision for registered, valid request | Final data protection |
-| --- | --- | --- |
-| GET/PUT /notes/:id (UUID or synthetic demo) | allow (or step_up for compound fixture risk) | API verifies JWT user UUID equals stored owner_id |
-| GET /announcements/:id | allow (or step_up when applicable) | API verifies authentication |
-| POST/PUT/PATCH/DELETE /announcements and /announcements/:id | deny for **every** subject/device | API separately verifies role/owner when reached outside SDP |
-| /notes, /notes/, /notes/export and deeper/noncanonical paths | deny | API note list is scoped by owner_id |
+SDP의 개별 메모 경로 허용은 타인의 메모를 읽을 권한이 아닙니다. 공지 쓰기는 SDP에서 더 제한적으로 거절될 수 있으며, API의 별도 역할/소유권 검증과 모순이 아닙니다. 클라이언트가 적은 강사 역할·owner·장치 주장, 별칭 경로·쿼리로 예외를 만들지 않습니다.
 
-No fixture-only owner whitelist exists in the SDP. A different verified
-subject may reach the **individual memo gate**, but may not retrieve or
-modify another user's note: `api/notes.js` checks the authenticated user
-and persisted `owner_id` before returning data. Client roles, query
-parameters, fake device claims, route aliases and inferred instructor
-titles never grant a notice-write exception.
-
-The server-side notice API may still require a verified instructor and
-saved owner for direct API operations. That verification is distinct from
-the **more restrictive SDP notice-write denial**, which remains unconditional.
-
-To verify: `npm run test:zone`, `npm run test:xdr`,
-`npm run test:recovery`, and `npm run build -- --local`.
-The public course grader result and live named A/B instructor E2E are
-separate from the local tests.
+루트의 단위/회귀검사와 실제 운영 사용자·원천 엔진·공식 평가의 결과는 구분합니다. Claire의 로컬 네트워크 보고서는 이 서버 권한 검증을 대신하지 않습니다. 상세 규칙과 조건은 소스 및 원 계약을 정본으로 유지합니다.
