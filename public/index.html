@@ -17,7 +17,7 @@
   <header class="topbar">
     <a class="brand" href="#overview" aria-label="BYTE BACK 작전실 홈">
       <span class="brand-icon" aria-hidden="true">B/</span>
-      <span class="brand-title">BYTE BACK <span class="brand-subtitle">ALEPH / STUDENT DEFENSE</span></span>
+      <span class="brand-title">BYTE BACK <span class="brand-subtitle">학생 방어 기록</span></span>
     </a>
     <nav class="mainnav" aria-label="주 메뉴">
       <a href="#overview">개요</a>
@@ -29,15 +29,15 @@
   </header>
   <div class="layout">
     <aside class="rail" aria-label="작전실 탐색">
-      <p class="rail-title">OPERATIONS / 12</p>
-      <a class="rail-link active" href="#overview">지휘 개요 <small>01</small></a>
-      <a class="rail-link" href="#telemetry">탐지 관측 <small>02</small></a>
-      <a class="rail-link" href="#evidence">검증 원장 <small>03</small></a>
-      <a class="rail-link" href="#redacted">가린 API 기록 <small>04</small></a>
-      <a class="rail-link" href="#vault">기존 자료실 <small>05</small></a>
+      <p class="rail-title">작전실</p>
+      <a class="rail-link active" href="#overview">지휘 개요</a>
+      <a class="rail-link" href="#telemetry">탐지 관측</a>
+      <a class="rail-link" href="#evidence">검증 원장</a>
+      <a class="rail-link" href="#redacted">가린 API 기록</a>
+      <a class="rail-link" href="#vault">기존 자료실</a>
       <div class="rail-foot">
         <p><strong>판정 원칙</strong><br>미실행 시험은 통과로 바꾸지 않습니다. 현행 HTTP 응답은 과거 단계나 공식 심판 결과를 대신하지 않습니다.</p>
-        <p>12 stages / 41 attack types<br>Engine: ALEPH SDP</p>
+        <p>12단계 · 41종 공격<br>ALEPH SDP</p>
       </div>
     </aside>
     <main class="maincol" id="main">
@@ -50,7 +50,7 @@
           </div>
           <div class="hero-orbit" aria-hidden="true"><span></span></div>
           <div class="hero-actions">
-            <button id="ops-refresh" class="primary" type="button">API 증적 갱신 ↗</button>
+            <button id="ops-refresh" class="primary" type="button">API 증적 갱신</button>
             <button id="ops-export" class="secondary" type="button">가린 JSON 내려받기</button>
             <span class="micro" id="ops-state" role="status" aria-live="polite">API 관측 전 · 통과 미판정</span>
           </div>
@@ -103,10 +103,10 @@
             </div>
           </div>
         </div>
-        <div class="strip"><p><strong>최종 총공세 클리어:</strong> 공식 12단계 통과 <strong>AND</strong> 실제 41종 공격 방어. 차별화 과제는 가산점이며, 통과 조건을 대신하지 못합니다.</p><span class="badge">NOT VERIFIED</span></div>
+        <div class="strip"><p><strong>최종 확인:</strong> 공식 12단계 통과와 실제 41종 공격 방어가 함께 있어야 합니다. 차별화 과제는 가산점이며, 통과 조건을 대신하지 못합니다.</p><span class="badge">미검증</span></div>
       </section>
       <section id="evidence" aria-labelledby="evidence-title">
-        <div class="section-row"><h2 class="section-title" id="evidence-title">1–11단계 검증 원장</h2><span class="section-note">NORMAL / FORBIDDEN · 22 CASES</span></div>
+        <div class="section-row"><h2 class="section-title" id="evidence-title">1–11단계 검증 원장</h2><span class="section-note">정상 · 금지 · 22건</span></div>
         <div class="panel">
           <div class="panel-head"><div><h3>요청·기대 결과·API 실측</h3><p>실제 HTTP 응답이 있으면 수치와 요청 ID를 보여줍니다. 이전 단계 통과 판정은 별도 공식 기록이 필요합니다.</p></div></div>
           <div class="table-bar">
@@ -214,7 +214,7 @@
           <div id="notes"></div>
         </section>
       </section>
-      <footer class="footer"><span>BYTE BACK / ALEPH SDP ENGINE — STUDENT IMPLEMENTATION</span><span>API evidence is not official grading · No simulated PASS</span></footer>
+      <footer class="footer"><span>BYTE BACK · 학생 구현 · ALEPH SDP</span><span>API 증적은 공식 채점이 아닙니다. 통과를 가정하지 않습니다.</span></footer>
     </main>
   </div>
   <script src="/vendor/simplewebauthn.umd.min.js"></script>

@@ -577,22 +577,22 @@ export function hostPanel(state, mode) {
     grid.style.gap = '10px';
     const net = latest?.network, fw = latest?.firewall, logs = latest?.windowsEvents;
     grid.append(
-      card('01 · 네트워크', latest ? (fresh ? networkText(net) : unavailableState) : emptyValue, [
+      card('네트워크', latest ? (fresh ? networkText(net) : unavailableState) : emptyValue, [
         latest ? 'OS 수집 ' + hostTime(net?.measuredAt) : emptyDetail,
         '출처: ' + (net?.source || '조회 전'), reasonLine(net),
       ].filter(Boolean), 'network'),
-      card('02 · 방화벽', latest ? (fresh ? firewallText(fw) : unavailableState) : emptyValue, [
+      card('방화벽', latest ? (fresh ? firewallText(fw) : unavailableState) : emptyValue, [
         latest ? 'OS 수집 ' + hostTime(fw?.measuredAt) : emptyDetail,
         '출처: ' + (fw?.source || '조회 전'), reasonLine(fw),
       ].filter(Boolean), 'firewall'),
-      card('03 · Windows 기록', latest ? (fresh ? eventTotal(logs) : unavailableState) : emptyValue, [
+      card('Windows 기록', latest ? (fresh ? eventTotal(logs) : unavailableState) : emptyValue, [
         latest ? 'OS 수집 ' + hostTime(logs?.measuredAt) : emptyDetail,
         'System·Application, 경고(Level 3)·오류(Level 2)',
         logs?.status === 'not_applicable' ? 'Windows 전용 · 이 OS에는 해당 없음'
           : logs?.status === 'partial' || logs?.status === 'unavailable'
             ? 'System/Application 중 조회 실패 · 아래 각 로그별 사유와 다음 조치 확인' : reasonLine(logs),
       ].filter(Boolean), 'windows-events'),
-      card('04 · SDP', sdp[0], [sdp[1], 'PC 조회와 독립 · 실제 연결·정책은 기존 화면에서 별도 확인'], 'sdp'),
+      card('SDP', sdp[0], [sdp[1], 'PC 조회와 독립 · 실제 연결·정책은 기존 화면에서 별도 확인'], 'sdp'),
     );
     cardsRoot.replaceChildren(grid);
     if (!latest) return;

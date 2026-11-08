@@ -6,7 +6,7 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="theme-color" content="#0b1224">
-  <title>Claire / Local Observatory</title>
+  <title>Claire 로컬 관제</title>
   <link rel="icon" href="/assets/alekov/alekov-app-icon.webp" type="image/webp">
   <link rel="stylesheet" href="/dashboard.css">
   <script type="module" src="/dashboard.mjs"></script>
@@ -16,7 +16,7 @@
   <div class="shell">
     <aside class="rail" aria-label="관제 메뉴">
       <div class="identity">
-        <div class="logo-mark" aria-hidden="true">C<span>.</span></div>
+        <div class="logo-mark" aria-hidden="true">C</div>
         <div><strong>Claire</strong><small>로컬 관제</small></div>
       </div>
       <div class="rail-section">화면</div>
@@ -64,10 +64,10 @@
               <p>최근 Windows System·Application의 경고·오류 건수는 OS 기록 집계입니다. 침해나 공격 탐지 결과가 아닙니다.</p>
               <div class="student-host-cards" aria-hidden="true">
                 <div class="host-loading-grid">
-                  <article data-host-card="network"><h4>01 · 네트워크</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>출처: 조회 전</p></article>
-                  <article data-host-card="firewall"><h4>02 · 방화벽</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>출처: 조회 전</p></article>
-                  <article data-host-card="windows-events"><h4>03 · Windows 기록</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>System·Application, 경고(Level 3)·오류(Level 2)</p></article>
-                  <article data-host-card="sdp"><h4>04 · SDP</h4><strong>확인 중</strong><p>SDP 연결 상태와 보안 정보를 확인 중입니다.</p><p>PC 조회와 독립 · 실제 연결·정책은 기존 화면에서 별도 확인</p></article>
+                  <article data-host-card="network"><h4>네트워크</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>출처: 조회 전</p></article>
+                  <article data-host-card="firewall"><h4>방화벽</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>출처: 조회 전</p></article>
+                  <article data-host-card="windows-events"><h4>Windows 기록</h4><strong>확인 중</strong><p>수집기 실행 후 보고서 선택</p><p>System·Application, 경고(Level 3)·오류(Level 2)</p></article>
+                  <article data-host-card="sdp"><h4>SDP</h4><strong>확인 중</strong><p>SDP 연결 상태와 보안 정보를 확인 중입니다.</p><p>PC 조회와 독립 · 실제 연결·정책은 기존 화면에서 별도 확인</p></article>
                 </div>
               </div>
               <div class="host-loading-actions" aria-hidden="true"><span></span><span></span></div>
@@ -88,7 +88,7 @@
           <div class="toolbar" aria-label="관측 제어">
             <button id="sample-once" class="button ghost" type="button">한 번 측정</button>
             <button id="stop" class="button ghost" type="button" disabled>관측 중지</button>
-            <button id="start" class="button primary" type="button">관측 시작 <span aria-hidden="true">↗</span></button>
+            <button id="start" class="button primary" type="button">관측 시작</button>
           </div>
           </div>
         <div id="page-notice" class="page-notice" role="status" aria-live="polite">측정을 시작하면 CPU·메모리·디스크의 실제 로컬 관측값이 표시됩니다. 측정 전에는 예시 수치를 넣지 않습니다.</div>
@@ -204,7 +204,7 @@
         </section>
 
         <section class="provenance" id="source-panel" aria-label="측정 범위와 데이터 출처">
-          <div><span class="provenance-label">DATA INTEGRITY</span><h2>값이 없으면, 없다고 표시합니다.</h2></div>
+          <div><span class="provenance-label">측정 범위</span><h2>값이 없으면 없다고 표시합니다</h2></div>
           <div class="provenance-grid">
             <p><strong>CPU·메모리·디스크</strong> Node 서버 실행 환경에서 표준 OS API로 관측. 일반 권한·측정 시각을 표시하며 물리 PC 전체와 다를 수 있습니다.</p>
             <p><strong>로컬 JSON 보고서</strong> 학생 수집기가 사용자가 선택한 파일로 제공하는 네트워크·방화벽·Windows 기록. 원본 미인증·별도 시각이며 방화벽 설정을 변경하지 않습니다.</p>
@@ -212,7 +212,7 @@
             <p><strong>DEMO / 이벤트</strong> DEMO는 설명용 SDP 기록입니다. Windows System·Application 경고·오류 건수는 침해·공격 탐지 결과가 아닙니다.</p>
           </div>
         </section>
-        <footer>Claire Local Observatory · 측정은 로컬 Node 서버 환경에서 수행 · 원본 제출물 및 기존 화면 보존</footer>
+        <footer>Claire 로컬 관제 · 측정은 이 PC의 Node 서버에서 합니다 · 기존 화면은 그대로 둡니다</footer>
       </main>
     </div>
   </div>

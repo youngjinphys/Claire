@@ -34,7 +34,7 @@
   "dependencies": {
     "@supabase/supabase-js": "2.119.0",
     "jose": "6.2.15",
-    "@simplewebauthn/server": "14.0.3",
+    "@simplewebauthn/server": "14.1.0",
     "@simplewebauthn/browser": "14.0.0"
   }
 }

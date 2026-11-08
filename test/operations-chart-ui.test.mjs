@@ -17,7 +17,7 @@ class Element extends EventTarget {
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 let fixtureId=0;
-async function setup(t){
+async function setup(t,{settle=true}={}){
   const saved=Object.fromEntries(['document','window','fetch'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
   t.after(()=>{for(const [key,descriptor] of Object.entries(saved))if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];});
   const nodes=new Map();
@@ -31,16 +31,28 @@ async function setup(t){
     {id:'authenticated_notes',outcome:'unrun',httpStatus:null},
   ];
   const snapshot=operationsSnapshot(records,{target:'https://example.vercel.app'});
-  const fetch=async()=>({ok:true,json:async()=>snapshot});
+  const fetch=settle?async()=>({ok:true,json:async()=>snapshot}):()=>new Promise(()=>{});
   for(const [key,value] of Object.entries({document:doc,window:new EventTarget(),fetch}))
     Object.defineProperty(globalThis,key,{configurable:true,writable:true,value});
   const {initOperations}=await import(`../public/operations.mjs?chart-test=${++fixtureId}`);
   initOperations();
+  if(!settle){
+    await tick();
+    assert.notEqual(node('ops-target').textContent,snapshot.target);
+    return {node,bars:()=>node('outcomes-chart').children.filter(el=>el.getAttribute('role')==='button')};
+  }
   for(let i=0;i<100&&node('ops-target').textContent!==snapshot.target;i++)await tick();
   assert.equal(node('ops-target').textContent,snapshot.target,'fixture must finish rendering');
   const bars=()=>node('outcomes-chart').children.filter(el=>el.getAttribute('role')==='button');
   return {node,bars};
 }
+
+test('the ledger chart is visible before an API snapshot arrives',async t=>{
+  const {node}=await setup(t,{settle:false});
+  assert.equal(node('outcomes-chart').getAttribute('aria-label'),'HTTP 일치 0건, 불일치 0건, 보류 0건, 미실행 22건');
+  assert.equal(node('evidence-body').children.length,22);
+  assert.notEqual(node('metric-observed').textContent,'4');
+});
 
 test('chart totals match the 22 ledger rows rather than the five API probes',async t=>{
   const {node,bars}=await setup(t);

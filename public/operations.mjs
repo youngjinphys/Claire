@@ -143,7 +143,7 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
     byId('ops-info').textContent= '서버 HTTP '+x.summary.httpCount+'건 · 불일치 '+x.summary.failed+'건 · 판정보류 '+x.summary.inconclusive+'건';
     byId('ops-state').textContent= '실측 관측 완료 · 공식 심판 판정 별도';
     byId('ops-state').classList.remove('status-failed');
-    chart(x,value=>{stage.value='all';kind.value='all';outcome.value=value;rows();byId('evidence').scrollIntoView({block:'start',behavior:'smooth'});});
+    paintChart();
     showRecords(x.records);
     rows();
   }
@@ -175,6 +175,10 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
       if(!snapshot){byId('metric-observed').textContent='—';byId('metric-verified').textContent='—';}
     }finally{if(current===requestNumber){button.disabled=false;button.classList.remove('loading');}}
   }
+  const paintChart=()=>chart({records:snapshot?.records||[]},value=>{
+    stage.value='all';kind.value='all';outcome.value=value;rows();
+    byId('evidence').scrollIntoView({block:'start',behavior:'smooth'});
+  });
   for(const item of [stage,kind,outcome])item.addEventListener('change',rows);
   byId('ops-refresh').addEventListener('click',refresh);
   byId('ops-export').addEventListener('click',()=>{
@@ -186,5 +190,6 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
   });
   byId('ops-reset').addEventListener('click',()=>{stage.value='all';kind.value='all';outcome.value='all';rows();});
   window.addEventListener('aleph:session',refresh);
+  paintChart();
   rows();refresh();
 }

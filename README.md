@@ -9,7 +9,7 @@
 
 ## 기존 폴더에서 실행
 
-지원 선언은 Node.js `>=22 <25 || >=26 <27`이며 CI 기준은 24.19.0입니다. `on-client`에는 외부 npm 의존성이 없습니다.
+지원 선언은 Node.js `>=22 <25 || >=26 <27`이며 CI 기준은 24.19.0입니다. `on-client`에는 외부 npm 의존성이 없습니다. 직접 의존성은 `@supabase/supabase-js@2.119.0`, `jose@6.2.15`, `@simplewebauthn/server@14.1.0`, `@simplewebauthn/browser@14.0.0`입니다. 기기 등록은 기존처럼 ES256·RS256만 지정합니다. 작전실 차트는 API 응답 전에도 원장 22건을 미실행으로 보여 줍니다.
 
 ```sh
 # Claire 저장소 루트에서, 현재 작업을 보존한 채 확인

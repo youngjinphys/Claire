@@ -1,8 +1,17 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "package/POLICIES.md",
-    "package/bundle-commit-files.json"
+    "README.md",
+    "on-client/public/dashboard.css",
+    "on-client/public/dashboard.html",
+    "on-client/student/extension.mjs",
+    "package-lock.json",
+    "package.json",
+    "package/bundle-commit-files.json",
+    "public/index.html",
+    "public/operations.css",
+    "public/operations.mjs",
+    "test/operations-chart-ui.test.mjs"
   ],
-  "releaseNote": "2026-11-06: restore complete source-backed RULE_IDS documentation after CI detected missing policy rows. Documentation-only correction; tests and runtime remain unchanged."
+  "releaseNote": "2026-11-08: paint the 22-row ledger chart before an API snapshot, quiet poster type on the operations room and local dashboard, and pin @simplewebauthn/server 14.1.0. Official judge result and deploy address are unchanged."
 }
