@@ -83,9 +83,22 @@ button.danger:hover { background:#4c292d }
 .panel-head h3 { font-size:14px; font-weight:680; margin:0 0 7px }
 .panel-head p { color:var(--quiet); font-size:12px; line-height:1.6; margin:0 }
 .panel-content { padding:4px 21px 21px }
-#outcomes-chart { width:100%; height:auto; min-height:220px; display:block; margin-top:10px }
-.bar-column { cursor:pointer; transition:opacity .14s }
-.bar-column:hover,.bar-column:focus { opacity:.68 }
+#outcomes-chart { width:100%; max-width:580px; height:auto; display:block; margin:10px auto 0 }
+.bar-column { cursor:pointer }
+.bar-column .chart-bar { transition:stroke .14s }
+.bar-column:hover .chart-bar,.bar-column:focus-visible .chart-bar { stroke:#edf4f6; stroke-width:3 }
+.bar-column:hover .chart-label,.bar-column:focus-visible .chart-label { text-decoration:underline }
+@media (max-width:560px) {
+  #outcomes-chart .chart-tick { font-size:clamp(11px,calc(41.333px - 5.4167vw),24px) }
+  #outcomes-chart .chart-value { font-size:clamp(13px,calc(43.333px - 5.4167vw),26px) }
+  #outcomes-chart .chart-label { font-size:clamp(12px,calc(44.667px - 5.8333vw),26px) }
+}
+@supports (container-type:inline-size) and (width:1cqw) {
+  .analysis-grid > .panel:first-child > .panel-content { container:chart-size / inline-size }
+  #outcomes-chart .chart-tick { font-size:clamp(11px,calc(37.216px - 5.4167cqw),24px) }
+  #outcomes-chart .chart-value { font-size:clamp(13px,calc(39.216px - 5.4167cqw),26px) }
+  #outcomes-chart .chart-label { font-size:clamp(12px,calc(40.233px - 5.8333cqw),26px) }
+}
 .chart-key { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font:11px var(--mono); color:var(--quiet); margin:9px 0 0 }
 .square { height:7px; width:7px; display:inline-block; background:var(--mint) }
 .chart-empty { min-height:230px; display:grid; place-items:center; color:var(--quiet); font-size:12px; text-align:center }
@@ -194,7 +207,7 @@ textarea { min-height:95px; resize:vertical }
 }
 @media(prefers-reduced-motion:reduce) {
   html { scroll-behavior:auto }
-  button,.bar-column { transition:none!important }
+  button,.bar-column .chart-bar { transition:none!important }
 }
 #notes input,#notes textarea,#notes button,#vault-title { scroll-margin:8px }
 #vault-title:focus { outline:2px solid var(--mint); outline-offset:3px }

@@ -1,17 +1,15 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "README.md",
+    ".github/workflows/quality.yml",
     "on-client/public/dashboard.css",
-    "on-client/public/dashboard.html",
-    "on-client/student/extension.mjs",
-    "package-lock.json",
-    "package.json",
     "package/bundle-commit-files.json",
-    "public/index.html",
     "public/operations.css",
     "public/operations.mjs",
+    "scripts/operations-chart-browser-smoke.mjs",
+    "test/operations-chart-focus-ui.test.mjs",
+    "test/operations-chart-motion-ui.test.mjs",
     "test/operations-chart-ui.test.mjs"
   ],
-  "releaseNote": "2026-11-08: paint the 22-row ledger chart before an API snapshot, quiet poster type on the operations room and local dashboard, and pin @simplewebauthn/server 14.1.0. Official judge result and deploy address are unchanged."
+  "releaseNote": "Improve operations chart readability, keyboard focus, reduced motion and pointer targets; clarify missing responses and add isolated browser regression coverage."
 }

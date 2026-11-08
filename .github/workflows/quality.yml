@@ -63,6 +63,8 @@ jobs:
         env:
           CLAIRE_QA_CAPTURE_DIR: ${{ runner.temp }}/claire-observatory-qa
         run: node on-client/tools/dashboard-browser-smoke.mjs
+      - name: Operations chart pointer and keyboard smoke test
+        run: node scripts/operations-chart-browser-smoke.mjs
       - name: Chrome HttpOnly cookie generation race smoke test
         run: node scripts/auth-cookie-browser-smoke.mjs
       - name: Upload synthetic-browser QA screenshots

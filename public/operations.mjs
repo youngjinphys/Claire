@@ -45,39 +45,56 @@ const outcomeLabel = status => ({
   verified:'HTTP 일치',failed:'응답 불일치',inconclusive:'판정 보류',unrun:'미실행'
 })[status] || '미실행';
 function dataCell(tr, cls, value) { tr.append($('td',cls,value)); }
-function chart(snapshot, onFilter) {
+function createChart(onFilter) {
   const svg=byId('outcomes-chart');
   svg.replaceChildren();
-  const records=new Map(snapshot.records.map(record=>[record.id,record]));
-  const states=cases.map(item=>records.get(item.probeId)?.outcome||'unrun');
-  const total=['verified','failed','inconclusive','unrun'].map(state=>states.filter(value=>value===state).length);
+  const outcomes=['verified','failed','inconclusive','unrun'];
   const labels=['HTTP 일치','불일치','보류','미실행'];
   const colors=['#9fd4c8','#e09898','#e2ad72','#8ea0ad'];
-  const max=Math.max(4,Math.ceil(Math.max(...total)/4)*4);
   svg.setAttribute('viewBox','0 0 580 240');
   svg.setAttribute('role','img');
-  svg.setAttribute('aria-label',labels.map((v,i)=>v+' '+total[i]+'건').join(', '));
   const NS='http://www.w3.org/2000/svg';
   const element=(tag,attrs={},content)=>{const el=doc.createElementNS(NS,tag);
     for(const [k,v] of Object.entries(attrs))el.setAttribute(k,String(v));
     if(content!==undefined)el.textContent=content;return el;};
+  const ticks=[];
   for(let j=0;j<=4;j++){
-    const y=181-j*39;
+    const y=181-j*31;
     svg.append(element('line',{x1:39,y1:y,x2:566,y2:y,stroke:'#34434d','stroke-width':'.75'}));
-    svg.append(element('text',{x:7,y:y+4,fill:'#71848f','font-size':'11','font-family':'monospace'},String(Math.round(max*j/4))));
+    const tick=element('text',{class:'chart-tick',x:7,y:y+4,fill:'#8ea0ad','font-size':'11','font-family':'monospace'});
+    ticks.push(tick);svg.append(tick);
   }
-  total.forEach((count,i)=>{
-    const x=73+i*125, h=count/max*155, y=181-h;
-    const g=element('g',{class:'bar-column',role:'button',tabindex:'0','aria-label':labels[i]+' '+count+'건 — 표 필터 적용'});
-    g.append(element('rect',{x,y,width:72,height:h,fill:colors[i],rx:2}));
-    g.append(element('text',{x:x+36,y:Math.max(13,y-12),fill:colors[i],'text-anchor':'middle','font-size':'13','font-family':'monospace'},String(count)));
-    g.append(element('text',{x:x+36,y:216,fill:'#9daeb6','text-anchor':'middle','font-size':'12'},labels[i]));
-    g.append(element('title',{},labels[i]+' '+count+'건 · 선택하면 증적 표를 필터링'));
-    const pick=()=>onFilter(['verified','failed','inconclusive','unrun'][i]);
+  const bars=outcomes.map((outcome,i)=>{
+    const x=73+i*125;
+    const g=element('g',{class:'bar-column',role:'button',tabindex:'0'});
+    const hit=element('rect',{x:x-20,y:30,width:112,height:200,fill:'transparent','pointer-events':'all','aria-hidden':'true'});
+    const rect=element('rect',{class:'chart-bar',x,width:72,fill:colors[i],rx:2});
+    const value=element('text',{class:'chart-value',x:x+36,fill:colors[i],'text-anchor':'middle','font-size':'13','font-family':'monospace'});
+    const title=element('title');
+    g.append(hit,rect,value);
+    g.append(element('text',{class:'chart-label',x:x+36,y:216,fill:'#9daeb6','text-anchor':'middle','font-size':'12'},labels[i]));
+    g.append(title);
+    const pick=()=>onFilter(outcome);
     g.addEventListener('click',pick);
     g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();pick();}});
     svg.append(g);
+    return {g,rect,value,title};
   });
+  return snapshot=>{
+    const records=new Map(snapshot.records.map(record=>[record.id,record]));
+    const states=cases.map(item=>records.get(item.probeId)?.outcome||'unrun');
+    const total=outcomes.map(state=>states.filter(value=>value===state).length);
+    const max=Math.max(4,Math.ceil(Math.max(...total)/4)*4);
+    svg.setAttribute('aria-label',labels.map((v,i)=>v+' '+total[i]+'건').join(', '));
+    ticks.forEach((tick,j)=>{tick.textContent=String(Math.round(max*j/4));});
+    bars.forEach(({g,rect,value,title},i)=>{
+      const count=total[i], h=count/max*124, y=181-h;
+      g.setAttribute('aria-label',labels[i]+' '+count+'건 — 표 필터 적용');
+      rect.setAttribute('y',y);rect.setAttribute('height',h);
+      value.setAttribute('y',Math.max(13,y-12));value.textContent=String(count);
+      title.textContent=labels[i]+' '+count+'건 · 선택하면 증적 표를 필터링';
+    });
+  };
 }
 export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
   let snapshot=null;
@@ -100,7 +117,7 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
       dataCell(tr,'',c.title+' — '+c.request);
       dataCell(tr,'',c.expected);
       dataCell(tr,state==='unrun'?'status-unrun':'status-'+state,
-        r?.httpStatus===null||r===undefined?'미실행':('HTTP '+r.httpStatus+(r.errorCode?' '+r.errorCode:'')));
+        r?.httpStatus==null?(state==='unrun'?'미실행':'응답 없음'):('HTTP '+r.httpStatus+(r.errorCode?' '+r.errorCode:'')));
       dataCell(tr,'status-'+state,outcomeLabel(state));
       dataCell(tr,'data-mono',r?.requestId||'미제공');
       dataCell(tr,'data-mono',fmtTime(r?.checkedAt));
@@ -175,10 +192,11 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
       if(!snapshot){byId('metric-observed').textContent='—';byId('metric-verified').textContent='—';}
     }finally{if(current===requestNumber){button.disabled=false;button.classList.remove('loading');}}
   }
-  const paintChart=()=>chart({records:snapshot?.records||[]},value=>{
+  const updateChart=createChart(value=>{
     stage.value='all';kind.value='all';outcome.value=value;rows();
-    byId('evidence').scrollIntoView({block:'start',behavior:'smooth'});
+    byId('evidence').scrollIntoView({block:'start',behavior:'auto'});
   });
+  const paintChart=()=>updateChart({records:snapshot?.records||[]});
   for(const item of [stage,kind,outcome])item.addEventListener('change',rows);
   byId('ops-refresh').addEventListener('click',refresh);
   byId('ops-export').addEventListener('click',()=>{

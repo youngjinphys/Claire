@@ -17,7 +17,7 @@ class Element extends EventTarget {
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 let fixtureId=0;
-async function setup(t,{settle=true}={}){
+async function setup(t,{settle=true,networkFailure=false}={}){
   const saved=Object.fromEntries(['document','window','fetch'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
   t.after(()=>{for(const [key,descriptor] of Object.entries(saved))if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];});
   const nodes=new Map();
@@ -27,7 +27,7 @@ async function setup(t,{settle=true}={}){
     {id:'deployment_manifest',outcome:'verified',httpStatus:200},
     {id:'static_redaction',outcome:'verified',httpStatus:200},
     {id:'anonymous_notes',outcome:'verified',httpStatus:401},
-    {id:'anonymous_restore',outcome:'inconclusive',httpStatus:503},
+    {id:'anonymous_restore',outcome:'inconclusive',httpStatus:networkFailure?null:503},
     {id:'authenticated_notes',outcome:'unrun',httpStatus:null},
   ];
   const snapshot=operationsSnapshot(records,{target:'https://example.vercel.app'});
@@ -78,4 +78,15 @@ test('choosing a chart bar clears other filters and shows exactly its ledger cou
   assert.equal(node('filter-state').value,'unrun');
   assert.equal(node('evidence-body').children.length,19);
   assert.match(node('table-count').textContent,/^19 \/ 22 /);
+});
+
+test('ledger distinguishes an unavailable HTTP response from an unrun probe',async t=>{
+  const {node}=await setup(t,{networkFailure:true});
+  const rows=node('evidence-body').children;
+  const responseCells=rows[19].children;
+  const unrunCells=rows[8].children;
+  assert.equal(responseCells[4].textContent,'응답 없음');
+  assert.equal(responseCells[5].textContent,'판정 보류');
+  assert.equal(unrunCells[4].textContent,'미실행');
+  assert.equal(unrunCells[5].textContent,'미실행');
 });
