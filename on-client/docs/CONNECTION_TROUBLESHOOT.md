@@ -12,7 +12,8 @@
 | `PERMISSION_DENIED`, `COMMAND_NOT_FOUND` | 해당 OS 도구와 일반 권한 지원 범위 | 방화벽 시작/중지·권한 상승 |
 | `EVENT_LIMIT_EXCEEDED` | 로그별 2,000건 상한과 집계 구간 | 일부 건수를 정확한 총수로 표시 |
 | `WINDOWS_ONLY` | macOS/Linux의 해당 없음 | 0건 또는 실패한 Windows 조회로 취급 |
-| 오래됨/시계 불일치 | 보고서와 개별 기준 시각, 필요 시 수집기 재실행 | 재선택 시 시각을 현재로 덮어쓰기 |
+| 오래됨/시계 불일치 | 보고서와 원천별 조회 기준 시각, 15분/미래 5초 기준 및 최대 15초 표시 지연 | 재선택 시 시각을 현재로 덮어쓰기 |
+| 동일 생성 시각의 상충 보고서 | 두 파일의 정규화 값이 다른지, 새 수집기 실행 시각을 확인 | 상충 이력을 비교에 이용하거나 파일 지문을 실제 장치 인증으로 주장 |
 | `ENGINE_NOT_CONNECTED` | SDP 설정 유무·기존 제공 연결 상태 | PC 조회 성공을 SDP 성공으로 간주 |
 | `ENGINE_RESULT_UNVERIFIED`, `SUBJECT_SCOPE_UNVERIFIED` | 서버가 검증한 현재 신원·범위·응답 계약 | 빈 성공 응답으로 대체 |
 | `ON_AI_PROVISIONING_PENDING` | 계정·프로젝트·앱 권한의 운영자 준비 | 주소/열쇠만 넣어 연결 우회 |
@@ -28,4 +29,4 @@
 
 SDP 설정은 [SDP 연결](SDP_HOST_CONNECTION.md), Native 계정/AI는 [AI 연결](AI_SETUP_GUIDE.md), 호스트 실패는 [수집 정의](../student/HOST_OBSERVATION.md)를 봅니다. 새 외부 문서를 가정하거나 존재하지 않는 업데이트 도구를 실행하지 않습니다.
 
-현재 코드에 남아 있는 판정/비교 경계는 [CURRENT_LIMITATIONS.md](../../docs/CURRENT_LIMITATIONS.md)에 기록합니다. 문서에 해결 절차가 있다는 사실은 결함이 수정됐다는 증거가 아닙니다.
+현재 코드에 남아 있는 **원본 진위·실기기·원천 완전성** 등의 한계는 [CURRENT_LIMITATIONS.md](../../docs/CURRENT_LIMITATIONS.md)에 기록합니다. 문서에 해결 절차가 있다는 사실은 결함이 수정됐다는 증거가 아닙니다.

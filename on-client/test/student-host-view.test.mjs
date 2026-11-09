@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { collectHostObservation } from '../student/collect-host.mjs';
-import { normalizeHostObservation, hostComparison, hostPanel, hostReportQuality, buildClaireHostAggregateEvidence } from '../student/extension.mjs';
+import { normalizeHostObservation, hostComparison, hostPanel, hostReportQuality, buildClaireHostAggregateEvidence, hostHistoryTransition } from '../student/extension.mjs';
 
 const T = Date.parse('2026-10-31T02:00:00Z');
 const networkInterfaces = () => ({ eth0: [{ family: 'IPv6', address: 'fe80::1%eth0', internal: false }] });
@@ -369,6 +369,60 @@ test('selected local report stays pending and latest mounted student panel recei
     assert.match(replacement.textContent, /4건 \/ 24시간/);
     assert.equal(replacement.find(el => el.tagName === 'BUTTON').disabled, false);
   });
+});
+
+
+test('identical report re-selection preserves history; conflicting contents at same time never form a trend', async () => {
+  const first = normalizeHostObservation(await report('win32', T), T);
+  const added = hostHistoryTransition([], first, 'a'.repeat(64));
+  assert.equal(added.history.length, 1);
+  assert.equal(added.conflict, false);
+  const repeated = hostHistoryTransition(added.history, first, 'a'.repeat(64));
+  assert.equal(repeated.reason, 'DUPLICATE_REPORT');
+  assert.deepEqual(repeated.history, added.history);
+  const forgedSameTime = structuredClone(first);
+  forgedSameTime.windowsEvents.system.warning += 3;
+  const conflict = hostHistoryTransition(added.history, forgedSameTime, 'b'.repeat(64));
+  assert.equal(conflict.reason, 'REPORT_TIME_CONFLICT');
+  assert.equal(conflict.history.length, 1);
+  assert.equal(conflict.history[0].windowsEventCount, null);
+  assert.equal(conflict.history[0].conflict, true);
+  assert.equal(hostComparison([{
+    time: T - 60_000, platform: 'win32', windowsEventCount: 2,
+  }, ...conflict.history]), null);
+});
+
+test('a current report with a stale individual sensor is partial rather than wholly verified', async () => {
+  const original = normalizeHostObservation(await report('win32', T), T);
+  const network = { ...original.network, measuredAt: new Date(T - 20_000).toISOString() };
+  const delayed = { ...original, network };
+  const quality = hostReportQuality(delayed, T + 15 * 60_000 - 5000);
+  assert.equal(quality.freshness, 'recent');
+  assert.equal(quality.feeds.network.freshness, 'stale');
+  assert.equal(quality.feeds.firewall.freshness, 'recent');
+  assert.equal(quality.coverage, 'partial');
+  assert.equal(quality.observedFeeds, 2);
+});
+
+test('Windows-only nonapplicable status remains identifiable even when a macOS or Linux report is old', async () => {
+  await withDocument(async () => {
+    for (const platform of ['linux', 'darwin']) {
+      const original = normalizeHostObservation(await report(platform, T), T);
+      const root = hostPanel({ pending: false, latest: original, history: [], error: null, requestId: 0 }, 'disconnected');
+      const card = root.find(el => el.getAttribute('data-host-card') === 'windows-events');
+      assert.match(card.textContent, /해당 없음/);
+      assert.match(card.textContent, /Windows 전용/);
+      assert.match(root.textContent, /SDP 미연결/);
+    }
+  });
+});
+
+test('historical pairs can be explicitly bound to the consented pair, rather than a reused approval', () => {
+  const rows = [{ time: T - 20_000, platform: 'win32', windowsEventCount: 8, fingerprint: 'a' },
+    { time: T, platform: 'win32', windowsEventCount: 12, fingerprint: 'b' }];
+  assert.equal(hostComparison(rows).delta, 4);
+  assert.equal(hostComparison(rows, 'nonmatching-previous-pair'), null);
+  assert.equal(hostComparison(rows, [T - 20_000, 'a', T, 'b'].join(':')).delta, 4);
 });
 
 

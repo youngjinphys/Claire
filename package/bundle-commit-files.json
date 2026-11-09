@@ -1,13 +1,17 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "on-client/README.md",
-    "on-client/public/dashboard.html",
-    "on-client/public/dashboard.mjs",
+    "docs/CURRENT_LIMITATIONS.md",
+    "docs/DOCUMENTATION_STATUS.json",
+    "docs/README.md",
+    "on-client/docs/CONNECTION_TROUBLESHOOT.md",
+    "on-client/docs/STUDENT_PROMPTS.md",
+    "on-client/docs/STUDENT_RUNBOOK.md",
+    "on-client/student/HOST_OBSERVATION.md",
     "on-client/student/extension.mjs",
-    "on-client/test/dashboard-lifecycle.test.mjs",
     "on-client/test/student-host-view.test.mjs",
-    "package/bundle-commit-files.json"
+    "package/bundle-commit-files.json",
+    "test/docs-consistency.test.mjs"
   ],
-  "releaseNote": "Reconstruct authorized Claire read-only UX reliability fixes atop current main: accurate PC measurement header, shared host report freshness, preserved disclosure and focus, Windows log failure guidance, keyboard-accessible SDP records. No packaging, attack simulation or deployment command."
+  "releaseNote": "2026-11-09: reconcile 52 tracked Markdown documents with current code and preserve original/historical evidence; harden host-report freshness, conflict isolation, consent-pair binding and keyboard-state handling with regression and documentation-integrity tests. No package, deploy, privilege elevation or attack simulation."
 }
