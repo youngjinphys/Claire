@@ -676,7 +676,7 @@ export function hostPanel(state, mode) {
         not_applicable: '해당 OS에서 미적용' }[feed.state];
       detail.append(hostNode('p', label + ' · ' + stateLabel
         + ' · 출처: ' + (feed.source || '미확인')
-        + ' · 조회 기준: ' + hostTime(feed.measuredAt)
+        + ' · 원천 시각(조회 기준): ' + hostTime(feed.measuredAt)
         + ' · 시간 상태: ' + (feed.freshness || '확인 불가')
         + (feed.reason ? ' · 사유: ' + feed.reason : ''), 'muted'));
     }
