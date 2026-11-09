@@ -1,15 +1,13 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    ".github/workflows/quality.yml",
-    "on-client/public/dashboard.css",
-    "package/bundle-commit-files.json",
-    "public/operations.css",
-    "public/operations.mjs",
-    "scripts/operations-chart-browser-smoke.mjs",
-    "test/operations-chart-focus-ui.test.mjs",
-    "test/operations-chart-motion-ui.test.mjs",
-    "test/operations-chart-ui.test.mjs"
+    "on-client/README.md",
+    "on-client/public/dashboard.html",
+    "on-client/public/dashboard.mjs",
+    "on-client/student/extension.mjs",
+    "on-client/test/dashboard-lifecycle.test.mjs",
+    "on-client/test/student-host-view.test.mjs",
+    "package/bundle-commit-files.json"
   ],
-  "releaseNote": "Improve operations chart readability, keyboard focus, reduced motion and pointer targets; clarify missing responses and add isolated browser regression coverage."
+  "releaseNote": "Reconstruct authorized Claire read-only UX reliability fixes atop current main: accurate PC measurement header, shared host report freshness, preserved disclosure and focus, Windows log failure guidance, keyboard-accessible SDP records. No packaging, attack simulation or deployment command."
 }

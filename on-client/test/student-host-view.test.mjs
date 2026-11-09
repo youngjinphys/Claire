@@ -370,3 +370,22 @@ test('selected local report stays pending and latest mounted student panel recei
     assert.equal(replacement.find(el => el.tagName === 'BUTTON').disabled, false);
   });
 });
+
+
+test('student host details remain expanded through a same-state redraw', async () => {
+  await withDocument(async () => {
+    const state = { pending:false, latest:null, history:[], error:null, requestId:0 };
+    const root = hostPanel(state,'disconnected');
+    const input = root.find(el => el.tagName === 'INPUT' && el.type === 'file');
+    const json = JSON.stringify(await report('win32', Date.now()));
+    input.files = [{ size: Buffer.byteLength(json), text: async () => json }];
+    await input.dispatch('change');
+    const choose = () => root.find(el => el.tagName === 'DETAILS'
+      && el.children.some(node => node.tagName === 'SUMMARY' && /네트워크 상세/.test(node.textContent)));
+    const old = choose();
+    assert.ok(old);
+    old.open = true;
+    state.hostRedraw();
+    assert.equal(choose()?.open, true, 'refresh must keep keyboard-open disclosures open');
+  });
+});

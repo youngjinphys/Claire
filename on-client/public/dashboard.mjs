@@ -229,7 +229,22 @@ function updateControls() {
   $('stop').disabled = !observing && !busy;
   $('sample-once').disabled = observing || busy;
   document.body.dataset.running = String(observing);
-  set('live-state', observing ? '실측 진행 중' : busy ? '측정 중' : latestSnapshot ? '관측 중지 · 마지막 값' : '관측 대기');
+  // An HTTP success does not imply that even one sensor returned a reading.
+  // Header state must agree with the individual cards and their freshness.
+  const now = Date.now();
+  const metrics = ['cpu', 'memory', 'disk'].map(key => latestSnapshot?.metrics?.[key]);
+  const observed = metrics.filter(metric => metric?.status === 'ok');
+  const fresh = observed.filter(metric => {
+    const time = Date.parse(metric.measuredAt || '');
+    return Number.isFinite(time) && now - time <= MAX_MEASUREMENT_AGE_MS && time - now <= 1000;
+  });
+  const headline = observing ? '실측 진행 중' : busy ? '측정 중'
+    : !latestSnapshot ? '관측 대기'
+      : latestSnapshot.status !== 'ok' || !observed.length ? '측정 실패 · 다시 측정 필요'
+        : !fresh.length ? '측정값 오래됨 · 다시 측정 필요'
+          : fresh.length < metrics.length ? '일부 측정 실패 · 관측 중지'
+            : '관측 중지 · 마지막 값';
+  set('live-state', headline);
 }
 
 function showMetric(key, snapshot) {
@@ -589,6 +604,7 @@ function repaintFreshness() {
       + (Date.now() - Date.parse(latestEvents.checkedAt) > MAX_MEASUREMENT_AGE_MS ? ' · 조회 오래됨' : ''));
   }
   renderChart();
+  updateControls(); // Stale/failure heading changes locally; no new OS or SDP requests.
 }
 function stopFreshnessTimer() {
   if (freshnessTimer !== null) clearInterval(freshnessTimer);

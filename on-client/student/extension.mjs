@@ -566,6 +566,7 @@ export function hostPanel(state, mode) {
       : state.error ? HOST_REASON_GUIDANCE[state.error] || HOST_REASON_GUIDANCE.INVALID_REPORT
         : '수집기 실행 후 보고서 선택';
     const quality = hostReportQuality(latest, Date.now());
+    state.hostLastFreshness = quality.freshness;
     const fresh = quality.freshness === 'recent';
     const unavailableState = quality.freshness === 'stale' ? '확인 불가 · 오래된 보고서'
       : quality.freshness === 'clock_skew' ? '확인 불가 · 시계 불일치'
@@ -653,10 +654,19 @@ export function hostPanel(state, mode) {
         : '집계 구간: ' + hostTime(logs?.windowStart) + ' ~ ' + hostTime(logs?.windowEnd)
           + ' · 경고·오류 건수는 침해나 공격 탐지 결과가 아닙니다.', 'muted'));
     if (logs?.status === 'not_applicable') logsSection.append(hostNode('p', HOST_REASON_GUIDANCE.WINDOWS_ONLY, 'muted'));
-    else for (const [name, row] of [['System', logs?.system], ['Application', logs?.application]]) {
+    else {
+      if (logs?.status === 'partial' || logs?.status === 'unavailable') {
+        logsSection.append(hostNode('p',
+          'Windows 기록 일부 또는 전체 확인 불가 — '
+          + (HOST_REASON_GUIDANCE[logs?.reason] || 'System·Application 개별 실패 사유를 확인하세요.')
+          + ' 관리자 권한이나 설정 변경 없이 수집기를 다시 실행하고 새 보고서를 선택하세요.',
+          'state state-error'));
+      }
+      for (const [name, row] of [['System', logs?.system], ['Application', logs?.application]]) {
       const text = row?.status === 'ok' ? '경고 ' + row.warning + '건 · 오류 ' + row.error + '건'
         : '확인 불가 · ' + (HOST_REASON_GUIDANCE[row?.reason] || '로그를 읽지 못했습니다.');
       logsSection.append(hostNode('p', name + ' — ' + text, row?.status === 'ok' ? 'muted' : 'state state-error'));
+      }
     }
     // The System and Application counts remain visible without disclosure.
     const historySection = hostNode('section');
@@ -705,6 +715,16 @@ export function hostPanel(state, mode) {
     dataRoot.append(historySection, logsSection, netSection, fwSection);
   };
   const redraw = () => {
+    // The supplied ALEPH page does not have the dashboard's separate focus
+    // preservation wrapper. Keep open student disclosures when rerendering.
+    const opened = new Set([...dataRoot.children]
+      .filter(node => node.tagName === 'DETAILS' && node.open === true)
+      .map(node => node.firstElementChild?.textContent || node.children?.[0]?.textContent)
+      .filter(Boolean));
+    const focused = typeof document !== 'undefined' ? document.activeElement : null;
+    const hadLocalFocus = Boolean(focused && dataRoot.contains?.(focused));
+    const focusKey = hadLocalFocus ? [focused.tagName, focused.getAttribute?.('aria-label') || '',
+      focused.textContent || ''].join('|') : null;
     progress.textContent = state.pending ? '로컬 보고서를 읽고 검증하는 중입니다.'
       : state.error ? '확인 불가 — ' + (HOST_REASON_GUIDANCE[state.error] || HOST_REASON_GUIDANCE.INVALID_REPORT)
         : state.latest ? '파일 확인 ' + hostTime(state.loadedAt) + ' · OS 수집 ' + hostTime(state.latest.producedAt) + ' · 사용자 선택 파일(원본 인증 불가) · 예제 수치 없음.'
@@ -715,6 +735,17 @@ export function hostPanel(state, mode) {
     exportButton.disabled = state.pending === true || state.latest?.status !== 'ok';
     exportButton.setAttribute('aria-disabled', exportButton.disabled ? 'true' : 'false');
     draw();
+    for (const node of dataRoot.children) {
+      if (node.tagName !== 'DETAILS') continue;
+      const title = node.firstElementChild?.textContent || node.children?.[0]?.textContent;
+      if (opened.has(title)) node.open = true;
+    }
+    if (focusKey && typeof document !== 'undefined' && document.activeElement === document.body) {
+      const candidates = [...(dataRoot.querySelectorAll?.('summary, input, button, a[href]') || [])];
+      const replacement = candidates.find(node => [node.tagName, node.getAttribute?.('aria-label') || '',
+        node.textContent || ''].join('|') === focusKey);
+      replacement?.focus?.({ preventScroll: true });
+    }
   };
   // A provided SDP status refresh can replace the student slot while the
   // file reader is awaiting a Promise. Only repaint the most recent panel.
@@ -731,11 +762,11 @@ export function hostPanel(state, mode) {
     const startTicker = () => {
       if (state.hostTicker) return;
       state.hostTicker = window.setInterval(() => {
-        const stamp = state.latest?.producedAt;
-        const stale = Boolean(stamp && (Date.now() - Date.parse(stamp) > 15 * 60 * 1000
-          || Date.parse(stamp) - Date.now() > 10000));
-        if (stale !== state.hostWasStale) {
-          state.hostWasStale = stale;
+        // Use the same 5-second future tolerance and 15-minute stale boundary
+        // as the cards. A report that moves clock_skew → recent must repaint.
+        const next = hostReportQuality(state.latest, Date.now()).freshness;
+        if (next !== state.hostLastFreshness) {
+          state.hostLastFreshness = next;
           state.hostRedraw?.();
         }
       }, 15000);

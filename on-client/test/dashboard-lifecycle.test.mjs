@@ -112,3 +112,20 @@ test('single-source host cards display SDP mode without adding a second OS endpo
   assert.equal(b.get('host-report-content').children.length,1);
   assert.equal(b.requests.length,0,'host-panel mount must not trigger CPU or OS reads');
 });
+
+
+test('header never calls a failed or unreadable PC sample a last measured value', async t => {
+  const b = await browser();
+  t.after(() => b.window.handlers.get('pagehide')?.({persisted:false}));
+  assert.equal(b.get('live-state').textContent, '관측 대기');
+  vm.runInContext("latestSnapshot={status:'error',reason:'LOCAL_FETCH_FAILED'};updateControls();",b.context);
+  assert.equal(b.get('live-state').textContent, '측정 실패 · 다시 측정 필요');
+  vm.runInContext("latestSnapshot={status:'ok',metrics:{cpu:{status:'unavailable'},memory:{status:'unavailable'},disk:{status:'unavailable'}}};updateControls();",b.context);
+  assert.equal(b.get('live-state').textContent, '측정 실패 · 다시 측정 필요');
+  vm.runInContext("latestSnapshot={status:'ok',metrics:{cpu:{status:'ok',measuredAt:new Date().toISOString()},memory:{status:'unavailable'},disk:{status:'unavailable'}}};updateControls();",b.context);
+  assert.equal(b.get('live-state').textContent, '일부 측정 실패 · 관측 중지');
+  vm.runInContext("latestSnapshot={status:'ok',metrics:Object.fromEntries(['cpu','memory','disk'].map(k=>[k,{status:'ok',measuredAt:new Date().toISOString()}]))};updateControls();",b.context);
+  assert.equal(b.get('live-state').textContent, '관측 중지 · 마지막 값');
+  vm.runInContext("latestSnapshot={status:'ok',metrics:Object.fromEntries(['cpu','memory','disk'].map(k=>[k,{status:'ok',measuredAt:new Date(Date.now()-60000).toISOString()}]))};repaintFreshness();",b.context);
+  assert.equal(b.get('live-state').textContent, '측정값 오래됨 · 다시 측정 필요');
+});

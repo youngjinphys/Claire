@@ -22,6 +22,9 @@ Windows System·Application의 최근 24시간 경고·오류 건수는 **침해
 
 `npm run check`는 학생 확장과 서버 두 파일의 구문 검사입니다. `npm test`는 이 폴더의 테스트를 실행하며 운영 계정 연결을 대신하지 않습니다. 런타임 기능이 있다는 사실, CI 성공, 실제 PC 관측, 공식 평가를 분리해 기록합니다.
 
+
+**관측 실패·최신성 표시:** PC 센서 조회가 모두 실패하면 `측정 실패 · 다시 측정 필요`, 일부 센서만 성공하면 `일부 측정 실패`, 기존 표본이 30초 이상 지나면 `측정값 오래됨`을 표시합니다. 조회 실패나 SDP 미연결은 수치 0이나 정상 판정으로 바꾸지 않습니다. 학생 보고서의 상세 영역은 최신성 갱신 후에도 열린 상태와 키보드 초점을 유지합니다.
+
 [실행 안내](docs/STUDENT_LAUNCH_GUIDE.md) · [운영 확인 순서](docs/STUDENT_RUNBOOK.md) · [문제 해결](docs/CONNECTION_TROUBLESHOOT.md) · [호스트 수집 정의](student/HOST_OBSERVATION.md) · [전체 문서 분류](../docs/README.md)
 
 근거: [package.json](package.json), [서버](src/server.mjs), [학생 표시](student/extension.mjs), [수집기](student/collect-host.mjs). 현재 작업에는 포장 명령과 배포가 필요하지 않습니다.
