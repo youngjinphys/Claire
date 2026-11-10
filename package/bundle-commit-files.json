@@ -1,8 +1,8 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "on-client/student/extension.mjs",
+    ".github/workflows/quality.yml",
     "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-11-09: retain the existing host-source-time regression text while clarifying that the recorded field denotes the OS query reference time, not completion time. No runtime collection, security setting, deployment, packaging or privilege change."
+  "releaseNote": "2026-11-10: update the pinned screenshot artifact action to its Node 24 release."
 }
