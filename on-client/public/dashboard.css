@@ -18,6 +18,8 @@
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
+/* Keyboard focus must arrive on screen without waiting for smooth scrolling. */
+html:has(:focus-visible) { scroll-behavior: auto; }
 body {
   margin: 0; background: var(--bg); color: var(--ink); min-width: 320px;
   word-break: keep-all; overflow-wrap: anywhere;

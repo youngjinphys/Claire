@@ -203,11 +203,122 @@ async function main() {
     assert.equal(narrow.viewport, 320);
     assert.equal(narrow.cards, 4);
     assert.ok(narrow.width <= narrow.viewport + 4, '320px overflow: ' + JSON.stringify(narrow));
+
+    // Native Tab focus scrolling must keep up with rapid keyboard navigation.
+    // Check the next painted frame, not a timeout long enough to hide smooth-scroll lag.
+    await cmd('Emulation.setDeviceMetricsOverride', { width:800, height:600, deviceScaleFactor:1, mobile:false });
+    await cmd('Page.navigate', { url: origin + '/' });
+    await observed("location.pathname === '/' && document.readyState === 'complete' && !!document.getElementById('nav')", 'reset page before keyboard scroll');
+    await cmd('Page.navigate', { url: origin + '/dashboard.html' });
+    await observed("location.pathname === '/dashboard.html' && document.readyState === 'complete' && document.querySelectorAll('[data-host-card]').length === 4", 'fresh dashboard for keyboard scroll');
+    for (let i = 0; i < 13; i++) {
+      await cmd('Input.dispatchKeyEvent', { type:'rawKeyDown', key:'Tab', code:'Tab', windowsVirtualKeyCode:9, nativeVirtualKeyCode:9 });
+      await cmd('Input.dispatchKeyEvent', { type:'keyUp', key:'Tab', code:'Tab', windowsVirtualKeyCode:9, nativeVirtualKeyCode:9 });
+      const focus = await evaluate(`new Promise(resolve => requestAnimationFrame(() => {
+        const element = document.activeElement, rect = element.getBoundingClientRect();
+        resolve({tag:element.tagName, id:element.id || element.getAttribute('aria-label') || '',
+          top:rect.top, bottom:rect.bottom, left:rect.left, right:rect.right,
+          width:innerWidth, height:innerHeight});
+      }))`);
+      assert.ok(focus.tag !== 'BODY' && focus.bottom > 0 && focus.top < focus.height
+        && focus.right > 0 && focus.left < focus.width, `Tab ${i + 1} focus is offscreen: ${JSON.stringify(focus)}`);
+    }
+
+    // Capture actual scroll positions until they settle. This distinguishes
+    // smooth anchor navigation from reduced-motion instant navigation without
+    // depending on a particular animation duration.
+    async function prepareScrollTrace() {
+      await evaluate(`(() => {
+        document.activeElement?.blur(); window.scrollTo({top:0, behavior:'instant'});
+        const trace = window.__qaScrollTrace = {positions:[], started:false, done:false};
+        let stable = 0, previous = scrollY, begin;
+        function frame(now) {
+          begin ??= now;
+          const position = scrollY;
+          trace.positions.push(position);
+          if (position !== 0) trace.started = true;
+          stable = position === previous ? stable + 1 : 0;
+          previous = position;
+          if ((trace.started && stable >= 5) || now - begin > 3000) trace.done = true;
+          else requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      })()`);
+    }
+    async function checkScrollTrace(label, reduced) {
+      await observed('window.__qaScrollTrace?.done === true', label + ' scroll settled');
+      const trace = await evaluate('window.__qaScrollTrace');
+      const end = trace.positions.at(-1);
+      assert.ok(trace.started && end > 0, label + ' must reach the section');
+      const intermediate = trace.positions.some(position => position > 0 && position < end);
+      assert.equal(intermediate, !reduced, label + (reduced ? ' must not animate' : ' should animate'));
+    }
+    async function clickRecordsAnchor() {
+      const point = await evaluate(`(() => { const r=document.querySelector('a[href="#records-panel"]').getBoundingClientRect();
+        return {x:r.left+r.width/2,y:r.top+r.height/2}; })()`);
+      await cmd('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...point});
+      await cmd('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
+    }
+    await prepareScrollTrace();
+    await clickRecordsAnchor();
+    await checkScrollTrace('pointer anchor', false);
+    await prepareScrollTrace();
+    await evaluate("document.querySelector('a[href=\"#records-panel\"]').focus({preventScroll:true})");
+    await cmd('Input.dispatchKeyEvent', { type:'rawKeyDown', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13 });
+    await cmd('Input.dispatchKeyEvent', { type:'char', text:'\r', unmodifiedText:'\r', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13 });
+    await cmd('Input.dispatchKeyEvent', { type:'keyUp', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13 });
+    await checkScrollTrace('keyboard anchor', false);
+    await cmd('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    await prepareScrollTrace();
+    await clickRecordsAnchor();
+    await checkScrollTrace('reduced-motion anchor', true);
+    await cmd('Emulation.setEmulatedMedia', {features:[]});
     await cmd('Emulation.clearDeviceMetricsOverride');
     await cmd('Page.navigate', { url: origin + '/' });
     await observed("!!document.querySelector('#student-status a[href=\"/dashboard.html\"]')", 'legacy UI navigation');
+    // Verify the tablist remains one-dimensional and tells assistive technology
+    // the same orientation as its responsive visual layout, including after resize.
+    await cmd('Accessibility.enable');
+    const navSizes = [[320,900], [390,900], [768,900], [1280,900], [390,900], [1280,900], [720,320]];
+    for (const [width, height] of navSizes) {
+      await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await sleep(160);
+      const nav = await evaluate(`(() => {
+        const root = document.getElementById('nav');
+        const tabs = [...root.querySelectorAll('[role="tab"]')];
+        return { orientation: root.getAttribute('aria-orientation'),
+          viewport: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+          mainTop: document.querySelector('main').getBoundingClientRect().top,
+          tabs: tabs.map(tab => { const r = tab.getBoundingClientRect(); return {
+            id: tab.id, left: Math.round(r.left), top: Math.round(r.top),
+            right: Math.round(r.right), bottom: Math.round(r.bottom),
+            width: r.width, height: r.height,
+          }; }) };
+      })()`);
+      const expectedOrientation = 'vertical';
+      assert.equal(nav.orientation, expectedOrientation, `${width}px tablist orientation must match its visual layout`);
+      assert.equal(nav.viewport, width);
+      assert.equal(nav.tabs.length, 3);
+      assert.ok(nav.scrollWidth <= width + 1, `${width}px document overflow`);
+      for (const tab of nav.tabs) assert.ok(tab.width > 0 && tab.height > 0 && tab.left >= 0 && tab.right <= width + 1, `${width}px tab must be visible`);
+      assert.equal(new Set(nav.tabs.map(tab => tab.left)).size, 1, `${width}px tabs must share one column`);
+      assert.ok(nav.tabs[0].bottom <= nav.tabs[1].top && nav.tabs[1].bottom <= nav.tabs[2].top, `${width}px tabs must not overlap`);
+      if (height === 320) assert.ok(nav.mainTop < height - 50, 'landscape main content should start within the viewport');
+      const axTree = await cmd('Accessibility.getFullAXTree');
+      const axNav = axTree.nodes.find(node => node.role?.value === 'tablist');
+      assert.equal(axNav?.name?.value, '화면 전환', `${width}px accessibility tree name`);
+      assert.equal(axNav?.properties?.find(property => property.name === 'orientation')?.value?.value,
+        expectedOrientation, `${width}px accessibility tree orientation`);
+      await evaluate("document.getElementById('tab-protection').click();document.getElementById('tab-protection').focus()");
+      for (const [key, expected] of [['ArrowRight','tab-apps'], ['ArrowDown','tab-records'], ['ArrowLeft','tab-apps'], ['ArrowUp','tab-protection']]) {
+        await cmd('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code: key });
+        await cmd('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key });
+        assert.equal(await evaluate('document.activeElement?.id'), expected, `${width}px ${key} focus`);
+        assert.equal(await evaluate("document.activeElement?.getAttribute('aria-selected')"), 'true', `${width}px ${key} selection`);
+      }
+    }
     assert.deepEqual(errors, [], 'no browser JS exceptions');
-    console.log('PASS browser: independent SDP reads, pending filter state, keyboard focus/disclosure preservation, local JSON saved, download failure recovery, 1440/390/320 layouts, original-page navigation, zero JS exceptions.');
+    console.log('PASS browser: independent SDP reads, pending filter state, keyboard focus/disclosure preservation, local JSON saved, download failure recovery, 1440/390/320 layouts, responsive tab orientation and arrow keys, original-page navigation, zero JS exceptions.');
     console.log('Screenshots (synthetic SDP only; OS figures are from the CI runner): ' + captures);
   } finally {
     if (socket?.readyState === WebSocket.OPEN) socket.close();

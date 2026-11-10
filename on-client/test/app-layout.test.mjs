@@ -9,6 +9,6 @@ test('the student app stacks below 1024px instead of forcing a desktop canvas', 
   assert.match(css, /body \{ margin: 0; min-width: 320px; word-break: keep-all; overflow-wrap: anywhere; \}/u);
   assert.doesNotMatch(css, /min-width:\s*1024px/u);
   assert.match(css, /@media \(max-width: 1023px\) \{[\s\S]*\.layout \{ grid-template-columns: minmax\(0, 1fr\)/u);
-  assert.match(css, /@media \(max-width: 1023px\) \{[\s\S]*#nav \{ flex-direction: row; flex-wrap: wrap; \}/u);
+  assert.match(css, /#nav \{ display: flex; flex-direction: column; gap: 4px; \}/u);
   assert.match(dashboard, /word-break:\s*keep-all/u);
 });

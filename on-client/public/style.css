@@ -225,8 +225,7 @@ main:focus { outline: none; }
   .checked-at { overflow-wrap: anywhere; }
   .layout { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); padding: 10px 12px 12px; }
-  #nav { flex-direction: row; flex-wrap: wrap; }
-  #nav [role="tab"] { flex: 1 1 8rem; text-align: center; min-height: 44px; }
+  #nav [role="tab"] { min-height: 44px; }
   .sidebar-note { margin: 8px 4px 0; }
   main { padding: 16px 16px 40px; min-width: 0; }
   .grid-2, .event .grid-2 { grid-template-columns: minmax(0, 1fr); }
@@ -234,6 +233,10 @@ main:focus { outline: none; }
   .connect-art { flex-basis: auto; }
   .plain-list li { align-items: flex-start; }
   .art-explain { float: none; margin: 0 0 8px; }
+}
+@media (min-width: 600px) and (max-width: 1023px) and (max-height: 500px) {
+  .layout { grid-template-columns: 180px minmax(0, 1fr); }
+  .sidebar { border-right: 1px solid var(--border); border-bottom: 0; }
 }
 @media (max-width: 560px) {
   .identity, .kv { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
