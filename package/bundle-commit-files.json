@@ -2,11 +2,8 @@
   "schema": "aleph.defense.commit-files.v1",
   "files": [
     "on-client/public/dashboard.css",
-    "on-client/public/index.html",
-    "on-client/public/style.css",
-    "on-client/test/app-layout.test.mjs",
     "on-client/tools/dashboard-browser-smoke.mjs",
     "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-11-10: align the original screen tab layout and accessible name, and keep dashboard keyboard focus in view."
+  "releaseNote": "2026-11-10: reserve viewport space for dashboard keyboard focus outlines."
 }

@@ -215,13 +215,27 @@ async function main() {
       await cmd('Input.dispatchKeyEvent', { type:'rawKeyDown', key:'Tab', code:'Tab', windowsVirtualKeyCode:9, nativeVirtualKeyCode:9 });
       await cmd('Input.dispatchKeyEvent', { type:'keyUp', key:'Tab', code:'Tab', windowsVirtualKeyCode:9, nativeVirtualKeyCode:9 });
       const focus = await evaluate(`new Promise(resolve => requestAnimationFrame(() => {
-        const element = document.activeElement, rect = element.getBoundingClientRect();
+        const element = document.activeElement, rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+        const outline = style.outlineStyle === 'none' ? 0
+          : Math.max(0, Number.parseFloat(style.outlineOffset) || 0) + (Number.parseFloat(style.outlineWidth) || 0);
         resolve({tag:element.tagName, id:element.id || element.getAttribute('aria-label') || '',
           top:rect.top, bottom:rect.bottom, left:rect.left, right:rect.right,
-          width:innerWidth, height:innerHeight});
+          elementWidth:rect.width, elementHeight:rect.height,
+          margin:Math.max(4, outline), width:innerWidth, height:innerHeight});
       }))`);
       assert.ok(focus.tag !== 'BODY' && focus.bottom > 0 && focus.top < focus.height
         && focus.right > 0 && focus.left < focus.width, `Tab ${i + 1} focus is offscreen: ${JSON.stringify(focus)}`);
+      // Very large focusable regions cannot fit in the viewport in that axis;
+      // keep the intersection check above for those while requiring the full
+      // outline and at least four pixels of breathing room for smaller targets.
+      if (focus.elementHeight + 2 * focus.margin <= focus.height) {
+        assert.ok(focus.top >= focus.margin && focus.bottom <= focus.height - focus.margin,
+          `Tab ${i + 1} focus outline is vertically clipped: ${JSON.stringify(focus)}`);
+      }
+      if (focus.elementWidth + 2 * focus.margin <= focus.width) {
+        assert.ok(focus.left >= focus.margin && focus.right <= focus.width - focus.margin,
+          `Tab ${i + 1} focus outline is horizontally clipped: ${JSON.stringify(focus)}`);
+      }
     }
 
     // Capture actual scroll positions until they settle. This distinguishes

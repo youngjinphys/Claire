@@ -20,6 +20,8 @@
 html { scroll-behavior: smooth; }
 /* Keyboard focus must arrive on screen without waiting for smooth scrolling. */
 html:has(:focus-visible) { scroll-behavior: auto; }
+/* Reserve room for the visible focus outline at viewport edges. */
+:focus-visible { scroll-margin: 12px; }
 body {
   margin: 0; background: var(--bg); color: var(--ink); min-width: 320px;
   word-break: keep-all; overflow-wrap: anywhere;
