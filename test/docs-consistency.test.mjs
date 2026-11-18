@@ -37,8 +37,8 @@ test('every Markdown file is classified exactly once, preserving source and date
   assert.equal(actual.length, inventory.existingMarkdownCount);
   assert.equal(new Set(listed).size, listed.length);
   for (const entry of inventory.documents) {
-    assert.ok(['current', 'protected', 'historical', 'empty-preserved'].includes(entry.classification), entry.path);
-    if (entry.classification === 'empty-preserved') assert.equal(read(entry.path), '');
+    assert.ok(['current', 'protected', 'historical'].includes(entry.classification), entry.path);
+    assert.ok(read(entry.path).trim().length > 0, 'Empty Markdown placeholder must not remain: ' + entry.path);
   }
 });
 

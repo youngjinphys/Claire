@@ -77,7 +77,7 @@
 - [이전 README 원문](history/README_BEFORE_2026-11-06.md)
 - [이전 학생 프롬프트 원문](history/STUDENT_PROMPTS_BEFORE_2026-11-06.md)
 
-`tmp.md`는 기존 빈 파일로 남깁니다. CURRICULUM·시작 틀 manifest·재현 JSON·원 함수 기준표·기존 설명 템플릿도 원자료로 보존하며 현행 기능과 자동 동기화된 자료로 주장하지 않습니다.
+CURRICULUM·시작 틀 manifest·재현 JSON·원 함수 기준표·기존 설명 템플릿은 원자료로 보존하며 현행 기능과 자동 동기화된 자료로 주장하지 않습니다.
 
 ## 문서 유지 규칙
 
@@ -87,7 +87,7 @@
 4. 기존 원본·제출 증적의 해시를 바꾸어 현재 코드에 맞춘 것처럼 만들지 않습니다.
 5. 커밋 시 `package/bundle-commit-files.json`은 해당 부모 대비 실제 변경 목록과 일치시킵니다. 이는 포장 명령이 아닙니다.
 
-전체 52개 Markdown 파일의 현행 35개·보호 원본 5개·과거 증적(이전 README/프롬프트 사본 포함) 11개·기존 빈 파일 1개 분류는 [DOCUMENTATION_STATUS.json](DOCUMENTATION_STATUS.json)에 있습니다. 보존본은 현재 실행 지침이 아닙니다. 이후 문서/코드 불일치를 방지하려고 [문서 일관성 회귀시험](../test/docs-consistency.test.mjs)에서 분류·상대 링크·주요 코드 계약을 확인합니다.
+전체 51개 Markdown 파일의 현행 35개·보호 원본 5개·과거 증적(이전 README/프롬프트 사본 포함) 11개 분류는 [DOCUMENTATION_STATUS.json](DOCUMENTATION_STATUS.json)에 있습니다. 보존본은 현재 실행 지침이 아닙니다. 이후 문서/코드 불일치를 방지하려고 [문서 일관성 회귀시험](../test/docs-consistency.test.mjs)에서 분류·상대 링크·주요 코드 계약을 확인합니다.
 
 ### 읽기 전용 감사 검증
 
