@@ -343,3 +343,29 @@ test('DEMO provenance must not hide a failed policy read', async t => {
   assert.match(b.get('sdp-policy-detail').textContent, /DEMO/);
   assert.match(b.get('sdp-policy-detail').textContent, /확인 불가/);
 });
+
+test('event freshness and DEMO provenance survive repaint and pending refresh', async t => {
+  const b = await browser(t);
+  vm.runInContext("latestEvents={status:'ok',mode:'demo',checkedAt:new Date(Date.now()-60000).toISOString(),events:[],total:null};redrawEvents();", b.context);
+  assert.match(b.get('events-origin').textContent, /DEMO.*조회 오래됨/);
+  assert.match(b.get('events-note').textContent, /조회 오래됨.*과거 기록/);
+  const rows = b.get('events-body').children[0];
+  vm.runInContext("latestEvents.checkedAt=new Date(Date.now()+60000).toISOString();repaintFreshness();", b.context);
+  assert.match(b.get('events-origin').textContent, /DEMO.*조회 시각 확인 불가/);
+  assert.match(b.get('events-note').textContent, /조회 시각 확인 불가.*수동 재조회/);
+  assert.equal(b.get('events-body').children[0], rows, 'freshness repaint does not replace rows');
+  vm.runInContext("securityPending.events=true;redrawEvents();repaintFreshness();", b.context);
+  assert.match(b.get('events-origin').textContent, /조회 중.*이전 예제 DEMO/);
+  assert.match(b.get('events-note').textContent, /이전 예제 DEMO/);
+});
+
+test('all unavailable PC sensors stop sampling and never announce successful measurement', async t => {
+  const b = await browser(t);
+  vm.runInContext("fetchJson=async path=>({ok:true,data:{schema:'claire.local-pc.v1',scope:'local-machine',checkedAt:new Date().toISOString(),metrics:{}}});", b.context);
+  b.get('start').click(); await flush();
+  assert.match(b.get('page-notice').textContent, /측정 실패.*유효한 실측값 없음/);
+  assert.equal(b.get('live-state').textContent, '측정 실패 · 다시 측정 필요');
+  assert.equal(b.get('cpu-value').textContent, '확인 불가');
+  assert.equal(b.get('start').disabled, false);
+  assert.equal([...b.timers.values()].some(timer => timer.type === 'timeout'), false);
+});

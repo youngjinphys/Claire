@@ -25,6 +25,8 @@ Windows System·Application의 최근 24시간 경고·오류 건수는 **침해
 
 **관측 실패·최신성 표시:** PC 센서 조회가 모두 실패하면 `측정 실패 · 다시 측정 필요`, 일부 센서만 성공하면 `일부 측정 실패`, 기존 표본이 30초 이상 지나면 `측정값 오래됨`을 표시합니다. 조회 실패나 SDP 미연결은 수치 0이나 정상 판정으로 바꾸지 않습니다. 학생 보고서의 상세 영역은 최신성 갱신 후에도 열린 상태와 키보드 초점을 유지합니다.
 
+**실시간 응답의 시각 검증:** 새 요청과 측정 시각을 대조합니다(요청 시작 5초 전부터 응답 완료 1초 후까지의 허용 범위, 최대 30초 최신성). 이 범위에 맞지 않는 개별 센서값은 제외하며 나머지 센서값은 유지합니다. 전체 실패 시 성공한 실측값이 없음을 표시합니다. SDP 기록의 과거·시각 불일치 표시와 재조회 중 기존 DEMO 표시는 같은 원천 정보를 유지합니다. 과거 기록은 현재 상태 판정으로 사용하지 않습니다.
+
 [실행 안내](docs/STUDENT_LAUNCH_GUIDE.md) · [운영 확인 순서](docs/STUDENT_RUNBOOK.md) · [문제 해결](docs/CONNECTION_TROUBLESHOOT.md) · [호스트 수집 정의](student/HOST_OBSERVATION.md) · [전체 문서 분류](../docs/README.md)
 
 근거: [package.json](package.json), [서버](src/server.mjs), [학생 표시](student/extension.mjs), [수집기](student/collect-host.mjs). 현재 작업에는 포장 명령과 배포가 필요하지 않습니다.

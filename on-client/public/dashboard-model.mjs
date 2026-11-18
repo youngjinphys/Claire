@@ -76,18 +76,31 @@ export function normalizeSnapshot(response, timing = null) {
     || !data.metrics || typeof data.metrics !== 'object' || Array.isArray(data.metrics)) {
     return { status: 'error', reason: 'PC_MEASUREMENT_RESPONSE_INVALID' };
   }
-  if (timing && (!finite(timing.requestedAt) || !finite(timing.receivedAt)
-    || timing.receivedAt < timing.requestedAt
-    || Date.parse(data.checkedAt) > timing.receivedAt + 1000
-    || timing.receivedAt - Date.parse(data.checkedAt) > MAX_MEASUREMENT_AGE_MS)) {
+  // Bind live PC replies to this request, just like SDP replies. A recently
+  // cached envelope is not necessarily a sample acquired by the current read.
+  if (!responseTimeValid(data.checkedAt, timing)) {
     return { status: 'error', reason: 'MEASUREMENT_TIME_INVALID' };
   }
-  const metrics = Object.fromEntries(Object.keys(METRIC_UNITS)
-    .map(key => [key, parseMetric(data.metrics[key], key, data.checkedAt)]));
+  const metrics = Object.fromEntries(Object.keys(METRIC_UNITS).map(key => {
+    const metric = parseMetric(data.metrics[key], key, data.checkedAt);
+    if (timing !== null && ((metric.measuredAt && !responseTimeValid(metric.measuredAt, timing))
+      || (key === 'cpu' && metric.status === 'ok' && !responseTimeValid(metric.measuredFrom, timing)))) {
+      return [key, invalid(key, 'MEASUREMENT_TIME_INVALID')];
+    }
+    return [key, metric];
+  }));
   return { status: 'ok', checkedAt: data.checkedAt, metrics };
 }
 
-const withinAge = (stamp, now) => isIso(stamp) && Date.parse(stamp) <= now + 1000 && now - Date.parse(stamp) <= MAX_MEASUREMENT_AGE_MS;
+// One display/history freshness contract. Historical records remain records,
+// but an invalid or future clock is not a current observation.
+export function readingFreshness(stamp, now = Date.now()) {
+  if (!isIso(stamp) || !finite(now)) return 'unverifiable';
+  const age = now - Date.parse(stamp);
+  if (age < -1000) return 'clock_skew';
+  return age > MAX_MEASUREMENT_AGE_MS ? 'stale' : 'recent';
+}
+const withinAge = (stamp, now) => readingFreshness(stamp, now) === 'recent';
 function trimHistory(history, now) {
   return (Array.isArray(history) ? history : [])
     .filter(point => finite(point?.time) && point.time > now - HISTORY_WINDOW_MS && point.time <= now + 1000)
@@ -191,9 +204,7 @@ export function normalizeSecurity(response, timing = null) {
 // A valid measurement/SDP response is not necessarily a healthy security state.
 // The presentation must never color 'noncompliant' as safe or hide revoked sessions.
 export function securityCardState(info, now = Date.now()) {
-  if (info?.status !== 'ok' || !isIso(info.checkedAt)) return 'unavailable';
-  const delta = now - Date.parse(info.checkedAt);
-  if (!Number.isFinite(delta) || delta < -1000 || delta > MAX_MEASUREMENT_AGE_MS) return 'unavailable';
+  if (info?.status !== 'ok' || !withinAge(info.checkedAt, now)) return 'unavailable';
   if (info.mode === 'demo') return 'demo';
   if (info.mode !== 'connected' || !isIdentityStatus('device',info.value)
       || !isIdentityStatus('session',info.sessionStatus)) return 'unavailable';

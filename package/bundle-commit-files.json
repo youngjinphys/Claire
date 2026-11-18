@@ -1,9 +1,12 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "on-client/public/dashboard.css",
-    "on-client/tools/dashboard-browser-smoke.mjs",
+    "on-client/README.md",
+    "on-client/public/dashboard-model.mjs",
+    "on-client/public/dashboard.mjs",
+    "on-client/test/dashboard-regression.test.mjs",
+    "on-client/test/dashboard-resilience.test.mjs",
     "package/bundle-commit-files.json"
   ],
-  "releaseNote": "2026-11-10: reserve viewport space for dashboard keyboard focus outlines."
+  "releaseNote": "Fix live observation request-time binding, shared freshness classification, all-sensor failure messaging and explicit prior DEMO event provenance; add focused regression tests. Preserve supplied server, collectors and prior submissions."
 }

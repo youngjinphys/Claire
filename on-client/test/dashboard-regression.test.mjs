@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   appendSample, appendGap, normalizeSnapshot, normalizeEvents, normalizeSecurity, trendSummary,
-  MAX_SAMPLES, seriesSegments, securityCardState, pairedSamples,
+  MAX_SAMPLES, seriesSegments, securityCardState, pairedSamples, readingFreshness,
 } from '../public/dashboard-model.mjs';
 
 const stamp = time => new Date(time).toISOString();
@@ -159,4 +159,32 @@ test('a failed read is a gap, not a counted valid sample or a fictitious measure
   assert.equal(pairedSamples(history).length, 1);
   assert.equal(pairedSamples(history).at(-1).time,t);
   assert.equal(pairedSamples([{time:t,cpu:null,memory:null}]).length,0);
+});
+
+test('live PC replies bind both envelope and individual sensor times to the active request', () => {
+  const t = Date.now(), timing = { requestedAt: t, receivedAt: t + 1000 };
+  assert.equal(normalizeSnapshot(measured(t - 6000), timing).status, 'error');
+  assert.equal(normalizeSnapshot(measured(t - 5000), timing).status, 'ok', 'five-second clock tolerance');
+  const valid = measured(t + 500);
+  assert.equal(normalizeSnapshot(valid, timing).metrics.cpu.status, 'ok');
+  const partial = normalizeSnapshot(measured(t + 500, {
+    memory: { ...valid.data.metrics.memory, measuredAt: stamp(t - 6000) },
+    cpu: { ...valid.data.metrics.cpu, measuredAt: stamp(t - 4800), measuredFrom: stamp(t - 5200) },
+  }), timing);
+  assert.equal(partial.status, 'ok');
+  assert.equal(partial.metrics.memory.reason, 'MEASUREMENT_TIME_INVALID');
+  assert.equal(partial.metrics.cpu.reason, 'MEASUREMENT_TIME_INVALID');
+  assert.equal(partial.metrics.disk.status, 'ok');
+  assert.equal(partial.metrics.cpu.measuredAt, null);
+  assert.equal(normalizeSnapshot(measured(t - 6000)).status, 'ok', 'historical validation does not invent an HTTP window');
+});
+
+test('live freshness boundaries distinguish future clock errors from historical readings', () => {
+  const t = Date.now();
+  assert.equal(readingFreshness(stamp(t - 30000), t), 'recent');
+  assert.equal(readingFreshness(stamp(t - 30001), t), 'stale');
+  assert.equal(readingFreshness(stamp(t + 1000), t), 'recent');
+  assert.equal(readingFreshness(stamp(t + 1001), t), 'clock_skew');
+  assert.equal(readingFreshness('not-a-date', t), 'unverifiable');
+  assert.equal(readingFreshness(stamp(t), NaN), 'unverifiable');
 });

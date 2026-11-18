@@ -1,7 +1,7 @@
 import {
   appendSample, appendGap, trendSummary, normalizeSnapshot, normalizeSecurity, normalizeEvents,
-  HISTORY_WINDOW_MS, MAX_MEASUREMENT_AGE_MS, seriesSegments, pairedSamples,
-  requestDashboardJson, exportMeasurements,
+  HISTORY_WINDOW_MS, seriesSegments, pairedSamples,
+  requestDashboardJson, exportMeasurements, readingFreshness,
 } from '/dashboard-model.mjs';
 
 const $ = id => document.getElementById(id);
@@ -234,14 +234,12 @@ function updateControls() {
   const now = Date.now();
   const metrics = ['cpu', 'memory', 'disk'].map(key => latestSnapshot?.metrics?.[key]);
   const observed = metrics.filter(metric => metric?.status === 'ok');
-  const fresh = observed.filter(metric => {
-    const time = Date.parse(metric.measuredAt || '');
-    return Number.isFinite(time) && now - time <= MAX_MEASUREMENT_AGE_MS && time - now <= 1000;
-  });
+  const fresh = observed.filter(metric => readingFreshness(metric.measuredAt, now) === 'recent');
+  const invalidClock = observed.some(metric => ['clock_skew', 'unverifiable'].includes(readingFreshness(metric.measuredAt, now)));
   const headline = observing ? '실측 진행 중' : busy ? '측정 중'
     : !latestSnapshot ? '관측 대기'
       : latestSnapshot.status !== 'ok' || !observed.length ? '측정 실패 · 다시 측정 필요'
-        : !fresh.length ? '측정값 오래됨 · 다시 측정 필요'
+        : !fresh.length ? (invalidClock ? '측정 시각 불일치 · 다시 측정 필요' : '측정값 오래됨 · 다시 측정 필요')
           : fresh.length < metrics.length ? '일부 측정 실패 · 관측 중지'
             : '관측 중지 · 마지막 값';
   set('live-state', headline);
@@ -250,8 +248,8 @@ function updateControls() {
 function showMetric(key, snapshot) {
   const element = $(key + '-card');
   const metric = snapshot?.metrics?.[key];
-  const valid = metric?.status === 'ok' && Date.now() - Date.parse(metric.measuredAt) <= MAX_MEASUREMENT_AGE_MS
-    && Date.parse(metric.measuredAt) - Date.now() <= 1000;
+  const freshness = readingFreshness(metric?.measuredAt);
+  const valid = metric?.status === 'ok' && freshness === 'recent';
   element.dataset.state = valid ? 'ok' : 'unavailable';
   set(key + '-value', valid ? metric.value.toFixed(key === 'disk' ? 2 : 1) : '확인 불가');
   set(key + '-unit', key === 'disk' ? 'GiB' : '%');
@@ -259,7 +257,7 @@ function showMetric(key, snapshot) {
   set(key + '-time', stamp ? (metric.status === 'ok' ? '' : '조회 시도 ') + dateText(stamp) : '미측정');
   titleIso($(key + '-time'), stamp);
   const reason = !metric ? 'NOT_STARTED' : metric.status !== 'ok' ? metric.reason
-    : !valid ? 'MEASUREMENT_STALE' : null;
+    : !valid ? (freshness === 'stale' ? 'MEASUREMENT_STALE' : 'MEASUREMENT_TIME_INVALID') : null;
   set(key + '-reason', reason ? reasonText(reason) : observing ? '현재 관측 · OS 원천' : '마지막 실측 · 관측 중지');
   if (key === 'cpu') set('cpu-detail', valid ? '두 OS 표본의 간격 ' + safeDuration(metric.windowMs) + ' · 시스템 전체 CPU' : '두 시점의 OS 누적 시간 차이');
   if (key === 'memory') set('memory-detail', valid
@@ -273,9 +271,9 @@ function showSecurity() {
   const mode = info?.mode || 'unknown';
   renderHostObservation(mode);
   const checkedAt = info?.checkedAt;
-  const current = typeof checkedAt === 'string' && Number.isFinite(Date.parse(checkedAt))
-    && Date.now() - Date.parse(checkedAt) <= MAX_MEASUREMENT_AGE_MS
-    && Date.parse(checkedAt) - Date.now() <= 1000;
+  const freshness = readingFreshness(checkedAt);
+  const current = freshness === 'recent';
+  const timeReason = freshness === 'stale' ? 'SECURITY_STALE' : 'SOURCE_TIME_UNVERIFIED';
   const labels = { compliant: '기준 충족', noncompliant: '기준 미충족', unknown: '확인 불가' };
   const sessions = { active: '활성', expired: '만료', revoked: '철회', unknown: '확인 불가' };
   const time = checkedAt ? dateText(checkedAt) : '조회 시각 확인 불가';
@@ -286,14 +284,14 @@ function showSecurity() {
     description = info?.status === 'ok' && current
       ? 'SDP 예제 DEMO · 실제 보안 정책 판정이 아닙니다. ' + time
       : 'SDP 예제 DEMO · 정책 결과 확인 불가. '
-        + reasonText(info?.status !== 'ok' ? info?.reason || 'SECURITY_LOOKUP_FAILED' : 'SECURITY_STALE') + ' · ' + time;
+        + reasonText(info?.status !== 'ok' ? info?.reason || 'SECURITY_LOOKUP_FAILED' : timeReason) + ' · ' + time;
   } else if (mode === 'disconnected') {
     description = 'SDP 미연결 · PC 자원 측정이나 로컬 보고서 조회 성공과 무관합니다. ' + time;
   } else if (mode !== 'connected') {
     description = 'SDP 연결 확인 불가 · 원천 응답을 검증할 수 없습니다.';
   } else if (info?.status !== 'ok' || !current) {
     description = 'SDP 어댑터 연결 구성 · 정책 결과 확인 불가. '
-      + reasonText(info?.status !== 'ok' ? info?.reason || 'SECURITY_LOOKUP_FAILED' : 'SECURITY_STALE')
+      + reasonText(info?.status !== 'ok' ? info?.reason || 'SECURITY_LOOKUP_FAILED' : timeReason)
       + ' · ' + time;
   } else {
     description = 'SDP 기기 정책 ' + labels[info.value]
@@ -435,11 +433,34 @@ function downloadMeasurements() {
   }
 }
 
+function eventReadLabel(data) {
+  return data.mode === 'demo' ? '예제 DEMO · 실제 사건 아님' : 'SDP 본인 범위 기록';
+}
+
+function showEventReadSummary(data) {
+  const freshness = readingFreshness(data.checkedAt);
+  const suffix = freshness === 'recent' ? ''
+    : freshness === 'stale' ? ' · 조회 오래됨' : ' · 조회 시각 확인 불가';
+  const selected = $('event-filter').value;
+  const shown = data.events.filter(row => selected === 'all' || row.kind === selected).length;
+  set('events-origin', eventReadLabel(data) + suffix);
+  set('events-note', '받은 기록 ' + data.events.length + '건 중 ' + shown + '건 표시 · '
+    + (data.mode === 'demo' ? '전부 설명용 예제' : '본인 범위 최대 40건')
+    + (data.total !== null ? ' · 원천 전체 ' + data.total + '건' + (data.truncated ? ' (나머지 생략)' : '') : '')
+    + ' · 마지막 조회 ' + (data.checkedAt ? dateText(data.checkedAt) : '시각 확인 불가')
+    + (suffix ? suffix + ' (과거 기록 · 수동 재조회 필요)' : ''));
+}
+
 function redrawEvents() {
   $('records-panel').setAttribute('aria-busy', String(securityPending.events));
   if (securityPending.events) {
-    set('events-origin', 'SDP 기록 조회 중 · 이전 결과와 구분');
-    set('events-note', '기록 재조회 중 · 아래 내용은 마지막 조회 결과이며 새 결과가 아닙니다.');
+    // A previous DEMO row must never lose its provenance while a new read
+    // is pending. Keep the prior source and avoid claiming a fresh result.
+    const previous = latestEvents.status === 'ok' ? eventReadLabel(latestEvents) : null;
+    set('events-origin', 'SDP 기록 조회 중 · ' + (previous ? '이전 ' + previous : '검증된 이전 기록 없음'));
+    set('events-note', previous
+      ? '기록 재조회 중 · 아래 내용은 이전 ' + previous + '이며 새 결과가 아닙니다.'
+      : '기록 재조회 중 · 이전에 확인된 기록이 없습니다.');
     return;
   }
   const data = latestEvents;
@@ -449,7 +470,7 @@ function redrawEvents() {
     ? mode === 'demo' ? '예제 DEMO · 기록 확인 불가'
       : mode === 'connected' ? 'SDP 조회 실패 · 기록 확인 불가'
         : mode === 'disconnected' ? 'SDP 미연결' : 'SDP 연결 확인 불가'
-    : mode === 'demo' ? '예제 DEMO · 실제 사건 아님' : 'SDP 본인 범위 기록');
+    : eventReadLabel(data));
   const body = $('events-body');
   body.replaceChildren();
   if (data.status !== 'ok') {
@@ -462,11 +483,7 @@ function redrawEvents() {
   }
   const selected = $('event-filter').value;
   const items = data.events.filter(row => selected === 'all' || row.kind === selected);
-  set('events-note', '받은 기록 ' + data.events.length + '건 중 ' + items.length + '건 표시 · '
-    + (mode === 'demo' ? '전부 설명용 예제' : '본인 범위 최대 40건')
-    + (data.total !== null ? ' · 원천 전체 ' + data.total + '건' + (data.truncated ? ' (나머지 생략)' : '') : '')
-    + ' · 마지막 조회 ' + (data.checkedAt ? dateText(data.checkedAt) : '시각 확인 불가')
-    + (data.checkedAt && Date.now() - Date.parse(data.checkedAt) > MAX_MEASUREMENT_AGE_MS ? ' · 조회 오래됨 (수동 재조회 필요)' : ''));
+  showEventReadSummary(data);
   if (!items.length) {
     const tr = document.createElement('tr'), td = document.createElement('td');
     td.colSpan = 5; td.textContent = '표시할 기록이 없습니다. 전체 환경에 사건이 없다는 뜻은 아닙니다.';
@@ -549,16 +566,21 @@ async function measureOnce() {
     latestSnapshot = snapshot.status === 'ok' ? snapshot : { status: 'error', reason: snapshot.reason };
     history = snapshot.status === 'ok' ? appendSample(history, snapshot) : appendGap(history);
     // A failed read is not permission to retry. The user must explicitly restart monitoring.
-    const unreliable = snapshot.status !== 'ok' || snapshot.status === 'ok'
-      && (Math.abs(Date.now() - Date.parse(snapshot.checkedAt)) > 30000
-        || ['cpu','memory','disk'].some(key => snapshot.metrics[key]?.status !== 'ok'));
+    const now = Date.now();
+    const observedCount = snapshot.status === 'ok' ? ['cpu','memory','disk'].filter(key =>
+      snapshot.metrics[key]?.status === 'ok' && readingFreshness(snapshot.metrics[key].measuredAt, now) === 'recent').length : 0;
+    const unreliable = snapshot.status !== 'ok' || readingFreshness(snapshot.checkedAt, now) !== 'recent'
+      || observedCount !== 3;
     if (unreliable && observing) observing = false;
     for (const key of ['cpu', 'memory', 'disk']) showMetric(key, latestSnapshot.status === 'ok' ? latestSnapshot : { metrics: { [key]: { reason: latestSnapshot.reason } } });
     renderChart();
-    set('page-notice', snapshot.status === 'ok'
-      ? 'PC 실측 · ' + dateText(snapshot.checkedAt) + ' · 각 카드에는 독립된 측정 시각과 단위를 표시합니다. 기기 보안 상태는 SDP 원천 조회입니다.'
-        + (unreliable ? ' · 일부 측정 실패 또는 시각 불일치: 관측 중단, 사용자가 다시 시작해야 합니다.' : '')
-      : 'PC 측정 실패: ' + reasonText(snapshot.reason) + ' · 자동 재시도하지 않습니다.');
+    set('page-notice', snapshot.status !== 'ok'
+      ? 'PC 측정 실패: ' + reasonText(snapshot.reason) + ' · 자동 재시도하지 않습니다.'
+      : observedCount === 0
+        ? 'PC 측정 실패 · 유효한 실측값 없음 · 조회 ' + dateText(snapshot.checkedAt) + ' · 카드별 사유 확인 후 직접 다시 측정하세요.'
+        : (observedCount === 3 && !unreliable ? 'PC 실측' : 'PC 일부 실측 · 측정 실패 또는 시각 불일치')
+          + ' · ' + dateText(snapshot.checkedAt) + ' · 각 카드에는 독립된 측정 시각과 단위를 표시합니다. 기기 보안 상태는 SDP 원천 조회입니다.'
+          + (unreliable ? ' · 관측 중단: 사용자가 다시 시작해야 합니다.' : ''));
   } catch (error) {
     if (token !== generation) return;
     const reason = ['RESPONSE_TOO_LARGE', 'RESPONSE_CONTRACT_INVALID'].includes(error?.message) ? error.message : 'LOCAL_FETCH_FAILED';
@@ -599,9 +621,10 @@ function repaintFreshness() {
   headerClock();
   if (latestSnapshot?.status === 'ok') for (const key of ['cpu','memory','disk']) showMetric(key, latestSnapshot);
   if (latestSecurity || securityPending.identity) showSecurity();
-  if (!securityPending.events && latestEvents.status === 'ok' && latestEvents.checkedAt) {
-    set('events-origin', (latestEvents.mode === 'demo' ? '예제 DEMO · 실제 사건 아님' : 'SDP 본인 범위 기록')
-      + (Date.now() - Date.parse(latestEvents.checkedAt) > MAX_MEASUREMENT_AGE_MS ? ' · 조회 오래됨' : ''));
+  if (!securityPending.events && latestEvents.status === 'ok') {
+    // Update status and explanatory text without rebuilding event rows,
+    // changing filters or issuing another request.
+    showEventReadSummary(latestEvents);
   }
   renderChart();
   updateControls(); // Stale/failure heading changes locally; no new OS or SDP requests.
