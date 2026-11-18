@@ -284,13 +284,16 @@ test('commit file manifest rejects path traversal and missing source files', asy
     assert.deepEqual(readSubmissionChangedFiles(scratch),['package/bundle-commit-files.json']);
   } finally {rmSync(scratch,{recursive:true,force:true});}
 });
-test('declared commit files match the sorted name-only diff of HEAD', async () => {
+test('Stage12 bundle file set is independent from the current commit manifest', async () => {
   const {readFileSync} = await import('node:fs');
-  const list = JSON.parse(readFileSync(new URL('../package/bundle-commit-files.json', import.meta.url), 'utf8')).files;
-  const diff = spawnSync('git', ['diff', '--name-only', 'HEAD^', 'HEAD'], {cwd: root, encoding: 'utf8'});
-  assert.equal(diff.status, 0, diff.stderr);
-  const actual = diff.stdout.trim().split(/\r?\n/u).sort();
-  assert.deepEqual(list, actual);
+  const bundle = JSON.parse(readFileSync(new URL('../package/bundle-commit-files.json', import.meta.url), 'utf8'));
+  const commit = JSON.parse(readFileSync(new URL('../package/commit-files.json', import.meta.url), 'utf8'));
+  assert.equal(bundle.schema, 'aleph.defense.commit-files.v1');
+  assert.ok(bundle.files.includes('package/bundle-commit-files.json'));
+  assert.ok(!bundle.files.includes('package/commit-files.json'));
+  assert.equal(commit.schema, 'claire.commit-files.v1');
+  assert.ok(commit.files.includes('package/commit-files.json'));
+  assert.deepEqual(commit.files, [...new Set(commit.files)].sort());
 });
 test('regular clone never opens missing .git/commondir, including the full bundle', () => {
   const program = [

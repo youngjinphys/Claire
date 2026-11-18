@@ -85,7 +85,7 @@ CURRICULUM·시작 틀 manifest·재현 JSON·원 함수 기준표·기존 설�
 2. 기능 추가·수정 시 해당 주제 안내와 한계를 같이 대조합니다. 계획을 완료 기능으로 적지 않습니다.
 3. 버전·실행 결과는 package/같은 커밋의 CI·실제 관측 근거를 확인합니다. 과거 시험 횟수·성능 보장·모델 작업 메타정보를 현재 사실로 반복하지 않습니다.
 4. 기존 원본·제출 증적의 해시를 바꾸어 현재 코드에 맞춘 것처럼 만들지 않습니다.
-5. 커밋 시 `package/bundle-commit-files.json`은 해당 부모 대비 실제 변경 목록과 일치시킵니다. 이는 포장 명령이 아닙니다.
+5. `package/bundle-commit-files.json`은 Stage 12 제출 묶음의 파일 집합이고, `package/commit-files.json`은 현재 커밋의 부모 대비 변경 목록입니다. 두 manifest를 혼용하지 않습니다. CI는 후자만 Git diff와 대조합니다.
 
 전체 51개 Markdown 파일의 현행 35개·보호 원본 5개·과거 증적(이전 README/프롬프트 사본 포함) 11개 분류는 [DOCUMENTATION_STATUS.json](DOCUMENTATION_STATUS.json)에 있습니다. 보존본은 현재 실행 지침이 아닙니다. 이후 문서/코드 불일치를 방지하려고 [문서 일관성 회귀시험](../test/docs-consistency.test.mjs)에서 분류·상대 링크·주요 코드 계약을 확인합니다.
 

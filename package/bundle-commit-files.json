@@ -1,11 +1,12 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
-    "docs/DOCUMENTATION_STATUS.json",
-    "docs/README.md",
-    "package/bundle-commit-files.json",
-    "test/docs-consistency.test.mjs",
-    "tmp.md"
+    "on-client/README.md",
+    "on-client/public/dashboard-model.mjs",
+    "on-client/public/dashboard.mjs",
+    "on-client/test/dashboard-regression.test.mjs",
+    "on-client/test/dashboard-resilience.test.mjs",
+    "package/bundle-commit-files.json"
   ],
-  "releaseNote": "Remove unused empty Markdown placeholder; keep the living documentation inventory and consistency checks exact."
+  "releaseNote": "Fix live observation request-time binding, shared freshness classification, all-sensor failure messaging and explicit prior DEMO event provenance; add focused regression tests. Preserve supplied server, collectors and prior submissions."
 }

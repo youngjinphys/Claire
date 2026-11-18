@@ -1,8 +1,8 @@
 {
   "schema": "claire.documentation-status.v1",
-  "sourceBaseline": "cee729ec614437da17494cae10199aafc407844c",
+  "sourceBaseline": "ea0d3d2ec569ae5723994ef273ed678ac5e821df",
   "reviewDate": "2026-11-18",
-  "scope": "All 51 tracked Markdown paths classified; 35 current guides reviewed against current source contracts. Empty unused placeholder removed. Original course documents, historical evidence and recorded source inputs remain unchanged. No operational verification is claimed. Documentation inventory and links are enforced by test/docs-consistency.test.mjs.",
+  "scope": "All 51 tracked Markdown paths classified; 35 current guides reviewed against current source contracts. Empty unused placeholder removed. A full quality run exposed and corrected a dual-purpose Stage12/commit manifest contract; the two manifests are now separate. Original course documents and historical evidence remain unchanged. No operational verification is claimed.",
   "existingMarkdownCount": 51,
   "documents": [
     {
@@ -289,7 +289,9 @@
     "student state and host-report boundary",
     "source and historical blob immutability",
     "parent-to-commit file declaration",
-    "scoped read-only regression checks on Linux, Windows and macOS"
+    "scoped read-only regression checks on Linux, Windows and macOS",
+    "Stage12 bundle manifest remains independent from current commit manifest",
+    "current commit manifest matches exact parent diff"
   ],
   "notPerformedByDocumentationRefresh": [
     "operational SDP/AI login",

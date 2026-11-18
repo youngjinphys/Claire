@@ -16,7 +16,7 @@ const allow = new Set([
   'on-client/src/local-pc-metrics.mjs', 'on-client/public/dashboard-model.mjs',
   'on-client/test/host-collection.test.mjs', 'on-client/test/student-host-view.test.mjs',
   'on-client/test/local-pc-metrics.test.mjs', 'on-client/test/dashboard-regression.test.mjs',
-  '.github/workflows/quality.yml', 'scripts/verify-readonly-audit.mjs', 'package/bundle-commit-files.json',
+  '.github/workflows/quality.yml', 'scripts/verify-readonly-audit.mjs', 'package/commit-files.json',
 ]);
 const rows = git('diff', '--name-status', '--no-renames', 'HEAD^', 'HEAD').split(/\r?\n/u).filter(Boolean);
 const actual = rows.map(row => {
@@ -24,5 +24,5 @@ const actual = rows.map(row => {
   assert.ok(['A','M'].includes(status) && allow.has(path), 'Out of scope: ' + row);
   return path;
 }).sort();
-assert.deepEqual(JSON.parse(readFileSync('package/bundle-commit-files.json','utf8')).files, actual);
+assert.deepEqual(JSON.parse(readFileSync('package/commit-files.json','utf8')).files, actual);
 console.log('Read-only audit scope verified:', actual.length, 'files');

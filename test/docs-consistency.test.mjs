@@ -115,3 +115,18 @@ test('living architecture diagrams are inventoried and linked to source contract
     assert.ok(server.includes(route) && read('on-client/docs/IMPLEMENTATION_CONTRACT.md').includes(route), route);
   }
 });
+
+
+test('current commit manifest matches the exact parent diff without changing Stage12 bundle inputs', () => {
+  const commit = JSON.parse(read('package/commit-files.json'));
+  assert.equal(commit.schema, 'claire.commit-files.v1');
+  assert.deepEqual(commit.files, [...new Set(commit.files)].sort());
+  assert.ok(commit.files.includes('package/commit-files.json'));
+  const diff = execFileSync('git', ['diff', '--name-only', 'HEAD^', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
+  const actual = diff.trim().split(/\r?\n/u).sort();
+  assert.deepEqual(commit.files, actual);
+  const bundle = JSON.parse(read('package/bundle-commit-files.json'));
+  assert.equal(bundle.schema, 'aleph.defense.commit-files.v1');
+  assert.ok(bundle.files.includes('package/bundle-commit-files.json'));
+  assert.ok(!bundle.files.includes('package/commit-files.json'));
+});

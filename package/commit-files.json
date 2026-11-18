@@ -1,0 +1,16 @@
+{
+  "schema": "claire.commit-files.v1",
+  "files": [
+    ".github/workflows/quality.yml",
+    "docs/DOCUMENTATION_STATUS.json",
+    "docs/README.md",
+    "docs/STAGE12_ISOLATED_BUNDLE.md",
+    "package/bundle-commit-files.json",
+    "package/commit-files.json",
+    "scripts/bundle-commit-metadata.mjs",
+    "scripts/verify-readonly-audit.mjs",
+    "test/bundle-stage12-isolated.test.mjs",
+    "test/docs-consistency.test.mjs"
+  ],
+  "releaseNote": "Separate immutable Stage12 submission inputs from the per-commit changed-file declaration; restore the Stage12 bundle file set and validate both contracts independently."
+}

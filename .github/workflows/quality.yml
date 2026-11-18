@@ -47,7 +47,7 @@ jobs:
         if: github.event_name == 'push'
         run: |
           git diff --name-only HEAD^ HEAD > "$RUNNER_TEMP/actual-changed-files.txt"
-          node --input-type=module -e 'import {readFileSync} from "node:fs"; const list=JSON.parse(readFileSync("package/bundle-commit-files.json","utf8")).files; const actual=readFileSync(process.env.RUNNER_TEMP+"/actual-changed-files.txt","utf8").trim().split(/\r?\n/u).sort(); if(JSON.stringify(list)!==JSON.stringify(actual)){console.error("BUNDLE_COMMIT_FILE_LIST_MISMATCH");process.exitCode=1;}'
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; const list=JSON.parse(readFileSync("package/commit-files.json","utf8")).files; const actual=readFileSync(process.env.RUNNER_TEMP+"/actual-changed-files.txt","utf8").trim().split(/\r?\n/u).sort(); if(JSON.stringify(list)!==JSON.stringify(actual)){console.error("BUNDLE_COMMIT_FILE_LIST_MISMATCH");process.exitCode=1;}'
       - name: Claire syntax checks
         run: npm --prefix on-client run check
       - name: Claire loopback HTTP integration tests
