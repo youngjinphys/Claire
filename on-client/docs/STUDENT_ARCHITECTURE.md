@@ -2,21 +2,44 @@
 
 현재 코드의 실행 경로를 설명합니다. 원격 운영 성공이나 공식 평가의 구성도가 아닙니다.
 
-```text
-기존 / ── public/app.js ── createStudentView()
-                                  │
-통합 /dashboard.html ── dashboard.mjs ── hostPanel() 재사용
-             │                               ▲
-             │ 동일 출처 HTTP                │ 사용자 선택 JSON (원본 미인증)
-             ▼                               │
-  src/server.mjs                    student/collect-host.mjs
-    127.0.0.1                        일반 권한·읽기 전용·수동 실행
-      ├─ local-pc-metrics.mjs → 실행 OS CPU/메모리/파일시스템
-      ├─ engine/sdp-host* → 별도 승인 자격의 SDP 원천
-      ├─ connection/* + ai/* → Native 계정·앱 승인·CLCO
-      ├─ actions/* → 명시적 설정·사람 확인·원천 효과 관측
-      └─ vulnerabilities/* → 승인 공개 패키지만 OSV 대조
+## 로컬 데이터 흐름
+
+```mermaid
+flowchart TD
+  subgraph Browser["브라우저 · 동일 출처"]
+    Original["/ · app.js · createStudentView()"]
+    Dashboard["/dashboard.html · dashboard.mjs"]
+    Panel["student/extension.mjs · hostPanel()"]
+    File["수동 선택 · observation.json"]
+    Original --> Panel
+    Dashboard --> Panel
+    File --> Panel
+  end
+  subgraph Runtime["Node 서버 · 127.0.0.1"]
+    Server["src/server.mjs"]
+    Sensor["local-pc-metrics.mjs"]
+    Engine["engine/sdp-host.mjs + student/engine-adapter.mjs"]
+    AI["connection/* + ai/* + learner-support/*"]
+    Actions["actions/* · 사람 확인과 별도 설정"]
+    Scan["vulnerabilities/* · 승인 대상만"]
+    Server --> Sensor
+    Server --> Engine
+    Server --> AI
+    Server --> Actions
+    Server --> Scan
+  end
+  Original -->|기존 API| Server
+  Dashboard -->|local-pc · me · events| Server
+  Sensor --> OS["서버 실행 OS · CPU/메모리/앱 파일시스템"]
+  CLI["student/collect-host.mjs · 일반 권한 CLI"] -->|새 임시 파일| File
+  CLI --> HostOS["수집기 실행 OS · 네트워크/방화벽/Windows 로그"]
+  Engine -. 별도 승인 설정 .-> SDP["외부 SDP"]
+  AI -. 별도 승인 설정 .-> CLCO["Native 계정 및 CLCO"]
+  Actions -. 승인된 원천 집행 요청 .-> SDP
+  Scan -. 승인 공개 이름과 버전 .-> OSV["OSV"]
 ```
+
+실선은 코드에 있는 호출·파일 전달 경로이고 점선은 별도 설정·권한이 필요한 외부 경로입니다. 파일 선택은 HTTP 수집 요청이 아니며 CLI가 서버에서 자동 실행되지 않습니다. 실제 PC 자원·선택 파일·SDP·DEMO는 동일한 출처로 합치지 않습니다.
 
 ## 책임
 
@@ -44,3 +67,20 @@
 macOS/Linux도 기본 앱·자원·해당 OS 수집 경로가 있습니다. Windows Native 호스트·자격 보관 경로까지 이식됐다고 주장하지 않습니다. 공급사 원본 키나 사용자 비밀은 브라우저·문서·Git에 넣지 않습니다. OSV·SDP·AI는 각 승인/설정 경로를 통해서만 조건부 외부 통신합니다.
 
 루트 `api/`·`src/`는 기존 방어전 서비스입니다. `on-client/src/`와 같은 서버가 아닙니다. Workbench는 편집 도구, ALEPH는 외부 교육 운영 서비스이며 이 앱을 실행하는 로컬 서버가 아닙니다.
+
+## 통합 화면 배치
+
+```mermaid
+flowchart TD
+  A["상단: 네트워크 · 방화벽 · Windows 기록 · SDP"] --> B["CPU · 메모리 · 디스크 카드"]
+  B --> C["CPU/메모리 10분 추이와 변화 분석"]
+  C --> D["호스트 보고서 상세 · 24시간 이동 창 비교"]
+  D --> E["자원 측정 근거 · JSON 저장"]
+  E --> F["본인 접속 · XDR 기록"]
+```
+
+배치의 정본은 [dashboard.html](../public/dashboard.html)이며 위 화살표는 화면 읽기 순서이지 탐지·집행의 인과관계가 아닙니다.
+
+CPU 사용률의 Windows IRQ 중복 합산을 제외하며, CPU 관측 구간과 단조 시계가 불일치하면 확인 불가로 처리합니다. 메모리는 OS가 제공하는 total/free 바이트에 기반합니다. 모든 PC 측정은 실행 OS의 관측치이지 보안 판정이나 SDP 연결 증거가 아닙니다.
+
+대시보드의 PC 자원 조회는 동일 출처의 `GET /api/local-pc`를 사용하며, 호스트 보고서는 로컬 파일로 읽습니다.

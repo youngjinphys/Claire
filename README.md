@@ -9,7 +9,7 @@
 
 ## 기존 폴더에서 실행
 
-지원 선언은 Node.js `>=22 <25 || >=26 <27`이며 CI 기준은 24.19.0입니다. `on-client`에는 외부 npm 의존성이 없습니다. 직접 의존성은 `@supabase/supabase-js@2.119.0`, `jose@6.2.15`, `@simplewebauthn/server@14.1.0`, `@simplewebauthn/browser@14.0.0`입니다. 기기 등록은 기존처럼 ES256·RS256만 지정합니다. 작전실 차트는 API 응답 전에도 원장 22건을 미실행으로 보여 줍니다.
+지원 선언은 Node.js `>=22 <25 || >=26 <27`이며 CI 기준은 24.19.0입니다. `on-client`에는 외부 npm 의존성이 없습니다. 루트 서비스의 직접 의존성과 정확한 버전은 [package.json](package.json)과 [잠금 파일](package-lock.json)을 기준으로 합니다. 루트 기기 승인과 작전실은 [기기 승인 경계](docs/STAGE11_DEVICE.md) 및 [루트 구성](package/ARCHITECTURE.md)에서 확인합니다.
 
 ```sh
 # Claire 저장소 루트에서, 현재 작업을 보존한 채 확인
@@ -45,4 +45,4 @@ npm start
 
 루트 개발에는 `package-lock.json`에 고정된 의존성이 필요하지만 로컬 앱만 실행할 때 루트 설치는 필요하지 않습니다. 루트의 AI·위협정보 API는 501 미구현 응답과 로컬 앱의 조건부 AI 연결을 혼동하지 않습니다. 자세한 범위는 [루트 기능](docs/STAGE12_ROADMAP.md)을 봅니다.
 
-`aleph.config.json`의 단계 값 12, 저장소·발급자·배포 주소는 설정이며 현재 공개 배포 성공이나 공식 평가 통과의 증거가 아닙니다. 문서 개정은 실행 코드·DB·방화벽·기존 제출물을 변경하지 않습니다. 이전 README의 단계별 기록은 [원문 보존본](docs/history/README_BEFORE_2026-11-06.md)에 두었으며 현재 사용법으로 적용하지 않습니다.
+`aleph.config.json`의 단계 값 12, 저장소·발급자·배포 주소는 설정이며 현재 공개 배포 성공이나 공식 평가 통과의 증거가 아닙니다. 소스·문서 갱신 자체는 운영 DB 적용, 방화벽 변경, 기존 제출물 수정 또는 공개 배포의 증거가 아닙니다. 이전 README의 단계별 기록은 [원문 보존본](docs/history/README_BEFORE_2026-11-06.md)에 두었으며 현재 사용법으로 적용하지 않습니다.

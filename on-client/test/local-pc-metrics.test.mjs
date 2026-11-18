@@ -84,3 +84,26 @@ test('disk space rejects impossible huge capacity without losing integer precisi
   assert.equal(row.reason, 'DISK_INVALID');
   assert.equal(row.value, null);
 });
+
+test('Windows IRQ is included in kernel time; Unix IRQ remains a separate counter', () => {
+  const before = [{ times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } }];
+  const after = [{ times: { user: 20, nice: 0, sys: 30, idle: 50, irq: 10 } }];
+  assert.equal(calculateCpuUsage(before, after, 'win32'), 50);
+  assert.equal(calculateCpuUsage(before, after, 'linux'), 54.55);
+  assert.equal(calculateCpuUsage(before, after, 'darwin'), 54.55);
+});
+test('a wall-clock jump and fractional memory byte counts cannot become valid measurements', async () => {
+  let tick = 0, wall = 10000, calls = 0;
+  const sampler = createLocalPcSampler({
+    cpus: () => (++calls === 1 ? cpu(100,100) : cpu(130,170)),
+    totalmem: () => 8 * 1024 ** 3 + 0.5,
+    freemem: () => 1024 ** 3,
+    statfsRead: async () => ({ bsize: 4096n, bavail: 1n }),
+    monotonic: () => tick, clock: () => new Date(wall),
+    wait: async () => { tick += 400; wall += 3000; },
+  });
+  const {metrics} = await sampler.sample();
+  assert.equal(metrics.cpu.reason, 'CPU_INTERVAL_INVALID');
+  assert.equal(metrics.memory.reason, 'MEMORY_INVALID');
+  assert.equal(metrics.disk.status, 'ok');
+});

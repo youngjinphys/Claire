@@ -14,7 +14,7 @@ function unavailable(source, unit, measuredAt, reason) {
   return { status: 'unavailable', value: null, unit, source, measuredAt, reason };
 }
 
-export function calculateCpuUsage(before, after) {
+export function calculateCpuUsage(before, after, platform = os.platform()) {
   if (!Array.isArray(before) || !Array.isArray(after) || before.length === 0 || before.length !== after.length) return null;
   let busy = 0, total = 0;
   for (let i = 0; i < before.length; i += 1) {
@@ -25,7 +25,8 @@ export function calculateCpuUsage(before, after) {
       if (!Number.isSafeInteger(left[key]) || !Number.isSafeInteger(right[key]) || left[key] < 0 || right[key] < 0) return null;
       const diff = right[key] - left[key];
       if (diff < 0) return null;
-      sum += diff;
+      // Windows kernel time already includes interrupt time (libuv sys).
+      if (platform !== 'win32' || key !== 'irq') sum += diff;
       if (key === 'idle') busy -= diff;
     }
     total += sum;
@@ -45,6 +46,7 @@ export function createLocalPcSampler({
   clock = () => new Date(),
   monotonic = () => performance.now(),
   wait = (ms, signal) => sleep(ms, undefined, { signal }),
+  platform = os.platform(),
   intervalMs = 400,
   sensorTimeoutMs = 2000,
 } = {}) {
@@ -79,9 +81,10 @@ export function createLocalPcSampler({
       const after = cpus();
       const elapsed = monotonic() - startedMono;
       const measuredAt = stamp(clock);
-      const value = calculateCpuUsage(before, after);
+      const value = calculateCpuUsage(before, after, platform);
+      const wallElapsed = Date.parse(measuredAt) - Date.parse(started);
       if (!Number.isFinite(elapsed) || elapsed < 100 || elapsed > 5000
-        || Date.parse(measuredAt) < Date.parse(started)) {
+        || wallElapsed < 100 || wallElapsed > 6000 || Math.abs(wallElapsed - elapsed) > 1000) {
         return unavailable(source, '%', measuredAt, 'CPU_INTERVAL_INVALID');
       }
       return value === null
@@ -97,7 +100,7 @@ export function createLocalPcSampler({
     const source = 'os.totalmem/os.freemem';
     try {
       const total = totalmem(), free = freemem(), measuredAt = stamp(clock);
-      if (!Number.isFinite(total) || !Number.isFinite(free) || total <= 0 || free < 0 || free > total) {
+      if (!Number.isSafeInteger(total) || !Number.isSafeInteger(free) || total <= 0 || free < 0 || free > total) {
         return unavailable(source, '%', measuredAt, 'MEMORY_INVALID');
       }
       return {

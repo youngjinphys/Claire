@@ -55,7 +55,9 @@ function parseMetric(metric, key, checkedAt) {
   }
   if (key === 'cpu' && (!isIso(metric.measuredFrom) || Date.parse(metric.measuredFrom) > stamp
     || !finite(metric.windowMs) || metric.windowMs < 100 || metric.windowMs > 5000
-    || stamp - Date.parse(metric.measuredFrom) > 6000)) {
+    || stamp - Date.parse(metric.measuredFrom) < 100
+    || stamp - Date.parse(metric.measuredFrom) > 6000
+    || Math.abs(stamp - Date.parse(metric.measuredFrom) - metric.windowMs) > 1000)) {
     return invalid(key, 'CPU_INTERVAL_INVALID', metric.measuredAt);
   }
   if (key === 'disk' && metric.scope !== 'project-filesystem') return invalid(key, 'DISK_SCOPE_UNVERIFIED', metric.measuredAt);

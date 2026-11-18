@@ -1,6 +1,6 @@
 # Claire 문서 색인
 
-**현재 안내 검토:** 2026-11-09의 코드·계약. 특정 이전 커밋을 현재 HEAD라고 고정하지 않습니다. 버전은 저장소에서 `git rev-parse HEAD`로 확인하고, 시험 결과는 해당 SHA의 CI/실측과 연결합니다. 문서 개정은 운영 DB·방화벽·공식 성취를 변경하지 않습니다. 코드 존재, 합성 시험, CI 실행, 사용자 PC 실측, 운영 연결, 공식 평가를 분리합니다.
+**현재 안내 검토:** 2026-11-18 코드·계약 감사. 기준 소스와 검토 범위는 [DOCUMENTATION_STATUS.json](DOCUMENTATION_STATUS.json)에 기록합니다. 특정 이전 커밋을 현재 HEAD라고 고정하지 않습니다. 버전은 저장소에서 `git rev-parse HEAD`로 확인하고, 시험 결과는 해당 SHA의 CI/실측과 연결합니다. 문서 개정은 운영 DB·방화벽·공식 성취를 변경하지 않습니다. 코드 존재, 합성 시험, CI 실행, 사용자 PC 실측, 운영 연결, 공식 평가를 분리합니다.
 
 ## 먼저 읽기
 
@@ -8,7 +8,7 @@
 - [현재 기능](../on-client/docs/PRODUCT_OVERVIEW.md) · [구성/신뢰 경계](../on-client/docs/STUDENT_ARCHITECTURE.md) · [문제 해결](../on-client/docs/CONNECTION_TROUBLESHOOT.md)
 - [호스트 보고서](../on-client/student/HOST_OBSERVATION.md) · [알려진 한계](CURRENT_LIMITATIONS.md)
 
-다른 문서에서 실행 순서를 중복 정의하지 않고 해당 주제 문서로 연결합니다. 링크나 코드와 설명이 충돌하면 실행 코드·시험·명시적인 현재 원천을 확인합니다. 앱 코드가 외부 포털의 채점·순위·수료 정책을 정의하지 않습니다.
+구성도는 [로컬 앱](../on-client/docs/STUDENT_ARCHITECTURE.md)과 [루트 서비스](../package/ARCHITECTURE.md) 두 현행 정본으로 구분합니다. 호스트 관측의 보고서 처리 흐름은 [호스트 관측](../on-client/student/HOST_OBSERVATION.md)에 있습니다. 다른 문서에서 실행 순서를 중복 정의하지 않고 해당 주제 문서로 연결합니다. 링크나 코드와 설명이 충돌하면 실행 코드·시험·명시적인 현재 원천을 확인합니다. 앱 코드가 외부 포털의 채점·순위·수료 정책을 정의하지 않습니다.
 
 ## 현행 안내
 
@@ -88,3 +88,7 @@
 5. 커밋 시 `package/bundle-commit-files.json`은 해당 부모 대비 실제 변경 목록과 일치시킵니다. 이는 포장 명령이 아닙니다.
 
 전체 52개 Markdown 파일의 현행 35개·보호 원본 5개·과거 증적(이전 README/프롬프트 사본 포함) 11개·기존 빈 파일 1개 분류는 [DOCUMENTATION_STATUS.json](DOCUMENTATION_STATUS.json)에 있습니다. 보존본은 현재 실행 지침이 아닙니다. 이후 문서/코드 불일치를 방지하려고 [문서 일관성 회귀시험](../test/docs-consistency.test.mjs)에서 분류·상대 링크·주요 코드 계약을 확인합니다.
+
+### 읽기 전용 감사 검증
+
+커밋 메시지에 `[readonly-audit]`를 사용하는 단일 fast-forward 변경은 허용 파일 목록·부모 대비 변경 목록 검증을 거쳐 Linux·Windows·macOS에서 문서와 호스트 관측 회귀시험만 실행합니다. 범위를 벗어나면 실패합니다. 일반 커밋 및 PR은 기존 전체 품질 검사를 유지합니다. 이 경로는 포장, 공격 모의시험, 운영 배포를 실행하지 않으며 시험용 fixture는 사용자 PC 실측을 입증하지 않습니다.

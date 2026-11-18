@@ -1,8 +1,8 @@
 {
   "schema": "claire.documentation-status.v1",
-  "sourceBaseline": "9b3cdd3aa69866a388a20a3fa028454c1f6bcf7d",
-  "reviewDate": "2026-11-09",
-  "scope": "52 tracked Markdown files classified and current guides reconciled against code at audit start. sourceBaseline is the audited parent, never the final/current HEAD. Protected originals and historical evidence stay byte-identical; local runtime observations and operational deployment are not asserted.",
+  "sourceBaseline": "00f9bb4a690ec0527792f23fecc5c5dbf6b5ee64",
+  "reviewDate": "2026-11-18",
+  "scope": "All 52 Markdown paths classified; 35 current guides reviewed for existing links and current source contracts, with focused host-observation, dashboard measurement and architecture reconciliation. sourceBaseline is the audited parent, not the resulting HEAD. Original course documents, historical evidence and recorded source inputs remain unchanged. No operational verification is claimed.",
   "existingMarkdownCount": 52,
   "documents": [
     {
@@ -13,7 +13,7 @@
     {
       "path": "docs/AUTH_COOKIE_GENERATIONS.md",
       "classification": "current",
-      "action": "preserved"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "docs/AUTH_RECENT_COMMITS_AUDIT_2026-11-01.md",
@@ -33,7 +33,7 @@
     {
       "path": "docs/DEPLOYMENT_DRIFT_RUNBOOK_2026-10-30.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "docs/DETECT_EVENTS.md",
@@ -43,7 +43,7 @@
     {
       "path": "docs/DETECT_VERIFIED_DEVICE_LOCAL.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "docs/history/README_BEFORE_2026-11-06.md",
@@ -78,12 +78,12 @@
     {
       "path": "docs/STAGE11_DEVICE.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "docs/STAGE12_AUTH_XDR.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "docs/STAGE12_CONTRACT_AUDIT.md",
@@ -103,22 +103,22 @@
     {
       "path": "docs/STAGE12_ISOLATED_BUNDLE.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "docs/STAGE12_ROADMAP.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "docs/STAGE8_RESOURCE_ZONES.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/AI_SETUP_GUIDE.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/CONNECTION_TROUBLESHOOT.md",
@@ -128,17 +128,17 @@
     {
       "path": "on-client/docs/FINAL_PRODUCT_GUIDE.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/GETTING_STARTED_STUDENT.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/IMPLEMENTATION_CONTRACT.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reconciled"
     },
     {
       "path": "on-client/docs/OBSERVATORY_AUDIT_2026-10-30.md",
@@ -148,37 +148,37 @@
     {
       "path": "on-client/docs/PRODUCT_OVERVIEW.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/SDP_HOST_CONNECTION.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/SDP_HOST_OBSERVATION.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/STARTER_UPDATE.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/STUDENT_ARCHITECTURE.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reconciled"
     },
     {
       "path": "on-client/docs/STUDENT_LAUNCH_GUIDE.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/STUDENT_PROMPTS.md",
       "classification": "current",
-      "action": "reconciled"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/STUDENT_RELEASE_RECORD.md",
@@ -193,22 +193,22 @@
     {
       "path": "on-client/README.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reconciled"
     },
     {
       "path": "on-client/src/actions/README.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/src/ai/README.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/src/vulnerabilities/README.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/student/HOST_OBSERVATION.md",
@@ -223,37 +223,37 @@
     {
       "path": "package/ARCHITECTURE.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reconciled"
     },
     {
       "path": "package/DEMO.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "package/POLICIES.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "package/README.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "package/SELF-CHECK.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "package/THREAT-INTEL.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "README.md",
       "classification": "current",
-      "action": "rewritten"
+      "action": "reconciled"
     },
     {
       "path": "tmp.md",
@@ -289,11 +289,12 @@
   "checksToPerform": [
     "live Markdown relative links",
     "inventory matches current tracked Markdown",
+    "current Mermaid diagram inventory and key source contracts",
     "Node/runtime/CLI contract",
     "student state and host-report boundary",
     "source and historical blob immutability",
     "parent-to-commit file declaration",
-    "full CI and OS-specific test outcome"
+    "scoped read-only regression checks on Linux, Windows and macOS"
   ],
   "notPerformedByDocumentationRefresh": [
     "operational SDP/AI login",
@@ -309,5 +310,109 @@
     "historical": "Dated evidence, not current instructions or live verification",
     "empty-preserved": "Existing empty file, not removed"
   },
-  "reviewedCurrentDocs": 35
+  "reviewedCurrentDocs": 35,
+  "preservedBlobs": [
+    {
+      "path": "AGENTS.md",
+      "blob": "f9019e5e21682d911953a5c2eb7e0711ee9d079d"
+    },
+    {
+      "path": "docs/AUTH_RECENT_COMMITS_AUDIT_2026-11-01.md",
+      "blob": "8f4283338e795b1e6df88522b7ab28c60a982b29"
+    },
+    {
+      "path": "docs/DECIDER_REQUEST.md",
+      "blob": "9449cd7674c2d0ffa236c29bd13518fe08cb745f"
+    },
+    {
+      "path": "docs/DETECT_EVENTS.md",
+      "blob": "40e5100ba3c179dc118a10883aea575f520553eb"
+    },
+    {
+      "path": "docs/IDENTITY_CONSISTENCY_2026-10-27.md",
+      "blob": "63e6f2f68ddcb4481c1ae9bac1ddf5e630cc3da4"
+    },
+    {
+      "path": "docs/IDENTITY_CONSISTENCY_2026-10-30.md",
+      "blob": "7a184b316daf7fd8d8baa0d0f763cb630eabcc6c"
+    },
+    {
+      "path": "docs/QUALITY_AUDIT_2026-10-26.md",
+      "blob": "87c3de136771ea14697a730bbc7de320445e7ece"
+    },
+    {
+      "path": "docs/STAGE12_CONTRACT_AUDIT.md",
+      "blob": "d24ba91b1bc64e4ff27df33ea7a6d09fdd93ca95"
+    },
+    {
+      "path": "docs/STAGE12_CONTRACT_RESTORE.md",
+      "blob": "c7796004356a29be6348beea7f021e8a12294366"
+    },
+    {
+      "path": "docs/STAGE12_EVIDENCE.md",
+      "blob": "c3fcd97b09977e256b04778648ba2134e691696c"
+    },
+    {
+      "path": "docs/history/README_BEFORE_2026-11-06.md",
+      "blob": "4dd09db34085dee5da3ce8c1a36f429ea4da36db"
+    },
+    {
+      "path": "docs/history/STUDENT_PROMPTS_BEFORE_2026-11-06.md",
+      "blob": "dde137b1673a8268d2c5223dcf5cf047cc4055a5"
+    },
+    {
+      "path": "on-client/.on-starter-manifest.json",
+      "blob": "4e98f6239c0ad824be699babc9530ad5133a94cf"
+    },
+    {
+      "path": "on-client/docs/CURRICULUM.json",
+      "blob": "96f6644d26c9c5348bed1bd85a7ef21fabf130df"
+    },
+    {
+      "path": "on-client/docs/OBSERVATORY_AUDIT_2026-10-30.md",
+      "blob": "2434b6cb4bb944c183a80a67a030a27d19e5d5e8"
+    },
+    {
+      "path": "on-client/docs/STUDENT_RELEASE_RECORD.md",
+      "blob": "db6d01dc581248ce8308289b32a748a90451b132"
+    },
+    {
+      "path": "on-client/docs/STUDENT_REPRO_EVIDENCE.json",
+      "blob": "37ae7ee52304962f3112dab19eb701543e660831"
+    },
+    {
+      "path": "on-client/vendor/NOTICE.md",
+      "blob": "635732fab5d1a8669f5aac5c8ad85513e11d619b"
+    },
+    {
+      "path": "package/baseline-functions.json",
+      "blob": "5c60323af01d8ec10f91fdcce586007941d98000"
+    },
+    {
+      "path": "package/bundle-notes.template.json",
+      "blob": "5d0d02bff5423b68a5c06892dd35a392219a0c19"
+    },
+    {
+      "path": "tmp.md",
+      "blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "xdr/README.md",
+      "blob": "06ddb9d1f1ec19f633f890d242922f09435343ab"
+    }
+  ],
+  "diagramInventory": [
+    {
+      "path": "on-client/docs/STUDENT_ARCHITECTURE.md",
+      "blocks": 2
+    },
+    {
+      "path": "on-client/student/HOST_OBSERVATION.md",
+      "blocks": 1
+    },
+    {
+      "path": "package/ARCHITECTURE.md",
+      "blocks": 1
+    }
+  ]
 }

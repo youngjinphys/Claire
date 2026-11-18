@@ -8,6 +8,8 @@ const networkInterfaces = () => ({ eth0: [{ family: 'IPv6', address: 'fe80::1%et
 const dnsServers = () => ['1.1.1.1'];
 const firewallSample = { profiles: [
   { Name: 'Domain', Enabled: true, DefaultInboundAction: 'Block', DefaultOutboundAction: 'Allow' },
+  { Name: 'Private', Enabled: 'False', DefaultInboundAction: 'Block', DefaultOutboundAction: 'Allow' },
+  { Name: 'Public', Enabled: 'True', DefaultInboundAction: 'Block', DefaultOutboundAction: 'Allow' },
 ] };
 async function report(platform = 'win32', time = T) {
   return collectHostObservation({ platform, clock: () => time, networkInterfaces, dnsServers, run: async (path, args) => {
@@ -277,6 +279,8 @@ test('aggregate export fails closed on forged source labels and never copies unk
   tampered.windowsEvents.reason = 'SENSITIVE_PAYLOAD';
   const output = buildClaireHostAggregateEvidence(tampered, new Date(T + 30_000).toISOString());
   assert.equal(output.sourceStatus.network.state, 'unavailable');
+  assert.equal(output.provenance.coverage, 'partial');
+  assert.equal(output.provenance.observedFeeds, 2);
   assert.equal(output.measurements.networkInterfaces.value, null);
   const json = JSON.stringify(output);
   assert.doesNotMatch(json, /private-address-secret|SENSITIVE_PAYLOAD/);
@@ -442,4 +446,49 @@ test('student host details remain expanded through a same-state redraw', async (
     state.hostRedraw();
     assert.equal(choose()?.open, true, 'refresh must keep keyboard-open disclosures open');
   });
+});
+
+test('older incomplete Windows profiles are downgraded and unknown Enabled remains unknown', async () => {
+  const input = await report('win32', T);
+  input.firewall.profiles = input.firewall.profiles.slice(0, 1);
+  input.firewall.status = 'ok'; // older unsigned report overstated coverage
+  input.firewall.profiles[0].enabled = null;
+  const parsed = normalizeHostObservation(input, T);
+  assert.equal(parsed.firewall.status, 'partial');
+  assert.equal(parsed.firewall.profiles[0].enabled, null);
+  assert.equal(parsed.firewall.reason, 'FIREWALL_PROFILE_INCOMPLETE');
+  const evidence = buildClaireHostAggregateEvidence(parsed, new Date(T).toISOString());
+  assert.equal(evidence.measurements.firewallBackends.status, 'partial');
+  assert.equal(evidence.measurements.firewallBackends.unit, 'profiles');
+});
+test('per-tool Linux failures are retained without accepting arbitrary values', async () => {
+  const input = await report('linux', T);
+  const parsed = normalizeHostObservation(input, T);
+  assert.equal(parsed.firewall.failures.length, 2);
+  assert.ok(parsed.firewall.failures.every(row => row.reason === 'COMMAND_NOT_FOUND'));
+  input.firewall.failures[0].reason = 'PRIVATE_DETAIL';
+  const invalid = normalizeHostObservation(input, T);
+  assert.equal(invalid.firewall.reason, 'INVALID_REPORT_FIELD');
+  assert.doesNotMatch(JSON.stringify(invalid.firewall), /PRIVATE_DETAIL/);
+});
+test('aggregate includes each source freshness and the exact Windows window', async () => {
+  const parsed = normalizeHostObservation(await report('win32', T), T);
+  parsed.network.measuredAt = new Date(T - 20_000).toISOString();
+  const at = new Date(T + 15 * 60_000 - 5000).toISOString();
+  const evidence = buildClaireHostAggregateEvidence(parsed, at);
+  assert.equal(evidence.provenance.freshness, 'recent');
+  assert.equal(evidence.provenance.coverage, 'partial');
+  assert.equal(evidence.sourceStatus.network.freshness, 'stale');
+  assert.equal(evidence.measurements.networkInterfaces.freshness, 'stale');
+  assert.equal(evidence.measurements.windowsSystemErrors.freshness, 'recent');
+  assert.deepEqual(evidence.windowsEventWindow, { start: parsed.windowsEvents.windowStart, end: parsed.windowsEvents.windowEnd });
+  assert.equal(evidence.provenance.platform, 'win32');
+});
+
+test('unknown report reason strings are not reflected into rendered or normalized output', async () => {
+  const raw = await report('win32', T);
+  raw.firewall = { status: 'unavailable', source: raw.firewall.source, measuredAt: raw.firewall.measuredAt, reason: 'PRIVATE_DIAGNOSTIC_TEXT' };
+  const parsed = normalizeHostObservation(raw, T);
+  assert.equal(parsed.firewall.reason, 'INVALID_REPORT_FIELD');
+  assert.doesNotMatch(JSON.stringify(parsed), /PRIVATE_DIAGNOSTIC_TEXT/);
 });

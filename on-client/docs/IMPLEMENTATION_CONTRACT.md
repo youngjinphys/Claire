@@ -14,7 +14,9 @@
 | `GET /api/diagnostics` | 제한된 진단 상태 |
 | `POST /api/ai/check`, `/api/ai/explain` | 권한·모델 목록과 근거 결속 사건 설명을 구분 |
 | `POST /api/ai/connect/{start,finish,status,cancel}` | 별도 앱 승인·현재 진행 조회 |
-| `POST /api/native-login/...` | 설정된 Native 계정 연결 경로 |
+| `POST /api/native-login/{start,status,redeem,current,cancel}` | 설정된 Native 계정 연결·현재 상태 |
+| `POST /api/learner-support` | 유한 problemKind의 로컬 도움정보 |
+| `POST /api/learner-support/gpt` | 별도 권한이 필요한 AI 학습지원 |
 | `POST /api/actions/{prepare,execute,result}` | 사람 확인과 현재 원천 권한을 검증하는 별도 조치 경로 |
 
 경로마다 요청 필드·상태 코드·응답 투영이 다릅니다. 공통적으로 성공 자료와 오류를 구분하며 `meta.mode`의 connected/demo/disconnected는 결과의 출처 모드이지 모든 기능의 성공 판정이 아닙니다. 새로운 경로·필드를 문서만으로 추가하지 않습니다. 학습지원의 유한 요청/응답은 [AI 모듈](../src/ai/README.md)의 실제 계약을 따릅니다.

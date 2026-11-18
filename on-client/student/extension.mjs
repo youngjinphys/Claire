@@ -171,6 +171,7 @@ const HOST_REASON_GUIDANCE = Object.freeze({
   COMMAND_NOT_FOUND: '운영체제의 해당 관리 도구가 없습니다. 시스템 구성을 확인하고, 없는 도구의 결과를 정상으로 판단하지 마세요.',
   FIREWALL_BACKEND_NOT_FOUND: 'firewalld/UFW 조회 도구가 없습니다. 다른 방화벽의 활성 여부는 확인되지 않았습니다.',
   FIREWALL_READ_FAILED: '방화벽 관리자 상태 조회에 실패했습니다. OS에서 읽을 수 있는 범위를 확인하세요.',
+  FIREWALL_PROFILE_INCOMPLETE: 'Windows 방화벽 프로필 일부가 누락됐거나 사용 상태가 확인되지 않았습니다. 누락·미설정을 켜짐/꺼짐으로 판단하지 말고 현재 권한에서 새 보고서를 확인하세요.',
   OTHER_BACKEND_UNVERIFIED: '일부 방화벽 관리 도구만 확인됐습니다. 다른 백엔드의 상태를 확인하기 전에는 전체 상태로 해석하지 마세요.',
   NETWORK_READ_FAILED: '인터페이스·DNS를 읽을 수 없습니다. Node 실행 환경과 일반 사용자 권한을 확인하세요.',
   READ_FAILED: '조회 프로그램이 실패했습니다. 현재 사용자 권한과 OS 지원 여부를 확인하세요.',
@@ -196,7 +197,7 @@ const hostSafeString = (value, max = 100) => typeof value === 'string' && value.
   && !/[\u0000-\u001f\u007f]/u.test(value);
 const hostIso = value => typeof value === 'string' && Number.isFinite(Date.parse(value))
   && new Date(Date.parse(value)).toISOString() === value;
-const hostReason = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/u.test(value)
+const hostReason = value => typeof value === 'string' && Object.hasOwn(HOST_REASON_GUIDANCE, value)
   ? value : 'INVALID_REPORT_FIELD';
 const hostUnavailable = (reason = 'INVALID_REPORT_FIELD', source = null, measuredAt = null) => ({ status: 'unavailable', reason, source, measuredAt });
 
@@ -258,18 +259,41 @@ function hostParseFirewall(data, platform, produced) {
     : platform === 'darwin' ? 'macos:socketfilterfw(--getglobalstate)'
       : platform === 'linux' ? 'linux:firewalld+ufw' : 'host:unsupported';
   if (data.source !== source) return hostUnavailable();
-  if (data.status === 'unavailable' || data.status === 'not_applicable') return hostUnavailable(hostReason(data.reason), data.source, data.measuredAt);
+  const linuxTools = ['linux:firewall-cmd(--state)', 'linux:ufw(status)'];
+  const failureReasons = ['PERMISSION_DENIED', 'COMMAND_NOT_FOUND', 'QUERY_TIMEOUT', 'RESULT_TOO_LARGE', 'READ_FAILED', 'FIREWALL_RESPONSE_INVALID'];
+  const readFailures = (observed = []) => {
+    // Older v1 reports did not contain per-tool failures. Do not invent a cause.
+    if (data.failures === undefined) return [];
+    if (!Array.isArray(data.failures) || data.failures.length !== linuxTools.length - observed.length) return null;
+    const seen = new Set(observed);
+    const result = [];
+    for (const row of data.failures) {
+      if (!linuxTools.includes(row?.backend) || seen.has(row.backend) || !failureReasons.includes(row.reason)) return null;
+      seen.add(row.backend);
+      result.push({ backend: row.backend, reason: row.reason });
+    }
+    return result;
+  };
+  if (data.status === 'unavailable' || data.status === 'not_applicable') {
+    const unavailable = hostUnavailable(hostReason(data.reason), data.source, data.measuredAt);
+    if (platform !== 'linux') return unavailable;
+    const failures = readFailures();
+    return failures === null ? hostUnavailable('INVALID_REPORT_FIELD', source, data.measuredAt) : { ...unavailable, failures };
+  }
   if (!['ok', 'partial'].includes(data.status)) return hostUnavailable();
   if (platform === 'win32') {
-    if (data.status !== 'ok' || !Array.isArray(data.profiles) || data.profiles.length < 1 || data.profiles.length > 3) return hostUnavailable();
+    if (!Array.isArray(data.profiles) || data.profiles.length < 1 || data.profiles.length > 3) return hostUnavailable();
     const names = new Set();
     for (const row of data.profiles) {
       if (!['Domain', 'Private', 'Public'].includes(row?.name) || names.has(row.name)
-        || typeof row.enabled !== 'boolean' || !['Allow', 'Block', 'NotConfigured'].includes(row.inbound)
+        || ![true, false, null].includes(row.enabled) || !['Allow', 'Block', 'NotConfigured'].includes(row.inbound)
         || !['Allow', 'Block', 'NotConfigured'].includes(row.outbound)) return hostUnavailable();
       names.add(row.name);
     }
-    return { status: 'ok', source, measuredAt: data.measuredAt,
+    const complete = names.size === 3 && data.profiles.every(row => row.enabled !== null);
+    if (data.status === 'partial' && (complete || data.reason !== 'FIREWALL_PROFILE_INCOMPLETE')) return hostUnavailable();
+    // Also downgrade older v1 reports that overstated coverage.
+    return { status: complete ? 'ok' : 'partial', reason: complete ? null : 'FIREWALL_PROFILE_INCOMPLETE', source, measuredAt: data.measuredAt,
       profiles: data.profiles.map(row => ({ name: row.name, enabled: row.enabled, inbound: row.inbound, outbound: row.outbound })) };
   }
   if (platform === 'darwin') return ['enabled', 'disabled'].includes(data.state) && data.status === 'ok'
@@ -290,8 +314,10 @@ function hostParseFirewall(data, platform, produced) {
     // means partial coverage, never a complete system firewall finding.
     if (data.status === 'ok' && (seen.size !== 2 || data.reason != null)) return hostUnavailable();
     if (data.status === 'partial' && (seen.size !== 1 || data.reason !== 'OTHER_BACKEND_UNVERIFIED')) return hostUnavailable();
+    const failures = readFailures([...seen]);
+    if (failures === null) return hostUnavailable('INVALID_REPORT_FIELD', source, data.measuredAt);
     return { status: data.status, reason: data.status === 'partial' ? hostReason(data.reason) : null, source,
-      measuredAt: data.measuredAt, backends: data.backends.map(x => ({ backend: x.backend, state: x.state })) };
+      measuredAt: data.measuredAt, backends: data.backends.map(x => ({ backend: x.backend, state: x.state })), failures };
   }
   return hostUnavailable('PLATFORM_UNSUPPORTED');
 }
@@ -389,7 +415,7 @@ export function hostReportQuality(report, now = Date.now()) {
     : applicable.length === 0 ? 'unavailable'
       : observedFeeds === applicable.length ? 'observed'
         : observedFeeds > 0 || applicable.some(row => row.state === 'partial' && row.freshness === 'recent') ? 'partial'
-          : 'unavailable';
+          : applicable.some(row => ['observed', 'partial'].includes(row.state)) ? 'unverifiable' : 'unavailable';
   return { freshness, ageSeconds: Math.max(0, Math.round(ageMs / 1000)), coverage,
     observedFeeds, applicableFeeds: applicable.length, feeds,
     authenticity: 'user-selected-unsigned-local-report' };
@@ -417,9 +443,9 @@ export function buildClaireHostAggregateEvidence(report, exportedAt = new Date()
   const origin = name => {
     const feed = quality.feeds[name];
     if (!feed || feed.source !== expected[name] || (feed.measuredAt !== null && !hostIso(feed.measuredAt))) {
-      return { state: 'unavailable', source: null, measuredAt: null, reason: 'SOURCE_UNVERIFIED' };
+      return { state: 'unavailable', source: null, measuredAt: null, freshness: 'unverifiable', reason: 'SOURCE_UNVERIFIED' };
     }
-    return { state: feed.state, source: feed.source, measuredAt: feed.measuredAt,
+    return { state: feed.state, source: feed.source, measuredAt: feed.measuredAt, freshness: feed.freshness,
       reason: feed.reason === null ? null
         : Object.hasOwn(HOST_REASON_GUIDANCE, feed.reason) ? feed.reason : 'SOURCE_UNVERIFIED' };
   };
@@ -431,7 +457,7 @@ export function buildClaireHostAggregateEvidence(report, exportedAt = new Date()
       : checked === null || !['observed', 'partial'].includes(source.state) ? 'unavailable'
         : source.state === 'partial' ? 'partial' : 'observed';
     return { status: state, value: state === 'unavailable' || state === 'not_applicable' ? null : checked,
-      unit, source: source.source, measuredAt: source.measuredAt,
+      unit, source: source.source, measuredAt: source.measuredAt, freshness: source.freshness,
       reason: state === 'observed' ? null
         : reason && Object.hasOwn(HOST_REASON_GUIDANCE, reason) ? reason
           : source.reason || 'SOURCE_NOT_OBSERVED' };
@@ -445,18 +471,30 @@ export function buildClaireHostAggregateEvidence(report, exportedAt = new Date()
   const eventCount = (log, kind) => observation(log?.status === 'ok' ? log[kind] : null,
     'events/24h', 'windowsEvents', log?.reason || events?.reason || 'SOURCE_NOT_OBSERVED');
   const status = Object.fromEntries(Object.keys(expected).map(name => [name, origin(name)]));
+  const applicable = Object.values(status).filter(row => row.state !== 'not_applicable');
+  const observedFeeds = applicable.filter(row => row.state === 'observed' && row.freshness === 'recent').length;
+  const coverage = quality.freshness !== 'recent' ? 'unverifiable'
+    : applicable.length === 0 ? 'unavailable'
+      : observedFeeds === applicable.length ? 'observed'
+        : observedFeeds > 0 || applicable.some(row => row.state === 'partial' && row.freshness === 'recent') ? 'partial'
+          : applicable.some(row => ['observed', 'partial'].includes(row.state)) ? 'unverifiable' : 'unavailable';
   return {
     schema: 'claire.host-aggregate-evidence.v1',
     provenance: {
-      scope: 'selected-local-host-aggregate', generatedAt: report.producedAt, exportedAt,
+      scope: 'selected-local-host-aggregate', generatedAt: report.producedAt, exportedAt, platform: report.platform,
       source: 'user-selected-unsigned-local-report',
       authenticity: 'unsigned-user-download-not-host-attestation',
       freshness: quality.freshness, ageSeconds: quality.ageSeconds,
-      coverage: quality.coverage, observedFeeds: quality.observedFeeds,
-      applicableFeeds: quality.applicableFeeds,
+      coverage, observedFeeds,
+      applicableFeeds: applicable.length,
       note: 'Counts and sensor status only. No raw IP, DNS address, device identity or SDP event. A warning count is not a breach verdict.',
     },
     sourceStatus: status,
+    windowsEventWindow: report.platform === 'win32' && events?.source === expected.windowsEvents
+      && hostIso(events.windowStart) && hostIso(events.windowEnd)
+      && Date.parse(events.windowEnd) - Date.parse(events.windowStart) === 86400000
+      && events.measuredAt === events.windowEnd
+      ? { start: events.windowStart, end: events.windowEnd } : null,
     measurements: {
       networkInterfaces: observation(Array.isArray(network?.interfaces) ? network.interfaces.length : null, 'interfaces', 'network'),
       dnsServers: observation(Array.isArray(network?.dns) ? network.dns.length : null, 'resolvers', 'network'),
@@ -632,12 +670,10 @@ export function hostPanel(state, mode) {
     const quality = hostReportQuality(latest, Date.now());
     const fresh = quality.freshness === 'recent';
     const feedFresh = name => fresh && quality.feeds[name]?.freshness === 'recent';
-    const feedIssue = name => {
-      const sourceFreshness = quality.feeds[name]?.freshness;
-      if (quality.freshness === 'clock_skew' || sourceFreshness === 'clock_skew') return '확인 불가 · 시계 불일치';
-      if (quality.freshness === 'stale' || sourceFreshness === 'stale') return '확인 불가 · 오래된 보고서 또는 원천';
-      return '확인 불가 · 원천 시각 또는 출처 미검증';
-    };
+    const feedIssue = name => quality.freshness === 'clock_skew' || quality.feeds[name]?.freshness === 'clock_skew'
+      ? '확인 불가 · 시계 불일치'
+      : quality.freshness === 'stale' || quality.feeds[name]?.freshness === 'stale'
+        ? '확인 불가 · 오래된 보고서 또는 원천' : '확인 불가 · 원천 시각 미확인';
     const grid = hostNode('div');
     grid.style.display = 'grid';
     grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(min(100%, 190px), 1fr))';
@@ -707,13 +743,17 @@ export function hostPanel(state, mode) {
     fwSection.style.marginTop = '12px';
     fwSection.append(hostNode('summary', '방화벽 상세 · 읽기 전용 (Enter/Space로 펼치기)'));
     if (fw?.status === 'ok' || fw?.status === 'partial') {
-      if (fw.profiles) for (const p of fw.profiles) fwSection.append(hostNode('p', p.name + ' · 사용 ' + (p.enabled ? '켜짐' : '꺼짐')
+      if (fw.profiles) for (const p of fw.profiles) fwSection.append(hostNode('p', p.name + ' · 사용 ' + (p.enabled === true ? '켜짐' : p.enabled === false ? '꺼짐' : '확인 불가(미설정)')
         + ' · 기본 인바운드 ' + p.inbound + ' · 기본 아웃바운드 ' + p.outbound, 'muted'));
       if (fw.state) fwSection.append(hostNode('p', 'macOS Application Firewall: ' + fw.state + ' · pf 별도', 'muted'));
       if (fw.backends) for (const b of fw.backends) fwSection.append(hostNode('p', b.backend + ': ' + b.state, 'muted'));
       if (fw.status === 'partial') fwSection.append(hostNode('p', reasonLine(fw), 'state state-error'));
       fwSection.append(hostNode('p', '표시된 관리 도구 외의 방화벽, 모든 규칙 적용, 시스템 전체의 안전은 확인한 것이 아닙니다.', 'muted'));
     } else fwSection.append(hostNode('p', reasonLine(fw), 'state state-error'));
+    for (const failure of fw?.failures || []) {
+      fwSection.append(hostNode('p', failure.backend + ': 확인 불가 · '
+        + (HOST_REASON_GUIDANCE[failure.reason] || '조회 실패'), 'state state-error'));
+    }
     // Firewall commands stay in the existing separate read-only collector.
     const logsSection = hostNode('section');
     logsSection.append(hostNode('h4', '최근 Windows System·Application 기록 · 지난 24시간'));

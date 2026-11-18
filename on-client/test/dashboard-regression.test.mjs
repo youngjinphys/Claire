@@ -188,3 +188,11 @@ test('live freshness boundaries distinguish future clock errors from historical 
   assert.equal(readingFreshness('not-a-date', t), 'unverifiable');
   assert.equal(readingFreshness(stamp(t), NaN), 'unverifiable');
 });
+
+test('CPU interval metadata must agree with observation timestamps', () => {
+  const t = Date.now();
+  for (const measuredFrom of [stamp(t - 100), stamp(t - 3100)]) {
+    const row = { ...measured(t).data.metrics.cpu, measuredFrom, windowMs: 400 };
+    assert.equal(normalizeSnapshot(measured(t, {cpu: row})).metrics.cpu.reason, 'CPU_INTERVAL_INVALID');
+  }
+});

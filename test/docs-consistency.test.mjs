@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,5 +87,31 @@ test('navigation documents describe the archive without deleting its original by
   }
   for (const p of ['AGENTS.md', 'docs/DECIDER_REQUEST.md', 'docs/DETECT_EVENTS.md', 'on-client/vendor/NOTICE.md']) {
     assert.equal(inventory.documents.find(x => x.path === p)?.classification, 'protected');
+  }
+});
+
+test('protected source, historical evidence and recorded inputs retain their audited Git blobs', () => {
+  const expected = [...inventory.documents.filter(d => d.classification !== 'current').map(d => d.path), ...inventory.sourceInputsPreserved].sort();
+  assert.deepEqual(inventory.preservedBlobs.map(row => row.path).sort(), expected);
+  for (const row of inventory.preservedBlobs) {
+    assert.match(row.blob, /^[0-9a-f]{40}$/u);
+    const actual = execFileSync('git', ['hash-object', '--path=' + row.path, row.path], { cwd: ROOT, encoding: 'utf8' }).trim();
+    assert.equal(actual, row.blob, row.path);
+  }
+});
+test('living architecture diagrams are inventoried and linked to source contracts', () => {
+  const actual = inventory.documents.filter(d => d.classification === 'current').map(d => ({
+    path: d.path, blocks: (read(d.path).match(/^\x60{3}mermaid\s*$/gmu) || []).length,
+  })).filter(row => row.blocks > 0).sort((a,b) => a.path.localeCompare(b.path));
+  assert.deepEqual(actual, [...inventory.diagramInventory].sort((a,b) => a.path.localeCompare(b.path)));
+  const app = read('on-client/docs/STUDENT_ARCHITECTURE.md');
+  for (const symbol of ['hostPanel', 'local-pc-metrics', 'learner-support', '/api/local-pc']) assert.ok(app.includes(symbol), symbol);
+  const root = read('package/ARCHITECTURE.md');
+  const ledger = (read('public/operations.mjs').match(/^\s*\[\d+,'(?:normal|forbidden)'/gmu) || []).length;
+  const probes = (read('src/operations.mjs').match(/^\s*\{ id:/gmu) || []).length;
+  assert.ok(root.includes(String(ledger)) && root.includes(String(probes)));
+  const server = read('on-client/src/server.mjs');
+  for (const route of ['/api/learner-support', '/api/learner-support/gpt']) {
+    assert.ok(server.includes(route) && read('on-client/docs/IMPLEMENTATION_CONTRACT.md').includes(route), route);
   }
 });

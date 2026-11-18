@@ -1,12 +1,29 @@
 {
   "schema": "aleph.defense.commit-files.v1",
   "files": [
+    ".github/workflows/quality.yml",
+    "README.md",
+    "docs/CURRENT_LIMITATIONS.md",
+    "docs/DOCUMENTATION_STATUS.json",
+    "docs/README.md",
     "on-client/README.md",
+    "on-client/docs/CONNECTION_TROUBLESHOOT.md",
+    "on-client/docs/IMPLEMENTATION_CONTRACT.md",
+    "on-client/docs/STUDENT_ARCHITECTURE.md",
+    "on-client/docs/STUDENT_RUNBOOK.md",
     "on-client/public/dashboard-model.mjs",
-    "on-client/public/dashboard.mjs",
+    "on-client/src/local-pc-metrics.mjs",
+    "on-client/student/HOST_OBSERVATION.md",
+    "on-client/student/collect-host.mjs",
+    "on-client/student/extension.mjs",
     "on-client/test/dashboard-regression.test.mjs",
-    "on-client/test/dashboard-resilience.test.mjs",
-    "package/bundle-commit-files.json"
+    "on-client/test/host-collection.test.mjs",
+    "on-client/test/local-pc-metrics.test.mjs",
+    "on-client/test/student-host-view.test.mjs",
+    "package/ARCHITECTURE.md",
+    "package/bundle-commit-files.json",
+    "scripts/verify-readonly-audit.mjs",
+    "test/docs-consistency.test.mjs"
   ],
-  "releaseNote": "Fix live observation request-time binding, shared freshness classification, all-sensor failure messaging and explicit prior DEMO event provenance; add focused regression tests. Preserve supplied server, collectors and prior submissions."
+  "releaseNote": "Current documentation and read-only observation audit; no packaging or deployment."
 }

@@ -45,7 +45,8 @@ test('Windows fixed PowerShell scripts contain only read-only APIs and bounded 2
     assert.doesNotMatch(args[3], /\b(?:Set|New|Remove|Disable|Enable|Clear|Restart)-/iu);
     if (args[3].includes('Get-NetFirewallProfile')) return JSON.stringify({ profiles: [
       { Name: 'Domain', Enabled: true, DefaultInboundAction: 'Block', DefaultOutboundAction: 'Allow' },
-      { Name: 'Private', Enabled: false, DefaultInboundAction: 'NotConfigured', DefaultOutboundAction: 'Allow' },
+      { Name: 'Private', Enabled: 'False', DefaultInboundAction: 'NotConfigured', DefaultOutboundAction: 'Allow' },
+      { Name: 'Public', Enabled: 'True', DefaultInboundAction: 'Block', DefaultOutboundAction: 'Allow' },
     ] });
     assert.match(args[3], /Get-WinEvent\s+-FilterHashtable/);
     assert.match(args[3], /-MaxEvents 2001/);
@@ -57,6 +58,9 @@ test('Windows fixed PowerShell scripts contain only read-only APIs and bounded 2
   assert.equal(report.readOnly, true);
   assert.equal(report.firewall.status, 'ok');
   assert.equal(report.firewall.profiles[0].inbound, 'Block');
+  assert.equal(report.firewall.profiles[1].enabled, false);
+  assert.equal(report.firewall.profiles[2].enabled, true);
+  assert.match(WINDOWS_FIREWALL_QUERY, /Enabled = \[string\]\$_\.Enabled/);
   assert.match(report.firewall.note, /ActiveStore.*현재 사용 중인 프로필/);
   assert.equal(report.windowsEvents.status, 'ok');
   assert.deepEqual(report.windowsEvents.system, { status: 'ok', warning: 4, error: 2 });
@@ -106,6 +110,7 @@ test('Linux read-only backend queries are independent; missing UFW cannot certif
   assert.equal(report.firewall.status, 'partial');
   assert.equal(report.firewall.backends[0].state, 'running');
   assert.equal(report.firewall.reason, 'OTHER_BACKEND_UNVERIFIED');
+  assert.deepEqual(report.firewall.failures, [{ backend: 'linux:ufw(status)', reason: 'COMMAND_NOT_FOUND' }]);
   assert.equal(report.windowsEvents.status, 'not_applicable');
 });
 test('a stopped firewalld is not mislabeled as system-wide firewall disabled', async () => {
@@ -156,4 +161,14 @@ test('the actual runner can collect its own user-mode report without changing OS
     assert.notEqual(sampled.windowsEvents.system?.warning,0);
     assert.notEqual(sampled.windowsEvents.application?.error,0);
   }
+});
+
+test('incomplete Windows profile reads and unconfigured Enabled never imply a complete enabled policy', async () => {
+  const profile = { Name: 'Domain', Enabled: 'NotConfigured', DefaultInboundAction: 'Block', DefaultOutboundAction: 'Allow' };
+  const sample = await readFirewall({ platform: 'win32', clock: () => T, run: async () => JSON.stringify({ profiles: [profile] }) });
+  assert.equal(sample.status, 'partial');
+  assert.equal(sample.reason, 'FIREWALL_PROFILE_INCOMPLETE');
+  assert.equal(sample.profiles[0].enabled, null);
+  const denied = await readFirewall({ platform: 'win32', clock: () => T, run: async () => { throw Error('Access is denied'); } });
+  assert.equal(denied.reason, 'PERMISSION_DENIED');
 });

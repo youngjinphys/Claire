@@ -19,7 +19,7 @@ const iso = time => new Date(time).toISOString();
 const failure = (reason, measuredAt, source) => ({ status: 'unavailable', reason, measuredAt, source });
 const errorReason = error => {
   const text = String(error?.output ?? error?.message ?? '');
-  if (['EPERM', 'EACCES'].includes(error?.code) || /permission denied|you need to be root|operation not permitted/iu.test(text)) return 'PERMISSION_DENIED';
+  if (['EPERM', 'EACCES'].includes(error?.code) || /permission denied|access (?:is )?denied|you need to be root|operation not permitted/iu.test(text)) return 'PERMISSION_DENIED';
   if (error?.code === 'ENOENT') return 'COMMAND_NOT_FOUND';
   if (error?.killed || error?.code === 'ETIMEDOUT') return 'QUERY_TIMEOUT';
   if (error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return 'RESULT_TOO_LARGE';
@@ -76,7 +76,7 @@ export function readNetwork({ networkInterfaces = () => os.networkInterfaces(), 
 export const WINDOWS_FIREWALL_QUERY = String.raw`
 $ErrorActionPreference = 'Stop'
 $p = @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop | ForEach-Object {
-  @{ Name = [string]$_.Name; Enabled = [bool]$_.Enabled;
+  @{ Name = [string]$_.Name; Enabled = [string]$_.Enabled;
      DefaultInboundAction = [string]$_.DefaultInboundAction;
      DefaultOutboundAction = [string]$_.DefaultOutboundAction }
 })
@@ -89,11 +89,12 @@ function validateProfiles(raw) {
   const names = new Set();
   const profiles = [];
   for (const p of raw.profiles) {
-    if (!acceptedNames.has(p?.Name) || names.has(p.Name) || typeof p.Enabled !== 'boolean'
+    if (!acceptedNames.has(p?.Name) || names.has(p.Name) || ![true, false, 'True', 'False', 'NotConfigured'].includes(p.Enabled)
         || !['Allow', 'Block', 'NotConfigured'].includes(p.DefaultInboundAction)
         || !['Allow', 'Block', 'NotConfigured'].includes(p.DefaultOutboundAction)) return null;
     names.add(p.Name);
-    profiles.push({ name: p.Name, enabled: p.Enabled, inbound: p.DefaultInboundAction, outbound: p.DefaultOutboundAction });
+    const enabled = p.Enabled === 'NotConfigured' ? null : p.Enabled === true || p.Enabled === 'True';
+    profiles.push({ name: p.Name, enabled, inbound: p.DefaultInboundAction, outbound: p.DefaultOutboundAction });
   }
   return profiles;
 }
@@ -105,7 +106,8 @@ export async function readFirewall({ platform = process.platform, run = runReadO
     try {
       const output = await run(WINDOWS_PS, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_FIREWALL_QUERY]);
       const profiles = validateProfiles(JSON.parse(output));
-      return profiles ? { status: 'ok', measuredAt, source, profiles, note: 'ActiveStore 정책 저장소의 Domain/Private/Public 구성. 현재 사용 중인 프로필과 타 제품 방화벽의 전체 적용 상태를 증명하지 않음' }
+      const complete = profiles?.length === 3 && profiles.every(row => row.enabled !== null);
+      return profiles ? { status: complete ? 'ok' : 'partial', reason: complete ? null : 'FIREWALL_PROFILE_INCOMPLETE', measuredAt, source, profiles, note: 'ActiveStore 정책 저장소의 Domain/Private/Public 구성. 현재 사용 중인 프로필과 타 제품 방화벽의 전체 적용 상태를 증명하지 않음' }
         : failure('FIREWALL_RESPONSE_INVALID', measuredAt, source);
     } catch (error) { return failure(errorReason(error), measuredAt, source); }
   }
@@ -144,10 +146,10 @@ export async function readFirewall({ platform = process.platform, run = runReadO
     if (!observed.length) {
       const reason = failures.some(x => x.reason === 'PERMISSION_DENIED') ? 'PERMISSION_DENIED'
         : failures.every(x => x.reason === 'COMMAND_NOT_FOUND') ? 'FIREWALL_BACKEND_NOT_FOUND' : 'FIREWALL_READ_FAILED';
-      return failure(reason, measuredAt, 'linux:firewalld+ufw');
+      return { ...failure(reason, measuredAt, 'linux:firewalld+ufw'), failures: failures.map(row => ({ backend: row.source, reason: row.reason })) };
     }
     return { status: failures.length ? 'partial' : 'ok', measuredAt, source: 'linux:firewalld+ufw',
-      backends: observed, reason: failures.length ? 'OTHER_BACKEND_UNVERIFIED' : null,
+      backends: observed, failures: failures.map(row => ({ backend: row.source, reason: row.reason })), reason: failures.length ? 'OTHER_BACKEND_UNVERIFIED' : null,
       note: '조회 가능한 관리 도구만 관측. nftables/iptables 및 모든 방화벽의 통합 상태를 보증하지 않음' };
   }
   return { status: 'not_applicable', measuredAt, source: 'host:unsupported', reason: 'PLATFORM_UNSUPPORTED' };
