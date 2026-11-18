@@ -189,6 +189,7 @@ const HOST_REASON_GUIDANCE = Object.freeze({
   REPORT_TOO_LARGE: '보고서 크기가 128 KiB 제한을 초과했습니다. 기록 본문을 포함한 파일은 사용하지 마세요.',
   FILE_READ_FAILED: '파일을 읽지 못했습니다. 현재 계정에서 접근 가능한 수집기 보고서를 다시 선택하세요.',
   FILE_READ_TIMEOUT: '파일 읽기 시간이 초과됐습니다. 시스템 설정을 바꾸지 말고 파일 접근 상태를 확인한 뒤 다시 선택하세요.',
+  REPORT_TIME_CONFLICT: '동일 생성 시각에 서로 다른 보고서가 확인되어 현재 값과 집계 저장·비교에서 제외했습니다. 수집기를 다시 실행하여 새 생성 시각의 보고서를 선택하세요.',
   NOT_SELECTED: '먼저 일반 권한으로 수집기를 실행한 다음 observation.json 파일을 선택하세요.',
 });
 const hostSafeString = (value, max = 100) => typeof value === 'string' && value.length > 0 && value.length <= max
@@ -290,7 +291,7 @@ function hostParseFirewall(data, platform, produced) {
     if (data.status === 'ok' && (seen.size !== 2 || data.reason != null)) return hostUnavailable();
     if (data.status === 'partial' && (seen.size !== 1 || data.reason !== 'OTHER_BACKEND_UNVERIFIED')) return hostUnavailable();
     return { status: data.status, reason: data.status === 'partial' ? hostReason(data.reason) : null, source,
-      measuredAt: data.measuredAt, backends: data.backends.map(x => ({ ...x })) };
+      measuredAt: data.measuredAt, backends: data.backends.map(x => ({ backend: x.backend, state: x.state })) };
   }
   return hostUnavailable('PLATFORM_UNSUPPORTED');
 }
@@ -387,7 +388,7 @@ export function hostReportQuality(report, now = Date.now()) {
   const coverage = freshness !== 'recent' ? 'unverifiable'
     : applicable.length === 0 ? 'unavailable'
       : observedFeeds === applicable.length ? 'observed'
-        : observedFeeds > 0 || applicable.some(row => row.state === 'partial') ? 'partial'
+        : observedFeeds > 0 || applicable.some(row => row.state === 'partial' && row.freshness === 'recent') ? 'partial'
           : 'unavailable';
   return { freshness, ageSeconds: Math.max(0, Math.round(ageMs / 1000)), coverage,
     observedFeeds, applicableFeeds: applicable.length, feeds,
@@ -501,19 +502,21 @@ export function hostHistoryTransition(history, report, fingerprint) {
   return { history: [...history, next].sort((a,b) => a.time - b.time).slice(-HOST_HISTORY_LIMIT),
     conflict: false, reason: null };
 }
+const validHostEventCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 4000;
 function hostComparisonPair(history) {
   if (!Array.isArray(history) || history.length < 2) return null;
   const last = history.at(-1), previous = history.slice(0, -1).reverse().find(row => row.time < last.time);
   if (!previous || last.conflict || previous.conflict || !last.fingerprint || !previous.fingerprint
-    || last.platform !== previous.platform) return null;
+    || last.platform !== 'win32' || previous.platform !== 'win32'
+    || !validHostEventCount(last.windowsEventCount) || !validHostEventCount(previous.windowsEventCount)) return null;
   return [previous.time, previous.fingerprint, last.time, last.fingerprint].join(':');
 }
 export function hostComparison(history, pair = undefined) {
   if (!Array.isArray(history) || history.length < 2) return null;
   const last = history.at(-1), previous = history.slice(0, -1).reverse().find(row => row.time < last.time);
-  if (!previous || last.conflict || previous.conflict || previous.platform !== last.platform) return null;
+  if (!previous || last.conflict || previous.conflict || previous.platform !== 'win32' || last.platform !== 'win32') return null;
   if (pair !== undefined && (!pair || hostComparisonPair(history) !== pair)) return null;
-  if (last.windowsEventCount == null || previous.windowsEventCount == null) return null;
+  if (!validHostEventCount(last.windowsEventCount) || !validHostEventCount(previous.windowsEventCount)) return null;
   return { from: previous.time, to: last.time, delta: last.windowsEventCount - previous.windowsEventCount,
     note: '각 시점의 이전 24시간 경고·오류 총건수 차이. 그 사이 새 발생 건수가 아님' };
 }
@@ -629,9 +632,12 @@ export function hostPanel(state, mode) {
     const quality = hostReportQuality(latest, Date.now());
     const fresh = quality.freshness === 'recent';
     const feedFresh = name => fresh && quality.feeds[name]?.freshness === 'recent';
-    const feedIssue = name => quality.feeds[name]?.freshness === 'clock_skew'
-      ? '확인 불가 · 원천 시계 불일치'
-      : '확인 불가 · 오래된 보고서 또는 원천';
+    const feedIssue = name => {
+      const sourceFreshness = quality.feeds[name]?.freshness;
+      if (quality.freshness === 'clock_skew' || sourceFreshness === 'clock_skew') return '확인 불가 · 시계 불일치';
+      if (quality.freshness === 'stale' || sourceFreshness === 'stale') return '확인 불가 · 오래된 보고서 또는 원천';
+      return '확인 불가 · 원천 시각 또는 출처 미검증';
+    };
     const grid = hostNode('div');
     grid.style.display = 'grid';
     grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(min(100%, 190px), 1fr))';
@@ -809,7 +815,7 @@ export function hostPanel(state, mode) {
     region.setAttribute('aria-busy', state.pending ? 'true' : 'false');
     retry.disabled = state.pending === true;
     retry.setAttribute('aria-disabled', state.pending ? 'true' : 'false');
-    exportButton.disabled = state.pending === true || state.latest?.status !== 'ok';
+    exportButton.disabled = state.pending === true || state.hostConflict === true || state.latest?.status !== 'ok';
     exportButton.setAttribute('aria-disabled', exportButton.disabled ? 'true' : 'false');
     draw();
     for (const node of dataRoot.children) {
@@ -864,7 +870,7 @@ export function hostPanel(state, mode) {
     fileInput.click();
   });
   exportButton.addEventListener('click', () => {
-    if (state.pending || state.latest?.status !== 'ok') return;
+    if (state.pending || state.hostConflict === true || state.latest?.status !== 'ok') return;
     try {
       const evidence = buildClaireHostAggregateEvidence(state.latest);
       const bytes = new Blob([JSON.stringify(evidence, null, 2)], { type: 'application/json' });
@@ -914,11 +920,20 @@ export function hostPanel(state, mode) {
       if (report.status !== 'ok') throw Error(report.reason);
       const fingerprint = await hostReportFingerprint(report);
       if (id !== state.requestId) return;
-      state.latest = report;
-      state.loadedAt = new Date().toISOString(); // File check time != OS measuredAt.
       const result = hostHistoryTransition(state.history, report, fingerprint);
       state.history = result.history;
       state.hostConflict = result.conflict;
+      // An unsigned, conflicting report cannot be promoted to the current
+      // view or exported. Keep the quarantined time in the bounded history;
+      // a new selection at that same time must not resurrect its values.
+      if (result.conflict) {
+        state.latest = null;
+        state.loadedAt = null;
+        state.error = 'REPORT_TIME_CONFLICT';
+      } else {
+        state.latest = report;
+        state.loadedAt = new Date().toISOString(); // File check time != OS measuredAt.
+      }
     } catch (error) {
       if (id !== state.requestId) return;
       state.latest = null; // Never keep old verified-looking readings after a failed selection.
