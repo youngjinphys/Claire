@@ -37,8 +37,8 @@ test('every Markdown file is classified exactly once, preserving source and date
   assert.equal(actual.length, inventory.existingMarkdownCount);
   assert.equal(new Set(listed).size, listed.length);
   for (const entry of inventory.documents) {
-    assert.ok(['current', 'protected', 'historical', 'empty-preserved'].includes(entry.classification), entry.path);
-    if (entry.classification === 'empty-preserved') assert.equal(read(entry.path), '');
+    assert.ok(['current', 'protected', 'historical'].includes(entry.classification), entry.path);
+    assert.ok(read(entry.path).trim().length > 0, 'Empty Markdown placeholder must not remain: ' + entry.path);
   }
 });
 
@@ -114,4 +114,19 @@ test('living architecture diagrams are inventoried and linked to source contract
   for (const route of ['/api/learner-support', '/api/learner-support/gpt']) {
     assert.ok(server.includes(route) && read('on-client/docs/IMPLEMENTATION_CONTRACT.md').includes(route), route);
   }
+});
+
+
+test('current commit manifest matches the exact parent diff without changing Stage12 bundle inputs', () => {
+  const commit = JSON.parse(read('package/commit-files.json'));
+  assert.equal(commit.schema, 'claire.commit-files.v1');
+  assert.deepEqual(commit.files, [...new Set(commit.files)].sort());
+  assert.ok(commit.files.includes('package/commit-files.json'));
+  const diff = execFileSync('git', ['diff', '--name-only', 'HEAD^', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
+  const actual = diff.trim().split(/\r?\n/u).sort();
+  assert.deepEqual(commit.files, actual);
+  const bundle = JSON.parse(read('package/bundle-commit-files.json'));
+  assert.equal(bundle.schema, 'aleph.defense.commit-files.v1');
+  assert.ok(bundle.files.includes('package/bundle-commit-files.json'));
+  assert.ok(!bundle.files.includes('package/commit-files.json'));
 });

@@ -1,10 +1,9 @@
 name: Public deployment identity drift
 
 on:
+  # A paused public deployment must not create a daily failing job.
+  # Explicit operator dispatch remains strict: unavailable/stale identity is a failure.
   workflow_dispatch:
-  schedule:
-    # Every day near 10:15 KST; independent from code-only CI success.
-    - cron: '15 1 * * *'
 
 permissions:
   contents: read

@@ -363,7 +363,7 @@ function renderChart() {
   }
   const signed = n => (n > 0 ? '+' : '') + n.toFixed(1);
   set('trend-headline', 'CPU ' + signed(trend.cpuDelta) + ' %p');
-  set('trend-copy', '메모리 ' + signed(trend.memoryDelta) + ' %p · 최근 10분 내 실측 CPU ' + trend.cpuSamples + '개, 메모리 ' + trend.memorySamples + '개. 비교 구간 ' + dateText(new Date(trend.from).toISOString()) + ' → ' + dateText(new Date(trend.to).toISOString()) + '. 보안 위협이나 원인 판정이 아닙니다.');
+  set('trend-copy', '메모리 ' + signed(trend.memoryDelta) + ' %p · 가장 최근 연속 관측 ' + trend.cpuSamples + '개. 관측 최대 CPU ' + trend.cpuPeak.toFixed(1) + '%, 메모리 ' + trend.memoryPeak.toFixed(1) + '%(표본 최대, 실제 절대 피크 아님). 구간 ' + dateText(new Date(trend.from).toISOString()) + ' → ' + dateText(new Date(trend.to).toISOString()) + '. 보안 위협이나 원인 판정이 아닙니다.');
 }
 
 let lastRenderedRows = null;

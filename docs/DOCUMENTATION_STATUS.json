@@ -1,9 +1,9 @@
 {
   "schema": "claire.documentation-status.v1",
-  "sourceBaseline": "00f9bb4a690ec0527792f23fecc5c5dbf6b5ee64",
-  "reviewDate": "2026-11-18",
-  "scope": "All 52 Markdown paths classified; 35 current guides reviewed for existing links and current source contracts, with focused host-observation, dashboard measurement and architecture reconciliation. sourceBaseline is the audited parent, not the resulting HEAD. Original course documents, historical evidence and recorded source inputs remain unchanged. No operational verification is claimed.",
-  "existingMarkdownCount": 52,
+  "sourceBaseline": "cee729ec614437da17494cae10199aafc407844c",
+  "reviewDate": "2026-11-22",
+  "scope": "Combined latest two commits relative to cee729ec614437da17494cae10199aafc407844c: remove unused empty placeholder, preserve the documented Stage12 submission-bundle manifest, separate the per-commit manifest, and enforce parent-diff inventory. Hardening review keeps full Linux/Windows checks for every push while the paused public deployment's live SHA check is manual-only. Original course documents, historical evidence and recorded source inputs are preserved. Live SDP, AI and user PC operation are not claimed.",
+  "existingMarkdownCount": 51,
   "documents": [
     {
       "path": "AGENTS.md",
@@ -256,11 +256,6 @@
       "action": "reconciled"
     },
     {
-      "path": "tmp.md",
-      "classification": "empty-preserved",
-      "action": "preserved"
-    },
-    {
       "path": "xdr/README.md",
       "classification": "protected",
       "action": "preserved"
@@ -294,7 +289,9 @@
     "student state and host-report boundary",
     "source and historical blob immutability",
     "parent-to-commit file declaration",
-    "scoped read-only regression checks on Linux, Windows and macOS"
+    "scoped read-only regression checks on Linux, Windows and macOS",
+    "Stage12 bundle manifest remains independent from current commit manifest",
+    "current commit manifest matches exact parent diff"
   ],
   "notPerformedByDocumentationRefresh": [
     "operational SDP/AI login",
@@ -307,8 +304,7 @@
   "classificationMeaning": {
     "current": "Current code-based guide; rewritten or reviewed and preserved",
     "protected": "Original course-hash contract or attribution; preserve bytes",
-    "historical": "Dated evidence, not current instructions or live verification",
-    "empty-preserved": "Existing empty file, not removed"
+    "historical": "Dated evidence, not current instructions or live verification"
   },
   "reviewedCurrentDocs": 35,
   "preservedBlobs": [
@@ -391,10 +387,6 @@
     {
       "path": "package/bundle-notes.template.json",
       "blob": "5d0d02bff5423b68a5c06892dd35a392219a0c19"
-    },
-    {
-      "path": "tmp.md",
-      "blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
     },
     {
       "path": "xdr/README.md",

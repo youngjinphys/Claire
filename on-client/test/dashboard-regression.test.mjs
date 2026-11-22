@@ -196,3 +196,22 @@ test('CPU interval metadata must agree with observation timestamps', () => {
     assert.equal(normalizeSnapshot(measured(t, {cpu: row})).metrics.cpu.reason, 'CPU_INTERVAL_INVALID');
   }
 });
+
+test('trend peak reports only actual samples in the latest uninterrupted paired interval', () => {
+  const t = Date.now() - 50000;
+  const rows = [
+    { time: t, cpu: 100, memory: 90 },
+    { time: t + 5000, cpu: 80, memory: 70 },
+    { time: t + 10000, cpu: null, memory: null },
+    { time: t + 15000, cpu: 10, memory: 20 },
+    { time: t + 20000, cpu: 70, memory: 65 },
+    { time: t + 25000, cpu: 10, memory: 20 },
+  ];
+  const summary = trendSummary(rows);
+  assert.equal(summary.cpuDelta, 0, 'last-to-first delta hides transient activity');
+  assert.equal(summary.memoryDelta, 0);
+  assert.equal(summary.cpuPeak, 70, 'old segment peak cannot contaminate current range');
+  assert.equal(summary.memoryPeak, 65);
+  assert.equal(summary.cpuSamples, 3);
+  assert.equal(summary.from, t + 15000);
+});

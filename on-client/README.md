@@ -30,3 +30,7 @@ Windows System·Application의 최근 24시간 경고·오류 건수는 **침해
 [실행 안내](docs/STUDENT_LAUNCH_GUIDE.md) · [운영 확인 순서](docs/STUDENT_RUNBOOK.md) · [문제 해결](docs/CONNECTION_TROUBLESHOOT.md) · [호스트 수집 정의](student/HOST_OBSERVATION.md) · [전체 문서 분류](../docs/README.md)
 
 근거: [package.json](package.json), [서버](src/server.mjs), [학생 표시](student/extension.mjs), [수집기](student/collect-host.mjs). 현재 작업에는 포장 명령과 배포가 필요하지 않습니다.
+
+### 연속 관측 구간의 표본 최대값 (2026-11-22)
+
+기존 CPU·메모리 비교 추이에, 첫 표본과 마지막 표본의 변화(%p)뿐 아니라 **같은 연속 관측 구간에서 실제로 수집한 최대값(%)**도 함께 표시합니다. 변화 폭이 0%p여도 중간에 관측된 사용률 증가를 감출 수 없도록 하는 보완입니다. 빈 구간·센서 실패·15초 초과 간격은 이전 구간을 끊으며, 새 구간의 최대값에 과거 구간 자료를 섞지 않습니다. 표본 사이의 미관측 피크를 추정하거나 보안 이상을 판정하지 않습니다.

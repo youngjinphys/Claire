@@ -69,3 +69,19 @@ test('unavailable, malformed, oversized and redirected public evidence never ver
   });
   assert.equal(result.status,'unverifiable');
 });
+
+test('paused public deployment drift check is manual-only and full CI cannot be bypassed by commit message', async () => {
+  const { readFileSync } = await import('node:fs');
+  const identity = readFileSync(new URL('../.github/workflows/production-identity.yml', import.meta.url), 'utf8');
+  const quality = readFileSync(new URL('../.github/workflows/quality.yml', import.meta.url), 'utf8');
+  assert.match(identity, /on:\s*\n(?:[\s\S]*?)workflow_dispatch:/u);
+  assert.doesNotMatch(identity, /^\s*schedule:/mu, 'Stopped deployment must not be monitored on a daily timer');
+  assert.match(identity, /npm run identity:live/u, 'Manual operation must retain strict verification');
+  const linuxJob = quality.match(/  test-and-build:\n([\s\S]*?)(?=\n  windows-client:)/u)?.[1];
+  const windowsJob = quality.match(/  windows-client:\n([\s\S]*?)(?=\n  readonly-audit:)/u)?.[1];
+  assert.ok(linuxJob && windowsJob);
+  assert.doesNotMatch(linuxJob, /^    if:/mu, 'No commit message may skip all Linux tests');
+  assert.doesNotMatch(windowsJob, /^    if:/mu, 'No commit message may skip all Windows tests');
+  assert.match(quality, /  readonly-audit:[\s\S]*?contains\(github\.event\.head_commit\.message, '\[readonly-audit\]'\)/u);
+  assert.match(quality, /package\/commit-files\.json/u);
+});

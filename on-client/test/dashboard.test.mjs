@@ -37,7 +37,7 @@ test('time history requires actual samples, preserves absent values and stays bo
   let data = appendSample([], sample(t), t);
   data = appendSample(data, sample(t + 5000, 30, 44), t + 5000);
   assert.equal(data.length, 2);
-  assert.deepEqual(trendSummary(data), { cpuDelta: 10, memoryDelta: 4, cpuSamples: 2, memorySamples: 2, from: t, to: t + 5000 });
+  assert.deepEqual(trendSummary(data), { cpuDelta: 10, memoryDelta: 4, cpuPeak: 30, memoryPeak: 44, cpuSamples: 2, memorySamples: 2, from: t, to: t + 5000 });
   const broken = { ...sample(t + 10000), metrics: { ...sample(t + 10000).metrics, cpu: { status: 'unavailable', value: null } } };
   data = appendSample(data, broken, t + 10000);
   assert.equal(data.at(-1).cpu, null);

@@ -166,6 +166,10 @@ export function trendSummary(history) {
   return {
     cpuDelta: Number((to.cpu - from.cpu).toFixed(1)),
     memoryDelta: Number((to.memory - from.memory).toFixed(1)),
+    // End-to-end change can conceal a transient peak. Report only observed
+    // maxima in the latest continuous paired segment, not inferred peaks.
+    cpuPeak: Math.max(...segment.map(point => point.cpu)),
+    memoryPeak: Math.max(...segment.map(point => point.memory)),
     cpuSamples: segment.length, memorySamples: segment.length,
     from: from.time, to: to.time,
   };

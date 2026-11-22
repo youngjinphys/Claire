@@ -1,6 +1,6 @@
 // Stage-12 submission metadata: no shell, Git CLI, external packages or network.
 // A checkout's .git/HEAD is sufficient for the current commit identity. The
-// checked-in manifest records this submission's verified per-commit file list.
+// Stage-12 bundle manifest is independent of the current Git commit manifest.
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
@@ -11,7 +11,7 @@ const absolutePath = value => /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(value);
 const SHA = /^[0-9a-f]{40}$/u;
 const REF = /^refs\/(?:heads|tags)\/[A-Za-z0-9][A-Za-z0-9._/-]*$/u;
 const FILE = /^[A-Za-z0-9._/-]{1,180}$/u;
-const MANIFEST = 'package/bundle-commit-files.json';
+const MANIFEST = 'package/bundle-commit-files.json'; // Stage-12 bundle contents, not the current commit diff.
 
 const read = (path) => readFileSync(path, 'utf8').trim();
 const optionalRead = (path) => {
@@ -74,9 +74,9 @@ export function readCurrentCommit(root) {
   throw new Error('INVALID_GIT_HEAD');
 }
 
-// Changes are supplied as an explicit checked-in provenance claim; the local
-// release test compares this claim with the Git diff before publishing. The
-// restricted grader process itself does not execute Git to rediscover it.
+// Stage-12 submission files are supplied as a checked-in provenance claim.
+// The current commit's changed-file declaration lives in package/commit-files.json
+// and is checked by CI; it must never replace this bundle input.
 export function readSubmissionChangedFiles(root) {
   const value = JSON.parse(read(join(root, MANIFEST)));
   // A push may update only this manifest. The list still has to name it,
