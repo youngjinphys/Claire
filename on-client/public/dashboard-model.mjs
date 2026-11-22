@@ -305,7 +305,13 @@ export async function requestDashboardJson(path, {
     || !int(maxBytes) || maxBytes < 64 || maxBytes > 1048576) throw Error('REQUEST_LIMIT_INVALID');
   if (signal?.aborted) throw Error('REQUEST_CANCELLED');
   const local = new AbortController();
-  let timer, cancel, reader;
+  let timer, cancel, reader, responseBody;
+  const discardBody = () => {
+    try {
+      const task = reader ? reader.cancel() : responseBody?.cancel();
+      if (task) void task.catch(() => {});
+    } catch { /* A late or locked stream must not replace the original error. */ }
+  };
   const stopped = new Promise((_, reject) => {
     const end = code => { local.abort(); reject(Error(code)); };
     cancel = () => end('REQUEST_CANCELLED');
@@ -317,7 +323,9 @@ export async function requestDashboardJson(path, {
       cache: 'no-store', credentials: 'same-origin', mode: 'same-origin', redirect: 'error',
       headers: { Accept: 'application/json' }, signal: local.signal,
     });
-    if (local.signal.aborted) throw Error('REQUEST_CANCELLED');
+    responseBody = response?.body ?? null;
+    try {
+      if (local.signal.aborted) throw Error('REQUEST_CANCELLED');
     const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (type !== 'application/json' || response.redirected) throw Error('RESPONSE_CONTRACT_INVALID');
     const declared = response.headers.get('content-length');
@@ -339,7 +347,11 @@ export async function requestDashboardJson(path, {
     try { text += decoder.decode(); body = JSON.parse(text); }
     catch { throw Error('RESPONSE_CONTRACT_INVALID'); }
     if (!isObject(body) || typeof body.ok !== 'boolean' || (!response.ok && body.ok !== false)) throw Error('RESPONSE_CONTRACT_INVALID');
-    return body;
+      return body;
+    } finally {
+      // Also runs when fetch resolves after the request deadline.
+      discardBody();
+    }
   };
   try { return await Promise.race([stopped, work()]); }
   catch (error) {
@@ -350,6 +362,6 @@ export async function requestDashboardJson(path, {
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
     local.abort();
-    if (reader) void reader.cancel().catch(() => {});
+    discardBody();
   }
 }

@@ -1,25 +1,9 @@
 {
   "schema": "claire.commit-files.v1",
   "files": [
-    ".github/workflows/production-identity.yml",
-    ".github/workflows/quality.yml",
-    "docs/DEPLOYMENT_DRIFT_RUNBOOK_2026-10-30.md",
-    "docs/DOCUMENTATION_STATUS.json",
-    "docs/README.md",
-    "docs/STAGE12_ISOLATED_BUNDLE.md",
-    "on-client/README.md",
     "on-client/public/dashboard-model.mjs",
-    "on-client/public/dashboard.mjs",
-    "on-client/test/dashboard-regression.test.mjs",
-    "on-client/test/dashboard.test.mjs",
-    "package/bundle-commit-files.json",
-    "package/commit-files.json",
-    "scripts/bundle-commit-metadata.mjs",
-    "scripts/verify-readonly-audit.mjs",
-    "test/bundle-stage12-isolated.test.mjs",
-    "test/deployment-evidence.test.mjs",
-    "test/docs-consistency.test.mjs",
-    "tmp.md"
+    "on-client/test/dashboard-transport-disposal.test.mjs",
+    "package/commit-files.json"
   ],
-  "releaseNote": "Squash the two 2026-11-18 documentation/manifest fixes into one reviewed commit; keep Stage12 bundle inputs independent, stop scheduled public deployment checks while deployment is paused, require full Linux/Windows CI for every push, and explain observed CPU/memory peaks from the latest contiguous sample interval."
+  "releaseNote": "Close rejected/late HTTP response bodies after timeouts, cancellation, invalid MIME, and oversized responses. Keep one-server architecture, read-only OS collector, and Stage12 submission evidence unchanged. Add synthetic transport disposal regressions."
 }
