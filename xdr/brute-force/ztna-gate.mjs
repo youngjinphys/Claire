@@ -3,6 +3,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { extractAlert } from './read-alerts.mjs';
 import { matchStrongPattern } from './match.mjs';
+import { candidateExpiry, findActiveDenyCandidate } from '../candidate-validation.mjs';
+import { mergeCandidateIntervals } from '../candidate-intervals.mjs';
+import { addressIdentity } from '../address-identity.mjs';
 
 const RULE_TTL_MS = 15 * 60 * 1000;
 
@@ -15,33 +18,32 @@ export function buildDenyCandidates(alerts, decisions) {
     if (typeof alert?.id !== 'string' || !/^bf-[a-zA-Z0-9-]{1,40}$/.test(alert.id)) continue;
     const choice = decisionById.get(alert.id);
     const evidence = matchStrongPattern(alert);
-    if (!choice || choice.action !== 'block' || choice.confidence < 0.85
-      || !evidence || choice.reason !== evidence.name) continue;
+    if (!choice || choice.action !== 'block' || !Number.isFinite(choice.confidence)
+      || choice.confidence < 0.85 || choice.confidence > 1
+      || !evidence || choice.reason !== evidence.name
+      || choice.confidence !== evidence.confidence) continue;
     const row = extractAlert(alert);
+    const sourceIdentity = addressIdentity(row.sourceAddress);
     const start = Date.parse(row.at);
-    if (!Number.isFinite(start) || !row.sourceAddress || !row.account) continue;
-    const key = row.sourceAddress + '\0' + row.account;
-    const prior = byPair.get(key);
-    const expiresAt = new Date(start + RULE_TTL_MS).toISOString();
-    if (prior) {
-      prior.evidenceAlertIds.push(alert.id);
-      if (Date.parse(prior.expiresAt) < start + RULE_TTL_MS) prior.expiresAt = expiresAt;
-      if (Date.parse(prior.startsAt) > start) prior.startsAt = row.at;
-      prior.confidence = Math.max(prior.confidence, choice.confidence);
-    } else {
-      byPair.set(key, {
-        id: 'xdr.t1110.' + createHash('sha256').update(key).digest('hex').slice(0, 16),
-        sourceAddress: row.sourceAddress,
-        account: row.account,
-        startsAt: row.at,
-        expiresAt,
-        evidenceAlertIds: [alert.id],
-        pattern: evidence.name,
-        confidence: choice.confidence,
-      });
-    }
+    if (!Number.isFinite(start) || !sourceIdentity || !row.account) continue;
+    const expiry = candidateExpiry(start, RULE_TTL_MS);
+    if (!expiry) continue;
+    const key = sourceIdentity + '\0' + row.account;
+    const observations = byPair.get(key) ?? [];
+    observations.push({
+      id: 'xdr.t1110.' + createHash('sha256').update(key).digest('hex').slice(0, 16),
+      sourceAddress: row.sourceAddress,
+      account: row.account,
+      startsAt: row.at,
+      expiresAt: expiry.expiresAt,
+      evidenceAlertIds: [alert.id],
+      pattern: evidence.name,
+      confidence: evidence.confidence,
+    });
+    byPair.set(key, observations);
   }
-  return [...byPair.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return [...byPair.values()].map(observations => mergeCandidateIntervals(observations, { singlePattern: true }))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 // An additive server-side check only. Never call this with browser-supplied
@@ -50,17 +52,19 @@ export function checkZTNAExtra({ upstreamDecision, trustedContext, rules }) {
   if (upstreamDecision !== 'allow') {
     return { action: 'preserve', reason: 'upstream_policy_first' };
   }
-  if (!trustedContext?.verifiedByServer || !Array.isArray(rules)) {
+  if (trustedContext?.verifiedByServer !== true || !Array.isArray(rules)) {
     return { action: 'pass', reason: 'missing_trusted_context' };
   }
   const { sourceAddress, account, at } = trustedContext;
-  const now = Date.parse(at);
+  const sourceIdentity = addressIdentity(sourceAddress);
+  const now = typeof at === 'string' ? Date.parse(at) : NaN;
   if (!Number.isFinite(now)) return { action: 'pass', reason: 'invalid_time' };
-  const active = rules.find((rule) => rule.sourceAddress === sourceAddress
-    && rule.account === account
-    && Date.parse(rule.startsAt) <= now
-    && now < Date.parse(rule.expiresAt)
-    && Array.isArray(rule.evidenceAlertIds) && rule.evidenceAlertIds.length > 0);
+  if (!sourceIdentity || typeof account !== 'string' || !account) {
+    return { action: 'pass', reason: 'invalid_trusted_context' };
+  }
+  const active = findActiveDenyCandidate(rules, now, rule =>
+    addressIdentity(rule.sourceAddress) === sourceIdentity && rule.account === account,
+  { singlePattern: true });
   return active
     ? { action: 'deny', reason: active.pattern, ruleId: active.id }
     : { action: 'pass', reason: 'no_active_scoped_rule' };

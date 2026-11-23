@@ -123,6 +123,7 @@ test('심판 격리: decide.mjs 파일 하나만 복사하고 외부 네트워�
       cwd: temp, encoding: 'utf8', timeout: 4000,
       env: { PATH: process.env.PATH ?? '' },
     });
+    assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr || String(result.error));
     assert.equal(result.stderr, '');
     assert.deepEqual(JSON.parse(result.stdout).map((r) => r.action), ['block', 'alert', 'record']);

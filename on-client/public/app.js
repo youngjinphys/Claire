@@ -2,6 +2,7 @@
 // 모든 외부·서버 문자열은 textContent로만 표시한다. innerHTML/insertAdjacentHTML 사용 금지.
 // 자동 재시도 없음: 모든 요청은 사용자 동작 또는 최초 1회 로드에서만 일어난다.
 import { normalizeScan, createVulnerabilitiesView } from '/vulnerabilities-view.mjs';
+import { createResponseLifetime } from './http-response.mjs';
 
 const STUDENT_MODULE = '/student/extension.mjs';
 const STUDENT_PENDING = '학생 구현 대기';
@@ -242,10 +243,11 @@ function localFailure(code, message, meta = { mode: 'disconnected', checkedAt: n
 const UNKNOWN_META = { mode: 'unknown', checkedAt: null };
 
 // 모든 요청은 10초 뒤 중단된다. signal로 호출자가 취소할 수 있으며, 응답이 없어도 화면이 잠기지 않는다.
-async function request(path, { method = 'GET', body, signal } = {}) {
+async function request(path, { method = 'GET', body, signal, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) return localFailure('INVALID_REQUEST', '요청 대기 시간 설정을 확인할 수 없습니다.', UNKNOWN_META);
   const controller = new AbortController();
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
+  const lifetime = createResponseLifetime(controller.signal), deadline = performance.now() + timeoutMs;
+  let timedOut = false, stop;
   const onAbort = () => controller.abort();
   if (signal) {
     if (signal.aborted) controller.abort();
@@ -254,51 +256,74 @@ async function request(path, { method = 'GET', body, signal } = {}) {
   const aborted = () => (timedOut
     ? localFailure('TIMEOUT', '서버 응답 시간이 초과됐습니다. 필요하면 직접 다시 요청하세요.', UNKNOWN_META)
     : localFailure('CANCELLED', '요청을 취소했습니다.', UNKNOWN_META));
-
-  try {
+  const isStopped = () => {
+    if (performance.now() >= deadline) { timedOut = true; controller.abort(); }
+    return controller.signal.aborted;
+  };
+  const check = () => { if (isStopped()) throw Error('REQUEST_STOPPED'); };
+  const stopped = new Promise(resolve => {
+    stop = () => resolve(aborted());
+    controller.signal.addEventListener('abort', stop, {once:true});
+    if (controller.signal.aborted) stop();
+  });
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const read = async () => {
     let response;
     try {
-      response = await fetch(path, {
+      check();
+      const init = {
         method,
         headers: body ? { 'content-type': 'application/json', accept: 'application/json' } : { accept: 'application/json' },
         body: body ? JSON.stringify(body) : undefined,
         credentials: 'same-origin',
         cache: 'no-store',
+        redirect: 'error',
         signal: controller.signal,
-      });
+      };
+      check();
+      response = lifetime.response(await fetch(path, init));
+      check();
+      if (response.redirected || !/^application\/json(?:;|$)/iu.test(response.headers?.get('content-type') || '') ||
+          typeof response.body?.getReader !== 'function') throw Error('INVALID_RESPONSE');
+      const maximum = 2 * 1024 * 1024, declared = response.headers.get('content-length');
+      if (declared !== null && (!/^\d+$/u.test(declared) || Number(declared) > maximum)) throw Error('INVALID_RESPONSE');
+      const reader = lifetime.reader(response.body.getReader()), decoder = new TextDecoder('utf-8', {fatal:true});
+      let size = 0, text = '';
+      while (true) {
+        const part = await reader.read(); check(); if (part.done) break;
+        size += part.value.byteLength; if (size > maximum) throw Error('INVALID_RESPONSE');
+        text += decoder.decode(part.value, {stream:true});
+      }
+      const json = JSON.parse(text + decoder.decode()); check();
+      const meta = normalizeMeta(json && json.meta);
+      // 선택 coverage 는 값만 옮긴다. 검증은 loadResource 가 해당 kind 에서만 한다. ok:false 응답의 coverage 는 버린다.
+      if (json && json.ok === true && response.ok) {
+        return { ok: true, data: json.data, meta, ...(Object.hasOwn(json, 'coverage') ? { coverage: json.coverage } : {}) };
+      }
+      if (json && json.ok === false) {
+        const err = json.error || {};
+        return {
+          ok: false,
+          error: {
+            code: typeof err.code === 'string' ? err.code : 'UNKNOWN_ERROR',
+            message: typeof err.message === 'string' && err.message ? err.message : '서버가 오류 내용을 제공하지 않았습니다.',
+            retryable: err.retryable === true,
+          },
+          meta,
+        };
+      }
+      return localFailure('INVALID_RESPONSE', `서버 응답 형식이 계약과 다릅니다. (HTTP ${response.status})`, UNKNOWN_META);
     } catch {
-      return controller.signal.aborted ? aborted() : localFailure('NETWORK_ERROR', '로컬 서버에 연결할 수 없습니다.');
-    }
-
-    let json;
-    try {
-      json = await response.json();
-    } catch {
-      if (controller.signal.aborted) return aborted();
+      if (isStopped()) return aborted();
+      if (!response) return localFailure('NETWORK_ERROR', '로컬 서버에 연결할 수 없습니다.');
       return localFailure('INVALID_RESPONSE', `서버 응답을 읽을 수 없습니다. (HTTP ${response.status})`, UNKNOWN_META);
     }
-
-    const meta = normalizeMeta(json && json.meta);
-    // 선택 coverage 는 값만 옮긴다. 검증은 loadResource 가 해당 kind 에서만 한다. ok:false 응답의 coverage 는 버린다.
-    if (json && json.ok === true && response.ok) {
-      return { ok: true, data: json.data, meta, ...(Object.hasOwn(json, 'coverage') ? { coverage: json.coverage } : {}) };
-    }
-    if (json && json.ok === false) {
-      const err = json.error || {};
-      return {
-        ok: false,
-        error: {
-          code: typeof err.code === 'string' ? err.code : 'UNKNOWN_ERROR',
-          message: typeof err.message === 'string' && err.message ? err.message : '서버가 오류 내용을 제공하지 않았습니다.',
-          retryable: err.retryable === true,
-        },
-        meta,
-      };
-    }
-    return localFailure('INVALID_RESPONSE', `서버 응답 형식이 계약과 다릅니다. (HTTP ${response.status})`, UNKNOWN_META);
-  } finally {
+  };
+  try { const result = await Promise.race([read(), stopped]); return isStopped() ? aborted() : result; }
+  finally {
     clearTimeout(timer);
     if (signal) signal.removeEventListener('abort', onAbort);
+    controller.signal.removeEventListener('abort', stop); lifetime.close(); controller.abort();
   }
 }
 
@@ -306,14 +331,21 @@ async function request(path, { method = 'GET', body, signal } = {}) {
 async function aiRequest(path, { body, signal } = {}) {
   if (signal?.aborted) return localFailure('CANCELLED', AI_MESSAGES.CANCELLED, UNKNOWN_META);
   const controller = new AbortController();
-  let timer, cancel;
+  const expiresAt = performance.now() + REQUEST_TIMEOUT_MS;
+  let timer, cancel, timedOut = false;
+  const interrupted = () => {
+    if (timedOut || performance.now() >= expiresAt) {
+      controller.abort(); return localFailure('TIMEOUT', AI_MESSAGES.TIMEOUT, UNKNOWN_META);
+    }
+    return signal?.aborted || controller.signal.aborted ? localFailure('CANCELLED', AI_MESSAGES.CANCELLED, UNKNOWN_META) : null;
+  };
   const stopped = new Promise(resolve => {
     cancel = () => { resolve(localFailure('CANCELLED', AI_MESSAGES.CANCELLED, UNKNOWN_META)); controller.abort(); };
-    timer = setTimeout(() => { resolve(localFailure('TIMEOUT', AI_MESSAGES.TIMEOUT, UNKNOWN_META)); controller.abort(); }, REQUEST_TIMEOUT_MS);
+    timer = setTimeout(() => { timedOut = true; resolve(localFailure('TIMEOUT', AI_MESSAGES.TIMEOUT, UNKNOWN_META)); controller.abort(); }, REQUEST_TIMEOUT_MS);
     if (signal?.aborted) cancel();
     else signal?.addEventListener('abort', cancel, { once: true });
   });
-  try { return await Promise.race([request(path, { method: 'POST', body, signal: controller.signal }), stopped]); }
+  try { const result = await Promise.race([request(path, { method: 'POST', body, signal: controller.signal }), stopped]); return interrupted() || result; }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel); controller.abort(); }
 }
 
@@ -519,7 +551,7 @@ function guardStaticArt() {
 let connectExpiryTimer = null;
 function renderAiConnect() {
   const target = $('ai-connect-result');
-  const s = aiConnect ? aiConnect.state : { phase: aiConnectLoadFailed ? 'unknown' : 'idle', reason: aiConnectLoadFailed ? 'ALEKOV_CONNECT_NOT_MOUNTED' : null };
+  const s = aiConnect ? aiConnect.state : { phase: aiConnectLoadFailed ? 'unknown' : 'idle', reason: aiConnectLoadFailed ? 'CONNECTION_UI_LOAD_FAILED' : null };
   const busy = ['starting', 'finishing', 'cancelling'].includes(s.phase);
   if (connectExpiryTimer !== null) { clearTimeout(connectExpiryTimer); connectExpiryTimer = null; }
   const expiresMs = s.phase === 'awaiting_approval' ? Date.parse(s.expiresAt ?? '') : NaN;
@@ -544,7 +576,7 @@ function renderAiConnect() {
   $('ai-connect-art-connected').hidden = s.phase !== 'connected' || $('ai-connect-art-connected').dataset.broken === 'true';
   $('ai-connect-art-unknown').hidden = !['unknown', 'error'].includes(s.phase) || $('ai-connect-art-unknown').dataset.broken === 'true';
   const message = aiConnectModule ? aiConnectModule.connectMessage(s)
-    : aiConnectLoadFailed ? '이 앱 버전에는 아직 AI 연결 화면이 연결되지 않았습니다(미연결). 기존 설명·판정·기록은 그대로 쓸 수 있습니다.' : 'AI 연결 화면을 준비하는 중…';
+    : aiConnectLoadFailed ? 'AI 연결 화면을 불러오지 못했습니다. 브라우저 새로고침(F5)으로 다시 시도하세요. 기존 설명·판정·기록은 그대로 쓸 수 있습니다.' : 'AI 연결 화면을 준비하는 중…';
   const kind = s.phase === 'connected' ? 'ok' : ['error', 'unknown'].includes(s.phase) ? 'error' : ['idle', 'cancelled'].includes(s.phase) ? 'empty' : 'loading';
   setChildren(target,
     stateBox(kind, message),
@@ -576,7 +608,7 @@ function invalidateAppConnectView() {
 
 function renderNativeLogin() {
   const target = $('native-login-result');
-  const fallback = { phase: aiConnectLoadFailed ? 'error' : 'idle', reason: aiConnectLoadFailed ? 'NATIVE_LOGIN_NOT_MOUNTED' : null };
+  const fallback = { phase: aiConnectLoadFailed ? 'error' : 'idle', reason: aiConnectLoadFailed ? 'CONNECTION_UI_LOAD_FAILED' : null };
   const view = nativeLogin && aiConnectModule ? aiConnectModule.nativeLoginView(nativeLogin.state, Date.now()) : null;
   const phase = view ? view.phase : fallback.phase;
   target.dataset.state = phase;
@@ -593,7 +625,7 @@ function renderNativeLogin() {
     open.hidden = true;
   }
   const message = view ? view.message
-    : aiConnectLoadFailed ? '이 앱 버전에는 아직 계정 연결 화면이 연결되지 않았습니다(미연결). 기존 설명·판정·기록은 그대로 쓸 수 있습니다.' : '계정 연결 화면을 준비하는 중…';
+    : aiConnectLoadFailed ? '계정 연결 화면을 불러오지 못했습니다. 브라우저 새로고침(F5)으로 다시 시도하세요. 기존 설명·판정·기록은 그대로 쓸 수 있습니다.' : '계정 연결 화면을 준비하는 중…';
   const kind = view ? view.kind : aiConnectLoadFailed ? 'error' : 'empty';
   const until = view && view.expiresAtMs !== null ? formatTime(new Date(view.expiresAtMs).toISOString()) : null;
   setChildren(target,
@@ -609,14 +641,30 @@ function renderNativeLogin() {
 }
 
 async function loadConnectModule() {
+  let timer,createdAi,createdNative;
+  const deadline = performance.now() + REQUEST_TIMEOUT_MS;
   try {
-    aiConnectModule = await import('/ai-connect.mjs');
-    aiConnect = aiConnectModule.createAiConnectController({ onChange: () => renderAiConnect() });
+    // A failed/stalled module read does not prove that the app version lacks
+    // this feature. A later import resolution cannot revive a timed-out load.
+    const mod = await Promise.race([
+      import('/ai-connect.mjs'),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Error('CONNECTION_UI_LOAD_FAILED')), REQUEST_TIMEOUT_MS); }),
+    ]);
+    if (performance.now() >= deadline) throw Error('CONNECTION_UI_LOAD_FAILED');
+    for (const key of ['createAiConnectController','createNativeLoginController','connectMessage','nativeLoginView','validApprovalUrl','validNativeApprovalUrl']) {
+      if (typeof mod[key] !== 'function') throw Error('CONNECTION_UI_LOAD_FAILED');
+    }
+    createdAi = mod.createAiConnectController({ onChange: () => renderAiConnect() });
     // 만들기만 한다. 첫 화면에서 native 요청은 보내지 않는다.
-    nativeLogin = aiConnectModule.createNativeLoginController({ onChange: () => renderNativeLogin(), onInvalidate: () => invalidateAppConnectView() });
+    createdNative = mod.createNativeLoginController({ onChange: () => renderNativeLogin(), onInvalidate: () => invalidateAppConnectView() });
+    aiConnectModule = mod; aiConnect = createdAi; nativeLogin = createdNative;
+    aiConnectLoadFailed = false;
   } catch {
+    try { createdAi?.reset(); } catch {}
+    try { createdNative?.reset(); } catch {}
+    aiConnectModule = null; aiConnect = null; nativeLogin = null;
     aiConnectLoadFailed = true;
-  }
+  } finally { clearTimeout(timer); }
   renderAiConnect();
   renderNativeLogin();
 }
@@ -624,7 +672,7 @@ async function loadConnectModule() {
 let connectHelpText = '';
 function showConnectHelp() {
   const output = $('ai-connect-help-output');
-  const info = aiConnect ? aiConnect.helpInfo() : { component: 'alekov-ai-connect', phase: 'unknown', reason: 'ALEKOV_CONNECT_NOT_MOUNTED', automaticRetries: 0, manualSecretInputs: 0 };
+  const info = aiConnect ? aiConnect.helpInfo() : { component: 'alekov-ai-connect', phase: 'unknown', reason: aiConnectLoadFailed ? 'CONNECTION_UI_LOAD_FAILED' : 'CONNECTION_UI_LOADING', automaticRetries: 0, manualSecretInputs: 0 };
   connectHelpText = JSON.stringify(info, null, 2);
   output.textContent = connectHelpText;
   output.hidden = false;
@@ -799,17 +847,29 @@ async function loadVulnerabilities() {
   vulnerabilitiesController = controller;
   state.vulnerabilities = { status: 'loading' };
   renderVulnerabilities();
-  let timer;
+  const expiresAt = performance.now() + REQUEST_TIMEOUT_MS;
+  let timer, timedOut = false;
+  const interrupted = () => {
+    if (timedOut || performance.now() >= expiresAt) {
+      controller.abort(); return localFailure('TIMEOUT', '패키지 조회 시간이 초과됐습니다. 필요하면 직접 다시 조회하세요.', UNKNOWN_META);
+    }
+    return controller.signal.aborted ? localFailure('CANCELLED', '패키지 조회를 취소했습니다.', UNKNOWN_META) : null;
+  };
   const deadline = new Promise(resolve => { timer = setTimeout(() => {
+    timedOut = true;
     resolve(localFailure('TIMEOUT', '패키지 조회 시간이 초과됐습니다. 필요하면 직접 다시 조회하세요.', UNKNOWN_META));
     controller.abort();
   }, REQUEST_TIMEOUT_MS); });
   try {
-    const result = await Promise.race([request('/api/vulnerabilities', { signal: controller.signal }), deadline]);
+    let result = await Promise.race([request('/api/vulnerabilities', { signal: controller.signal }), deadline]);
     if (gen !== generation || requestGen !== vulnerabilitiesGeneration) return;
+    result = interrupted() || result;
     if (result.ok) {
       const scan = normalizeScan(result.data);
-      state.vulnerabilities = scan ? { status: 'ok', data: scan, meta: result.meta }
+      const stopped = interrupted();
+      if (gen !== generation || requestGen !== vulnerabilitiesGeneration) return;
+      state.vulnerabilities = stopped ? { status:'error', error:{code:stopped.error.code,message:stopped.error.message} }
+        : scan ? { status: 'ok', data: scan, meta: result.meta }
         : { status: 'error', error: { code: 'CONTRACT_MISMATCH', message: '패키지 조회 응답을 확인할 수 없습니다.' } };
     } else state.vulnerabilities = { status: 'error', error: { code: result.error.code, message: '패키지 조회를 확인할 수 없습니다. 이전 결과를 정상으로 표시하지 않습니다.' } };
     renderVulnerabilities();
@@ -1227,7 +1287,7 @@ function renderStudent(kind) {
   const { slot, fn } = STUDENT_SLOTS[kind];
   const target = $(slot);
   if (studentLoadFailed) {
-    return setChildren(target, stateBox('empty', `${STUDENT_PENDING} (student/extension.mjs를 불러오지 못했습니다)`));
+    return setChildren(target, stateBox('error', '학생 구현 화면을 불러오지 못했습니다. 브라우저 새로고침(F5)으로 다시 시도하세요. 제공 UI는 계속 동작합니다.'));
   }
   if (!studentView || typeof studentView[fn] !== 'function') return setChildren(target, stateBox('empty', STUDENT_PENDING));
   let output;
@@ -1257,14 +1317,21 @@ const studentApi = Object.freeze({
 });
 
 async function loadStudentModule() {
+  let timer;
+  const deadline = performance.now() + REQUEST_TIMEOUT_MS;
   try {
-    const mod = await import(STUDENT_MODULE);
+    const mod = await Promise.race([
+      import(STUDENT_MODULE),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Error('STUDENT_UI_LOAD_FAILED')), REQUEST_TIMEOUT_MS); }),
+    ]);
+    if (performance.now() >= deadline) throw Error('STUDENT_UI_LOAD_FAILED');
     if (typeof mod.createStudentView !== 'function') throw new Error('missing export');
     studentView = mod.createStudentView({ api: studentApi, onChange: () => renderAllStudent() }) || null;
+    studentLoadFailed = false;
   } catch {
     studentView = null;
     studentLoadFailed = true;
-  }
+  } finally { clearTimeout(timer); }
   renderAllStudent();
 }
 

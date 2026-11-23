@@ -46,8 +46,8 @@ async function browser(){
   vm.runInContext(source,context);await flush();
   return {get:document.getElementById,requests,window,document,timers,context,hostModes};
 }
-function result(){
-  const now=Date.now();const iso=n=>new Date(n).toISOString();
+function result(now=Date.now()){
+  const iso=n=>new Date(n).toISOString();
   const m=(value,unit,source,extra={})=>({status:'ok',value,unit,source,measuredAt:iso(now),...extra});
   return new Response(JSON.stringify({ok:true,data:{schema:'claire.local-pc.v1',scope:'local-machine',checkedAt:iso(now),metrics:{
     cpu:m(30,'%','os.cpus',{measuredFrom:iso(now-400),windowMs:400}),
@@ -63,6 +63,54 @@ test('one-shot/start race cannot strand busy=true',async(t)=>{
   b.requests[0](result());await flush();
   assert.equal(b.get('sample-once').getAttribute('aria-disabled'),'false');
   b.get('start').click();assert.equal(b.requests.length,2);
+});
+test('a freshness redraw during clock rollback records a gap before a later sample can reconnect old history', async t => {
+  const b = await browser();
+  t.after(() => b.window.handlers.get('pagehide')?.({persisted:false}));
+  vm.runInContext(`{
+    const originalDate = Date;
+    const current = originalDate.now();
+    Date = class extends originalDate { static now() { return current - 60000; } };
+    lastHistoryNow = current;
+    history = [{time:current-61000,cpu:10,memory:50}, {time:current,cpu:20,memory:50}];
+    renderChart();
+    globalThis.rollbackHistory = history;
+    const at = current - 59000;
+    history = appendSample(history, {status:'ok',checkedAt:new originalDate(at).toISOString(),metrics:{
+      cpu:{status:'ok',value:30,measuredAt:new originalDate(at).toISOString()},
+      memory:{status:'ok',value:50,measuredAt:new originalDate(at).toISOString()}
+    }}, at);
+    globalThis.rollbackTrend = trendSummary(history);
+    Date = originalDate;
+  }`, b.context);
+  assert.equal(b.context.rollbackHistory.at(-1).cpu, null);
+  assert.equal(b.context.rollbackTrend, null);
+});
+test('acquisition before redraw records one rollback gap and immediately starts the new segment', async t => {
+  const b = await browser();
+  t.after(() => b.window.handlers.get('pagehide')?.({persisted:false}));
+  const current = Date.now();
+  b.context.clockAt = current - 6000;
+  b.context.oldClockAt = current;
+  vm.runInContext(`{
+    const originalDate = Date;
+    Date = class extends originalDate { static now() { return globalThis.clockAt; } };
+    lastHistoryNow = oldClockAt;
+    history = [{time:oldClockAt-10000,cpu:10,memory:50}, {time:oldClockAt,cpu:20,memory:50}];
+  }`, b.context);
+  b.get('sample-once').click();
+  b.requests[0](result(current - 6000));
+  await flush();
+  const first = vm.runInContext('history', b.context);
+  assert.equal(first.filter(point => point.cpu === null && point.memory === null).length, 1);
+  assert.equal(first.at(-1).cpu, 30, 'render must not append another gap after a valid acquisition');
+  b.context.clockAt = current - 1000;
+  b.get('sample-once').click();
+  b.requests[1](result(current - 1000));
+  await flush();
+  const trend = vm.runInContext('trendSummary(history)', b.context);
+  assert.equal(trend.from, current - 6000);
+  assert.equal(trend.to, current - 1000);
 });
 test('pagehide followed by persisted pageshow restores manual controls without auto-retry',async(t)=>{
   const b=await browser();t.after(()=>b.window.handlers.get('pagehide')?.({persisted:false}));b.get('start').click();

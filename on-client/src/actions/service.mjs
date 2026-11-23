@@ -1,3 +1,4 @@
+import {validActionDurations} from './policy-limits.mjs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {createActionStore,existingDatabasePath} from './store.mjs';
 
@@ -29,7 +30,7 @@ export function createActionService({engine,resolveContext,databasePath,policy,c
   // Unsupported setup must not open/create files or reinterpret a generic engine as authorized.
   const configured=plain(policy)&&Object.keys(policy).every(k=>['appId','audience','accessPolicyId','allowedActions','confirmationTtlMs','timeoutMs'].includes(k))&&policy.appId==='aleph-on'&&policy.audience==='on-client'&&identifier(policy.accessPolicyId)
     &&Array.isArray(policy.allowedActions)&&policy.allowedActions.length>0&&policy.allowedActions.length<=20&&policy.allowedActions.every(identifier)&&new Set(policy.allowedActions).size===policy.allowedActions.length
-    &&positive(policy.confirmationTtlMs)&&positive(policy.timeoutMs??10000)&&typeof clock==='function'&&typeof resolveContext==='function'
+    &&validActionDurations(policy)&&typeof clock==='function'&&typeof resolveContext==='function'
     &&['demo','connected'].includes(engine?.evidenceMode)&&['readEvents','authorizeAction','executeAction','readActionResult'].every(k=>typeof engine[k]==='function')&&existingDatabasePath(databasePath);
   const settings=configured?freeze(structuredClone(policy)):null;
   const dispatcherId=randomUUID();let store;
@@ -38,47 +39,65 @@ export function createActionService({engine,resolveContext,databasePath,policy,c
   const known=new Set(['ACTION_UNSUPPORTED','ACTION_INPUT_INVALID','ACTION_SCOPE_UNVERIFIED','ACTION_SCOPE_CHANGED','ACTION_EVENT_UNAVAILABLE','ACTION_DENIED','ACTION_SNAPSHOT_CHANGED','ACTION_CONFIRMATION_INVALID','ACTION_CONFIRMATION_EXPIRED','ACTION_STORE_FAILED','ACTION_TIMEOUT','ACTION_CANCELLED','ACTION_RESULT_UNVERIFIED']);
   const now=()=>{const value=clock();if(!positive(value)||!Number.isFinite(new Date(value).getTime()))throw own('ACTION_SCOPE_UNVERIFIED');return value;};
   const db=()=>store??(store=createActionStore({databasePath}));
+  const lifetimes=new WeakMap();
+  const check=signal=>{const guard=lifetimes.get(signal);if(!guard)throw own('ACTION_CANCELLED');guard();};
+  const bounded=async(signal,work)=>{check(signal);try{const value=await work();check(signal);return value;}catch(error){check(signal);throw error;}};
+  // Check immediately before entering SQLite. A reservation that finishes past
+  // its deadline is recorded in phase before the caller checks again.
+  const access=(signal,method,input)=>{check(signal);const storage=db();check(signal);return storage[method](input);};
   const current=async signal=>{
-    if(signal.aborted)throw own('ACTION_CANCELLED');
-    const value=freeze(structuredClone(await resolveContext({signal})));
-    if(signal.aborted)throw own('ACTION_CANCELLED');if(!context(value)||value.accessPolicyId!==settings.accessPolicyId)throw own('ACTION_SCOPE_UNVERIFIED');return value;
+    const value=freeze(structuredClone(await bounded(signal,()=>resolveContext({signal}))));
+    check(signal);if(!context(value)||value.accessPolicyId!==settings.accessPolicyId)throw own('ACTION_SCOPE_UNVERIFIED');return value;
   };
   const sameCurrent=async(scope,signal)=>{const latest=await current(signal);if(!equals(scope,latest))throw own('ACTION_SCOPE_CHANGED');};
   const readEvent=async(eventId,scope,signal)=>{
-    const rows=structuredClone(await engine.readEvents(scope,{signal}));await sameCurrent(scope,signal);
+    const rows=structuredClone(await bounded(signal,()=>engine.readEvents(scope,{signal})));await sameCurrent(scope,signal);
     if(!Array.isArray(rows)||rows.length>500||rows.some(row=>!event(row)||row.subjectId!==scope.subjectId||row.projectId!==scope.projectId)||new Set(rows.map(row=>row.id)).size!==rows.length)throw own('ACTION_SCOPE_UNVERIFIED');
-    const found=rows.find(row=>row.id===eventId);if(!found)throw own('ACTION_EVENT_UNAVAILABLE');return freeze(found);
+    const found=rows.find(row=>row.id===eventId);if(!found)throw own('ACTION_EVENT_UNAVAILABLE');check(signal);return freeze(found);
   };
   const authorize=async(command,scope,signal)=>{
-    const value=structuredClone(await engine.authorizeAction(command,scope,{signal}));await sameCurrent(scope,signal);
+    const value=structuredClone(await bounded(signal,()=>engine.authorizeAction(command,scope,{signal})));await sameCurrent(scope,signal);
     if(!exact(value,['allowed','durableOperations','context','eventId','actionId','target','snapshotDigest'])||typeof value.allowed!=='boolean'||typeof value.durableOperations!=='boolean'
       ||!equals(value.context,scope)||value.eventId!==command.eventId||value.actionId!==command.actionId||!equals(value.target,command.target)||value.snapshotDigest!==command.snapshotDigest)throw own('ACTION_SCOPE_UNVERIFIED');
-    if(!value.allowed)throw own('ACTION_DENIED');if(!value.durableOperations)throw own('ACTION_UNSUPPORTED');
+    if(!value.allowed)throw own('ACTION_DENIED');if(!value.durableOperations)throw own('ACTION_UNSUPPORTED');check(signal);
   };
   const receipt=(row,replayed=false)=>({ok:true,mode,data:{requestId:row.request_id,receiptId:row.receipt_id,eventId:row.command.eventId,actionId:row.command.actionId,status:row.superseded?'unknown':row.status,version:row.version,replayed,...(row.superseded?{superseded:true}:row.result?{observation:row.result}:{})}});
   const bound=rowScope=>scope=>{if(!equals(rowScope,scope))throw own('ACTION_SCOPE_CHANGED');};
   async function operation(options,work){
     if(!configured)return failure('ACTION_UNSUPPORTED');
-    const controller=new AbortController(),external=options?.signal,phase={requestId:null,reserved:false};let timer,cancel;
+    const controller=new AbortController(),external=options?.signal,phase={requestId:null,dispatchReserved:false,receiptAuthorized:false},deadline=performance.now()+(settings.timeoutMs??10000);let timer,cancel,reason='ACTION_CANCELLED';
     const stopped=new Promise((_,reject)=>{
-      cancel=()=>{controller.abort();reject(own('ACTION_CANCELLED'));};
-      timer=setTimeout(()=>{controller.abort();reject(own('ACTION_TIMEOUT'));},settings.timeoutMs??10000);
+      const stop=code=>{if(controller.signal.aborted)return;reason=code;controller.abort();reject(own(code));};
+      lifetimes.set(controller.signal,()=>{
+        if(!controller.signal.aborted&&performance.now()>=deadline)stop('ACTION_TIMEOUT');
+        if(controller.signal.aborted)throw own(reason);
+      });
+      cancel=()=>stop('ACTION_CANCELLED');
+      timer=setTimeout(()=>stop('ACTION_TIMEOUT'),settings.timeoutMs??10000);
       if(external?.aborted)cancel();else external?.addEventListener('abort',cancel,{once:true});
     });
-    try{return await Promise.race([work(controller.signal,phase),stopped]);}
+    try{
+      const result=await Promise.race([Promise.resolve().then(()=>{check(controller.signal);return work(controller.signal,phase);}),stopped]);
+      check(controller.signal);return result;
+    }
     catch(error){
       const code=known.has(error?.code)?error.code:'ACTION_RESULT_UNVERIFIED';
-      if(phase.reserved){
+      if(phase.dispatchReserved||phase.receiptAuthorized){
         const scopeFailure=['ACTION_SCOPE_UNVERIFIED','ACTION_SCOPE_CHANGED','ACTION_EVENT_UNAVAILABLE','ACTION_DENIED','ACTION_SNAPSHOT_CHANGED','ACTION_UNSUPPORTED'].includes(code);
-        try{const row=db().transition({requestId:phase.requestId,status:'unknown',code,at:now(),allowStates:phase.resultRead?undefined:['reserved','pending'],expectedVersion:phase.resultVersion});if(scopeFailure)return failure(code);if(row)return receipt(row);}catch{}
+        // Reconcile only a dispatch reserved by this request or a receipt whose
+        // ownership was verified. A saved consumed bit grants no read authority.
+        // Preserve the confirmation and append uncertainty; never dispatch again.
+        try{const row=db().transition({requestId:phase.requestId,status:'unknown',code,at:now(),allowStates:phase.receiptAuthorized?undefined:['reserved','pending'],expectedVersion:phase.resultVersion});if(scopeFailure)return failure(code);if(row)return receipt(row);}catch{}
         if(scopeFailure)return failure(code);return {ok:true,mode,data:{requestId:phase.requestId,status:'unknown'}};
       }
       return failure(code);
     }finally{clearTimeout(timer);external?.removeEventListener('abort',cancel);controller.abort();}
   }
-  const load=async(requestId,signal)=>{const scope=await current(signal),row=db().get(requestId);if(!row)throw own('ACTION_EVENT_UNAVAILABLE');bound(row.scope)(scope);row.command=freeze(structuredClone(row.command));row.scope=freeze(structuredClone(row.scope));return {scope,row};};
-  // 결과 DTO 검증·기록. bindScope 는 결과가 결속돼야 하는 원 scope 다(일반 경로는 현재와 같은 scope, 영수증 경로는 원 row.scope).
-  const settle=(row,result,bindScope)=>{
+  const load=async(requestId,signal)=>{const scope=await current(signal),row=access(signal,'get',requestId);check(signal);if(!row)throw own('ACTION_EVENT_UNAVAILABLE');bound(row.scope)(scope);row.command=freeze(structuredClone(row.command));row.scope=freeze(structuredClone(row.scope));check(signal);return {scope,row};};
+  // Validate the full result binding before it can serve as ownership evidence.
+  // In the own-revoked path there is no independently verified current principal.
+  const inspectResult=(row,result,bindScope,signal)=>{
+    check(signal);
     const command=row.command;
     const valid=exact(result,['requestId','fingerprint','scope','eventId','actionId','target','snapshotDigest','status','observedAt','effect'])
       &&['requestId','fingerprint','eventId','actionId','snapshotDigest'].every(k=>result[k]===command[k])&&equals(result.scope,bindScope)&&equals(result.target,command.target)
@@ -86,17 +105,31 @@ export function createActionService({engine,resolveContext,databasePath,policy,c
       &&Date.parse(result.observedAt)>=row.created_at_ms&&Date.parse(result.observedAt)<=now()
       &&(result.effect===null||exact(result.effect,['applied','operationId','target','snapshotDigest'])&&typeof result.effect.applied==='boolean'&&result.effect.operationId===command.requestId&&equals(result.effect.target,command.target)&&result.effect.snapshotDigest===command.snapshotDigest)
       &&(result.status!=='succeeded'||result.effect?.applied===true);
-    const status=valid?result.status:'unknown';
-    const observation=valid?{observedAt:new Date(Date.parse(result.observedAt)).toISOString(),effectApplied:result.effect?.applied===true}:null;
-    return receipt(db().transition({requestId:row.request_id,status,code:valid?'ACTION_RESULT_OBSERVED':'ACTION_RESULT_UNVERIFIED',at:now(),result:observation,expectedVersion:row.version}));
+    const observed=valid?{status:result.status,observation:{observedAt:new Date(Date.parse(result.observedAt)).toISOString(),effectApplied:result.effect?.applied===true}}:null;
+    check(signal);return observed;
   };
+  const settle=(row,observed,signal)=>receipt(access(signal,'transition',{requestId:row.request_id,status:observed?.status??'unknown',
+    code:observed?'ACTION_RESULT_OBSERVED':'ACTION_RESULT_UNVERIFIED',at:now(),result:observed?.observation??null,expectedVersion:row.version}));
+  const permitReceipt=(phase,row)=>{phase.requestId=row.request_id;phase.receiptAuthorized=true;phase.resultVersion=row.version;};
+  const readDenials=new Set(['ACTION_SCOPE_UNVERIFIED','ACTION_SCOPE_CHANGED','ACTION_EVENT_UNAVAILABLE','ACTION_DENIED','ACTION_UNSUPPORTED','ACTION_CANCELLED','SUBJECT_SCOPE_UNVERIFIED','REQUEST_CANCELLED']);
+  // A failed source read is uncertainty only while the original caller remains
+  // authorized. Never turn a failed principal/scope recheck into a private DTO.
+  async function authorizedResult(row,signal,phase,read,verifyCurrent){
+    let result,unavailable=false;
+    try{result=structuredClone(await bounded(signal,read));}
+    catch(error){check(signal);if(readDenials.has(error?.code))throw error;unavailable=true;}
+    await verifyCurrent();check(signal);
+    const observed=unavailable?null:inspectResult(row,result,row.scope,signal);
+    check(signal);permitReceipt(phase,row);
+    return settle(row,observed,signal);
+  }
   // 소비된 operation 의 영수증 읽기(C2-R2b, #955). 게시 뒤에는 session·sourcePolicyVersion·target generation 이 바뀌므로
   // 일반 load(9필드 동일성)·fresh(사건 재조회·authorize)를 거치지 않는다. 대신 원 9필드 scope·command·fingerprint·digest 를 불변 증거로 두고,
   // 현재 principal 은 원 scope 와 subject·project·appId·audience·accessPolicyId 가 같아야 한다. 재승인·재게시·일반 사건 권한 재개는 없다.
   // 엔진이 readActionReceipt 를 제공할 때만 쓴다(없으면 기존 경로). prepare·execute 의 검사는 그대로다.
   const PRINCIPAL=['subjectId','projectId','appId','audience','accessPolicyId'];
   async function consumedReceipt(requested,signal,phase){
-    const row=db().get(requested.requestId);
+    const row=access(signal,'get',requested.requestId);check(signal);
     if(!row||row.confirmation_consumed!==1)throw own('ACTION_EVENT_UNAVAILABLE');
     row.command=freeze(structuredClone(row.command));row.scope=freeze(structuredClone(row.scope));
     // c1(#968): 이 기기를 스스로 철회한 뒤에는 현재 SDP context 를 읽을 수 없다. 그 경우에만(device:revoke, 엔진이 제공할 때)
@@ -104,26 +137,24 @@ export function createActionService({engine,resolveContext,databasePath,policy,c
     let latest;
     try{latest=await current(signal);}
     catch(error){
-      if(signal.aborted||row.command.actionId!=='device:revoke'||typeof engine.readOwnRevokedReceipt!=='function')throw error;
-      phase.requestId=requested.requestId;phase.reserved=true;phase.resultRead=true;phase.resultVersion=row.version;
-      let ownReceipt;
-      try{ownReceipt=structuredClone(await engine.readOwnRevokedReceipt({requestId:requested.requestId},row.scope,{signal}));}
-      catch(failure){if(signal.aborted)throw failure;return receipt(db().transition({requestId:requested.requestId,status:'unknown',code:'ACTION_RESULT_UNVERIFIED',at:now(),expectedVersion:row.version}));}
-      return settle(row,ownReceipt,row.scope);
+      check(signal);
+      if(row.command.actionId!=='device:revoke'||typeof engine.readOwnRevokedReceipt!=='function')throw error;
+      const ownReceipt=structuredClone(await bounded(signal,()=>engine.readOwnRevokedReceipt({requestId:requested.requestId},row.scope,{signal})));
+      const observed=inspectResult(row,ownReceipt,row.scope,signal);
+      if(!observed)throw own('ACTION_RESULT_UNVERIFIED');
+      check(signal);permitReceipt(phase,row);
+      return settle(row,observed,signal);
     }
     const samePrincipal=value=>PRINCIPAL.every(k=>value[k]===row.scope[k]);
     if(!samePrincipal(latest))throw own('ACTION_SCOPE_CHANGED');
-    phase.requestId=requested.requestId;phase.reserved=true;phase.resultRead=true;phase.resultVersion=row.version;
-    let result;
-    try{result=structuredClone(await engine.readActionReceipt({requestId:requested.requestId},row.scope,{signal}));if(!samePrincipal(await current(signal)))throw own('ACTION_SCOPE_CHANGED');}
-    catch(error){if(error?.code==='ACTION_SCOPE_CHANGED'||signal.aborted)throw error;return receipt(db().transition({requestId:requested.requestId,status:'unknown',code:'ACTION_RESULT_UNVERIFIED',at:now(),expectedVersion:row.version}));}
-    return settle(row,result,row.scope);
+    return authorizedResult(row,signal,phase,()=>engine.readActionReceipt({requestId:requested.requestId},row.scope,{signal}),
+      async()=>{if(!samePrincipal(await current(signal)))throw own('ACTION_SCOPE_CHANGED');});
   }
   const fresh=async(row,scope,signal)=>{
     const found=await readEvent(row.command.eventId,scope,signal);
     if(digest(found)!==row.command.snapshotDigest)throw own('ACTION_SNAPSHOT_CHANGED');
     if(!found.supportedActions.includes(row.command.actionId)||!settings.allowedActions.includes(row.command.actionId))throw own('ACTION_DENIED');
-    await authorize(row.command,scope,signal);return found;
+    await authorize(row.command,scope,signal);check(signal);return found;
   };
   return Object.freeze({
     prepare(input,options={}){return operation(options,async signal=>{
@@ -132,40 +163,37 @@ export function createActionService({engine,resolveContext,databasePath,policy,c
       if(!settings.allowedActions.includes(requested.actionId)||!found.supportedActions.includes(requested.actionId))throw own('ACTION_DENIED');
       const requestId=randomUUID(),snapshotDigest=digest(found),base={requestId,scope,eventId:found.id,actionId:requested.actionId,target:found.target,snapshotDigest};
       const command=freeze({...base,fingerprint:digest({schema:'alekov.action.intent.v1',...base})});await authorize(command,scope,signal);
-      if(signal.aborted)throw own('ACTION_CANCELLED');const at=now(),expiresAtMs=at+settings.confirmationTtlMs;
+      check(signal);const at=now(),expiresAtMs=at+settings.confirmationTtlMs;
       if(!Number.isSafeInteger(expiresAtMs)||!Number.isFinite(new Date(expiresAtMs).getTime()))throw own('ACTION_UNSUPPORTED');
       const confirmationId='ac-on-'+randomBytes(32).toString('base64url');
-      const row=db().insert({requestId,receiptId:randomUUID(),scope,command,confirmationHash:hash('alekov.action.confirmation\0'+confirmationId),expiresAtMs,at});
+      const row=access(signal,'insert',{requestId,receiptId:randomUUID(),scope,command,confirmationHash:hash('alekov.action.confirmation\0'+confirmationId),expiresAtMs,at});
       return {...receipt(row),data:{...receipt(row).data,confirmationId,confirmationExpiresAt:new Date(expiresAtMs).toISOString(),snapshotDigest,target:found.target}};
     });},
     execute(input,options={}){return operation(options,async(signal,phase)=>{
       if(!exact(input,['requestId','confirmationId'])||!UUID.test(input.requestId)||typeof input.confirmationId!=='string'||!/^ac-on-[A-Za-z0-9_-]{43}$/.test(input.confirmationId))throw own('ACTION_CONFIRMATION_INVALID');
       const requested=freeze(structuredClone(input)),{scope,row}=await load(requested.requestId,signal);await fresh(row,scope,signal);
-      if(signal.aborted)throw own('ACTION_CANCELLED');
-      const reserved=db().reserve({requestId:requested.requestId,confirmationHash:hash('alekov.action.confirmation\0'+requested.confirmationId),dispatcherId,at:now()});
+      const reserved=access(signal,'reserve',{requestId:requested.requestId,confirmationHash:hash('alekov.action.confirmation\0'+requested.confirmationId),dispatcherId,at:now()});
       if(!reserved.reserved){
+        check(signal);
         const old=reserved.row;
-        if(old.dispatcher_id!==dispatcherId&&['reserved','pending'].includes(old.status))return receipt(db().transition({requestId:old.request_id,status:'unknown',code:'ACTION_RESTART_RECONCILE',at:now(),allowStates:['reserved','pending']}),true);
+        if(old.dispatcher_id!==dispatcherId&&['reserved','pending'].includes(old.status))return receipt(access(signal,'transition',{requestId:old.request_id,status:'unknown',code:'ACTION_RESTART_RECONCILE',at:now(),allowStates:['reserved','pending']}),true);
         return receipt(old,true);
       }
-      phase.requestId=requested.requestId;phase.reserved=true;
-      if(signal.aborted)throw own('ACTION_CANCELLED');
-      const acknowledgment=structuredClone(await engine.executeAction(row.command,scope,{signal}));await sameCurrent(scope,signal);
+      phase.requestId=requested.requestId;phase.dispatchReserved=true;
+      check(signal);
+      const acknowledgment=structuredClone(await bounded(signal,()=>engine.executeAction(row.command,scope,{signal})));await sameCurrent(scope,signal);
       // A transport ACK is never effect proof. Only readResult may report succeeded.
       const status=exact(acknowledgment,['status'])&&acknowledgment.status==='denied'?'denied':exact(acknowledgment,['status'])&&acknowledgment.status==='accepted'?'pending':'unknown';
-      return receipt(db().transition({requestId:requested.requestId,status,code:'ACTION_DISPATCH_ACK',at:now(),allowStates:['reserved']}));
+      return receipt(access(signal,'transition',{requestId:requested.requestId,status,code:'ACTION_DISPATCH_ACK',at:now(),allowStates:['reserved']}));
     });},
     readResult(input,options={}){return operation(options,async(signal,phase)=>{
       if(!exact(input,['requestId'])||!UUID.test(input.requestId))throw own('ACTION_INPUT_INVALID');
-      const requested=freeze(structuredClone(input)),stored=db().get(requested.requestId);
+      const requested=freeze(structuredClone(input)),stored=access(signal,'get',requested.requestId);check(signal);
       if(stored?.confirmation_consumed===1&&typeof engine.readActionReceipt==='function')return consumedReceipt(requested,signal,phase);
       const {scope,row}=await load(requested.requestId,signal);
-      phase.requestId=requested.requestId;phase.reserved=row.confirmation_consumed===1;phase.resultRead=true;phase.resultVersion=row.version;await fresh(row,scope,signal);
+      await fresh(row,scope,signal);
       if(!row.confirmation_consumed)return receipt(row);
-      let result;
-      try{result=structuredClone(await engine.readActionResult({requestId:requested.requestId},scope,{signal}));await sameCurrent(scope,signal);}
-      catch(error){if(error?.code==='ACTION_SCOPE_CHANGED'||signal.aborted)throw error;return receipt(db().transition({requestId:requested.requestId,status:'unknown',code:'ACTION_RESULT_UNVERIFIED',at:now(),expectedVersion:row.version}));}
-      return settle(row,result,scope);
+      return authorizedResult(row,signal,phase,()=>engine.readActionResult({requestId:requested.requestId},scope,{signal}),()=>sameCurrent(scope,signal));
     });},
   });
 }

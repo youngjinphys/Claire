@@ -1,8 +1,8 @@
 {
   "schema": "claire.documentation-status.v1",
-  "sourceBaseline": "cee729ec614437da17494cae10199aafc407844c",
-  "reviewDate": "2026-11-22",
-  "scope": "Combined latest two commits relative to cee729ec614437da17494cae10199aafc407844c: remove unused empty placeholder, preserve the documented Stage12 submission-bundle manifest, separate the per-commit manifest, and enforce parent-diff inventory. Hardening review keeps full Linux/Windows checks for every push while the paused public deployment's live SHA check is manual-only. Original course documents, historical evidence and recorded source inputs are preserved. Live SDP, AI and user PC operation are not claimed.",
+  "sourceBaseline": "76785d7736c27a3729f60afddda051f09f76c9b4",
+  "reviewDate": "2026-11-23",
+  "scope": "Recursive review of main 76785d7736c27a3729f60afddda051f09f76c9b4 covering signed cookie lifetime, request and connection ownership, measurement consistency, UI recovery, reproducible tests and exact source-commit CI, XDR contracts, bounded resource/runtime policies, and current documentation. Preserve original course contracts, historical evidence, source inputs and the independent Stage12 bundle manifest. Live SDP, AI, production deployment and user PC operation are not claimed. The completed independent reviewer set, interruptions, findings and outcomes are recorded separately in RECURSIVE_REVIEW_2026-11-23.json.",
   "existingMarkdownCount": 51,
   "documents": [
     {
@@ -13,7 +13,7 @@
     {
       "path": "docs/AUTH_COOKIE_GENERATIONS.md",
       "classification": "current",
-      "action": "reviewed-unchanged"
+      "action": "reconciled"
     },
     {
       "path": "docs/AUTH_RECENT_COMMITS_AUDIT_2026-11-01.md",
@@ -118,7 +118,7 @@
     {
       "path": "on-client/docs/AI_SETUP_GUIDE.md",
       "classification": "current",
-      "action": "reviewed-unchanged"
+      "action": "reconciled"
     },
     {
       "path": "on-client/docs/CONNECTION_TROUBLESHOOT.md",
@@ -138,7 +138,7 @@
     {
       "path": "on-client/docs/IMPLEMENTATION_CONTRACT.md",
       "classification": "current",
-      "action": "reconciled"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/OBSERVATORY_AUDIT_2026-10-30.md",
@@ -153,7 +153,7 @@
     {
       "path": "on-client/docs/SDP_HOST_CONNECTION.md",
       "classification": "current",
-      "action": "reviewed-unchanged"
+      "action": "reconciled"
     },
     {
       "path": "on-client/docs/SDP_HOST_OBSERVATION.md",
@@ -168,12 +168,12 @@
     {
       "path": "on-client/docs/STUDENT_ARCHITECTURE.md",
       "classification": "current",
-      "action": "reconciled"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/docs/STUDENT_LAUNCH_GUIDE.md",
       "classification": "current",
-      "action": "reviewed-unchanged"
+      "action": "reconciled"
     },
     {
       "path": "on-client/docs/STUDENT_PROMPTS.md",
@@ -198,7 +198,7 @@
     {
       "path": "on-client/src/actions/README.md",
       "classification": "current",
-      "action": "reviewed-unchanged"
+      "action": "reconciled"
     },
     {
       "path": "on-client/src/ai/README.md",
@@ -213,7 +213,7 @@
     {
       "path": "on-client/student/HOST_OBSERVATION.md",
       "classification": "current",
-      "action": "reconciled"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "on-client/vendor/NOTICE.md",
@@ -223,7 +223,7 @@
     {
       "path": "package/ARCHITECTURE.md",
       "classification": "current",
-      "action": "reconciled"
+      "action": "reviewed-unchanged"
     },
     {
       "path": "package/DEMO.md",
@@ -289,7 +289,7 @@
     "student state and host-report boundary",
     "source and historical blob immutability",
     "parent-to-commit file declaration",
-    "scoped read-only regression checks on Linux, Windows and macOS",
+    "full root/client regression checks plus Windows launcher and metrics CI for the same source",
     "Stage12 bundle manifest remains independent from current commit manifest",
     "current commit manifest matches exact parent diff"
   ],
@@ -405,6 +405,15 @@
     {
       "path": "package/ARCHITECTURE.md",
       "blocks": 1
+    }
+  ],
+  "embeddedUserGuidance": [
+    {
+      "path": "on-client/tools/start-alekov.ps1",
+      "classification": "current",
+      "section": "Leading usage comment",
+      "companionGuide": "on-client/docs/STUDENT_LAUNCH_GUIDE.md",
+      "action": "Reconciled normal-policy launch examples and direct Node fallback; executable body unchanged."
     }
   ]
 }

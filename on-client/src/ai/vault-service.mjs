@@ -106,7 +106,7 @@ export function createVaultOnAiService({enabled=false,vault,model='aleph/auto',t
     });
     const alive=()=>{
       if(controller.signal.aborted)throw own('WB_CLCO_CANCELLED');
-      if(Date.now()>=deadline||guarded&&performance.now()>=monotonicDeadline)throw own('WB_CLCO_TIMEOUT');
+      if(Date.now()>=deadline||performance.now()>=monotonicDeadline)throw own('WB_CLCO_TIMEOUT');
     };
     const work=async()=>{
       // Snapshot the trusted mapping and incident before any callback can yield.
@@ -116,11 +116,14 @@ export function createVaultOnAiService({enabled=false,vault,model='aleph/auto',t
       alive();
       const {value:v,context}=credential(loaded,pins);
       alive();
+      const remaining=Math.ceil(Math.min(deadline-Date.now(),monotonicDeadline-performance.now()));
+      alive();
       const service=createOnAiService({env:{ON_AI_BASE_URL:v.baseUrl,ON_AI_APP_KEY:v.token,ON_AI_MODEL:model},model,
-        timeoutMs:Math.max(1,deadline-Date.now()),transportFactory,allowLoopbackHttp:authConfig.allowLoopbackHttp === true,
+        timeoutMs:Math.max(1,remaining),transportFactory,allowLoopbackHttp:authConfig.allowLoopbackHttp === true,
         appAuthorization:{fetchImpl:authConfig.fetchImpl ?? globalThis.fetch,maxResponseBytes:authConfig.maxResponseBytes ?? 16384}});
       const serviceOptions={signal:controller.signal,expectedScope:pins.scope,expectedContext:context};
       if(guarded){serviceOptions.beforeDispatch=options.beforeDispatch;serviceOptions.beforePublish=options.beforePublish;}
+      alive();
       const result=await (method==='models' ? service.checkConnection(serviceOptions)
         : method==='learner-support' ? service.explainLearningSupport(incident,observation,serviceOptions)
           : service.explainIncident(incident,serviceOptions));
@@ -131,11 +134,13 @@ export function createVaultOnAiService({enabled=false,vault,model='aleph/auto',t
         if(!Number.isSafeInteger(result.authorizationValidUntilMs))throw own('ON_AI_PROVISIONING_PENDING');
         const authorizationValidUntilMs=Math.floor(Math.min(result.authorizationValidUntilMs,Date.parse(v.expiresAt),deadline,Date.now()+Math.max(0,monotonicDeadline-performance.now())));
         if(authorizationValidUntilMs<=Date.now())throw own('ON_AI_PROVISIONING_PENDING');
+        alive();
         return {...result,authorizationValidUntilMs};
       }
+      alive();
       return result;
     };
-    try {return await Promise.race([work(),stopped]);}
+    try {const result=await Promise.race([work(),stopped]);alive();return result;}
     catch(error){return failure(error);}
     finally {clearTimeout(timer);if(options.signal){if(guarded)Reflect.apply(EventTarget.prototype.removeEventListener,options.signal,['abort',cancel]);else options.signal.removeEventListener('abort',cancel);}controller.abort();}
   }

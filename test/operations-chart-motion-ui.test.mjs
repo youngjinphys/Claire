@@ -16,12 +16,12 @@ class Element extends EventTarget {
 }
 let fixtureId=0;
 async function setup(t,{reduced=false,mediaAvailable=true}={}){
+  const win=new EventTarget();
   const saved=Object.fromEntries(['document','window','fetch'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
-  t.after(()=>{for(const [key,descriptor] of Object.entries(saved))if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];});
+  t.after(()=>{win.dispatchEvent(new Event('pagehide'));for(const [key,descriptor] of Object.entries(saved))if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];});
   const nodes=new Map();
   const node=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
   const doc={getElementById:node,createElement:()=>new Element(),createElementNS:()=>new Element()};
-  const win=new EventTarget();
   const preference={reduced};
   if(mediaAvailable)win.matchMedia=()=>({get matches(){return preference.reduced;}});
   for(const [key,value] of Object.entries({document:doc,window:win,fetch:()=>new Promise(()=>{})}))

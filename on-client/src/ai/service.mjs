@@ -188,6 +188,9 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
   const fingerprint = configured ? createHash('sha256').update(token).digest('hex') : null;
   let client;
   let actualVerifier;
+  const lifetimes=new WeakMap();
+  const checkLifetime=signal=>{const guard=lifetimes.get(signal);if(!guard)throw own('WB_CLCO_CANCELLED');guard();};
+  const bounded=async(signal,work)=>{checkLifetime(signal);try{const value=await work();checkLifetime(signal);return value;}catch(error){checkLifetime(signal);throw error;}};
   const help = (code, provisioning = 'pending') => Object.freeze({ component: 'on-ai', code, appCredentialsConfigured: configured,
     provisioning, automaticRetries: 0, workbenchRequiredAtRuntime: false });
   const failure = error => {
@@ -195,7 +198,7 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
     return { ok: false, error: { code, message: messages[code] }, help: help(code) };
   };
   async function authorize(purpose, requiredCapability, signal, expectedScope, expectedContext) {
-    if (signal?.aborted) throw own('WB_CLCO_CANCELLED');
+    checkLifetime(signal);
     if (!configured) throw own('ON_AI_PROVISIONING_PENDING');
     let verifier = verifyAppAuthorization;
     if (verifier === null && record(appAuthorization)) {
@@ -212,9 +215,9 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
       || expectedScope.audience !== 'on-client') throw own('ON_AI_PROVISIONING_PENDING');
     const scope = Object.freeze({ ...expectedScope });
     let proof;
-    try { proof = await verifier({ signal, purpose, requiredCapability, expectedScope: scope, expectedContext }); }
+    try { proof = await bounded(signal,()=>verifier({ signal, purpose, requiredCapability, expectedScope: scope, expectedContext })); }
     catch(error) { throw own(Object.hasOwn(messages,error?.code) ? error.code : 'ON_AI_PROVISIONING_PENDING'); }
-    if (signal?.aborted) throw own('WB_CLCO_CANCELLED');
+    checkLifetime(signal);
     // The callback is owned by the server. No request body or env flag can provide proof.
     // Revalidate on every operation: never cache authorization alongside the HTTP client.
     const actual = isVerifiedOnAppAuthorization(proof,{baseUrl,token,allowLoopbackHttp,signal,purpose});
@@ -226,6 +229,7 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
       || proof.credentialFingerprint !== fingerprint
       || !fields(proof.appKeyScope, ['subjectId', 'projectId', 'appId', 'audience'])
       || ['subjectId', 'projectId', 'appId', 'audience'].some(key => proof.appKeyScope[key] !== scope[key] || proof[key] !== scope[key])) throw own('ON_AI_PROVISIONING_PENDING');
+    checkLifetime(signal);
     if (actual) return {mode:'verified',proof,purpose};
     // Synthetic callback proofs remain an explicit loopback test path only.
     if (proof.mode !== 'test' || !allowLoopbackHttp) throw own('ON_AI_PROVISIONING_PENDING');
@@ -238,21 +242,29 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
   async function operation({ signal: externalSignal, expectedScope, expectedContext } = {}, task, support=false) {
     if (externalSignal && (support?Reflect.apply(supportAbortRead,externalSignal,[]):externalSignal.aborted)) return failure(own('WB_CLCO_CANCELLED'));
     if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120000) return failure(own('WB_CLCO_INVALID_LIMIT'));
-    const controller = new AbortController();
+    const controller = new AbortController(), deadline = performance.now()+timeoutMs;
     let timer;
     let cancel;
+    let reason='WB_CLCO_CANCELLED';
     const stopped = new Promise((_, reject) => {
-      cancel = () => { controller.abort(); reject(own('WB_CLCO_CANCELLED')); };
-      timer = setTimeout(() => { controller.abort(); reject(own('WB_CLCO_TIMEOUT')); }, timeoutMs);
+      const stop=code=>{if(controller.signal.aborted)return;reason=code;controller.abort();reject(own(code));};
+      lifetimes.set(controller.signal,()=>{
+        if(!controller.signal.aborted&&performance.now()>=deadline)stop('WB_CLCO_TIMEOUT');
+        if(controller.signal.aborted)throw own(reason);
+      });
+      cancel = () => stop('WB_CLCO_CANCELLED');
+      timer = setTimeout(() => stop('WB_CLCO_TIMEOUT'), timeoutMs);
       if(externalSignal){if(support)Reflect.apply(EventTarget.prototype.addEventListener,externalSignal,['abort',cancel,{once:true}]);else externalSignal.addEventListener('abort',cancel,{once:true});}
     });
+    stopped.catch(()=>{});
     try {
       // Capture server identity pins before an asynchronous verifier can yield.
       // Later mutations of the caller's object cannot change this operation's authority.
       const contextSnapshot = expectedContext === undefined ? undefined : Object.freeze(structuredClone(expectedContext));
-      // Promise.race bounds the caller even if a server verifier ignores cancellation.
-      // authorize checks this signal after its await, so late proof cannot dispatch HTTP.
-      return await Promise.race([task(controller.signal, expectedScope, contextSnapshot), stopped]);
+      // The race bounds uncooperative dependencies; the monotonic guard also
+      // prevents dispatch/publication when synchronous work delays timer delivery.
+      const result=await Promise.race([Promise.resolve().then(()=>{checkLifetime(controller.signal);return task(controller.signal, expectedScope, contextSnapshot);}), stopped]);
+      checkLifetime(controller.signal);return result;
     } catch (error) { return failure(error); }
     finally {
       clearTimeout(timer);
@@ -260,20 +272,23 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
       controller.abort();
     }
   }
-  async function transport() {
+  async function transport(signal) {
+    checkLifetime(signal);
     if (!configured) throw own('ON_AI_PROVISIONING_PENDING');
     if (!client) {
       let factory = transportFactory;
       if (!factory) {
-        try { factory = (await import('../../vendor/clco-http.mjs')).createClcoClient; }
-        catch { throw own('ON_AI_TRANSPORT_PENDING'); }
+        try { factory = (await bounded(signal,()=>import('../../vendor/clco-http.mjs'))).createClcoClient; }
+        catch { checkLifetime(signal);throw own('ON_AI_TRANSPORT_PENDING'); }
       }
-      client = factory({ baseUrl, token, timeoutMs, maxResponseBytes: 65536, allowLoopbackHttp });
+      checkLifetime(signal);
+      const created=await bounded(signal,()=>factory({ baseUrl, token, timeoutMs, maxResponseBytes: 65536, allowLoopbackHttp }));
+      checkLifetime(signal);client=created;
     }
-    return client;
+    return bounded(signal,()=>client);
   }
   function guard(authorization,signal) {
-    if(signal.aborted)throw own('WB_CLCO_CANCELLED');
+    checkLifetime(signal);
     if(Date.parse(authorization.proof.validUntil)<=Date.now()
       || authorization.mode==='verified' && !isVerifiedOnAppAuthorization(authorization.proof,{baseUrl,token,allowLoopbackHttp,signal,purpose:authorization.purpose})) throw own('ON_AI_PROVISIONING_PENDING');
   }
@@ -292,8 +307,8 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
         const authorization = await authorize('models', 'ai.models', signal, expectedScope, expectedContext);
         if(captured.beforeDispatch===undefined){
           checkModel(authorization,false);
-          const activeClient=await transport();guard(authorization,signal);
-          const models = await activeClient.listModels({ signal });guard(authorization,signal);
+          const activeClient=await transport(signal);guard(authorization,signal);
+          const models = await bounded(signal,()=>activeClient.listModels({ signal }));guard(authorization,signal);
           if(authorization.mode==='verified' && models.some(row=>!authorization.proof.allowedModels.includes(row.id)))throw own('WB_CLCO_INVALID_RESPONSE');
           return {ok:true,transportChecked:true,audienceAuthorization:authorization.mode,modelCount:models.length,
             help:help(authorization.mode==='verified'?'ON_AI_APP_AUTHORIZATION_VERIFIED':'ON_AI_TEST_TRANSPORT_ONLY',authorization.mode==='verified'?'verified':'pending')};
@@ -311,17 +326,17 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
         const refresh=async callback=>{
           const current=await authorize('models','ai.models',signal,expectedScope,expectedContext);
           alive(signal);sameAuthority(current);
-          try{await callback({signal});}catch{alive(signal);throw own('ON_AI_PROVISIONING_PENDING');}
+          try{await bounded(signal,()=>callback({signal}));}catch{checkLifetime(signal);alive(signal);throw own('ON_AI_PROVISIONING_PENDING');}
           alive(signal);sameAuthority(current);return current;
         };
         checkModel(authorization,false);
-        const activeClient=await transport();alive(signal);guard(authorization,signal);
+        const activeClient=await transport(signal);alive(signal);guard(authorization,signal);
         if(activeClient===null||typeof activeClient!=='object'||types.isProxy(activeClient))throw own('ON_AI_TRANSPORT_PENDING');
         const method=Object.getOwnPropertyDescriptor(activeClient,'listModels');
         if(!method||!Object.hasOwn(method,'value')||typeof method.value!=='function'||types.isProxy(method.value))throw own('ON_AI_TRANSPORT_PENDING');
         const dispatch=await refresh(captured.beforeDispatch);
         alive(signal);sameAuthority(dispatch);
-        const models=modelIds(await Reflect.apply(method.value,activeClient,[{signal}]));
+        const models=modelIds(await bounded(signal,()=>Reflect.apply(method.value,activeClient,[{signal}])));
         alive(signal);sameAuthority(dispatch);
         if(models.some(value=>!before.allowedModels.includes(value)))throw own('WB_CLCO_INVALID_RESPONSE');
         if(models.length===0)throw own('ON_AI_MODEL_LIST_EMPTY');
@@ -359,17 +374,17 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
           };
           const refresh=async callback=>{
             const current=await authorize('explain','ai.explain',signal,expectedScope,expectedContext);alive(signal);sameAuthority(current);
-            try{await callback({signal});}catch{alive(signal);throw own('ON_AI_PROVISIONING_PENDING');}
+            try{await bounded(signal,()=>callback({signal}));}catch{checkLifetime(signal);alive(signal);throw own('ON_AI_PROVISIONING_PENDING');}
             alive(signal);sameAuthority(current);return current;
           };
           checkModel(authorization,true);
-          const activeClient=await transport();alive(signal);guard(authorization,signal);
+          const activeClient=await transport(signal);alive(signal);guard(authorization,signal);
           if(!activeClient||typeof activeClient!=='object'||types.isProxy(activeClient))throw own('ON_AI_TRANSPORT_PENDING');
           const method=Object.getOwnPropertyDescriptor(activeClient,'chat');
           if(!method||!Object.hasOwn(method,'value')||typeof method.value!=='function'||types.isProxy(method.value))throw own('ON_AI_TRANSPORT_PENDING');
           const body={model,stream:false,messages:[{role:'system',content:systemPrompt},{role:'user',content:JSON.stringify(incident)}]};
           const dispatch=await refresh(captured.beforeDispatch);alive(signal);sameAuthority(dispatch);
-          const response=await Reflect.apply(method.value,activeClient,[body,{signal}]);alive(signal);sameAuthority(dispatch);
+          const response=await bounded(signal,()=>Reflect.apply(method.value,activeClient,[body,{signal}]));alive(signal);sameAuthority(dispatch);
           let parsed;try{parsed=JSON.parse(incidentContent(response));}catch{throw own('ON_AI_INVALID_OUTPUT');}
           const explanation=validateOutput(parsed,incident,secrets);
           const current=await refresh(captured.beforePublish);alive(signal);sameAuthority(dispatch);sameAuthority(current);
@@ -382,8 +397,8 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
         const authorization = await authorize('explain', 'ai.explain', signal, expectedScope, expectedContext);
         const incident = validateInput(input, secrets);
         checkModel(authorization,true);
-        const activeClient=await transport();guard(authorization,signal);
-        const result = await activeClient.chat({ model, stream: false, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: JSON.stringify(incident) }] }, { signal });guard(authorization,signal);
+        const activeClient=await transport(signal);guard(authorization,signal);
+        const result = await bounded(signal,()=>activeClient.chat({ model, stream: false, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: JSON.stringify(incident) }] }, { signal }));guard(authorization,signal);
         const choice = result?.choices?.[0];
         if (choice?.message?.tool_calls || choice?.message?.function_call || choice?.finish_reason === 'length' || typeof choice?.message?.content !== 'string') throw own('ON_AI_INVALID_OUTPUT');
         let output;
@@ -404,22 +419,22 @@ export function createOnAiService({ env = process.env, model = env.ON_AI_MODEL, 
         if(authorization.mode!=='verified')throw own('ON_AI_PROVISIONING_PENDING');
         const before=structuredClone(authorization.proof);
         checkModel(authorization,true);
-        const activeClient=await transport();alive(signal);guard(authorization,signal);
+        const activeClient=await transport(signal);alive(signal);guard(authorization,signal);
         if(activeClient===null||typeof activeClient!=='object'||types.isProxy(activeClient))throw own('ON_AI_TRANSPORT_PENDING');
         const method=Object.getOwnPropertyDescriptor(activeClient,'learnerSupport');
         if(!method||!Object.hasOwn(method,'value')||typeof method.value!=='function'||types.isProxy(method.value))throw own('ON_AI_TRANSPORT_PENDING');
         const finite=JSON.parse(prepared.messages[1].content);
         if(captured.beforeDispatch!==undefined){
-          try{await captured.beforeDispatch({signal});}catch{if(signal.aborted)throw own('WB_CLCO_CANCELLED');throw own('ON_AI_PROVISIONING_PENDING');}
+          try{await bounded(signal,()=>captured.beforeDispatch({signal}));}catch{checkLifetime(signal);throw own('ON_AI_PROVISIONING_PENDING');}
         }
         alive(signal);guard(authorization,signal);checkModel(authorization,true);
-        const response=await Reflect.apply(method.value,activeClient,[{model,problemKind:finite.problemKind,observations:finite.observations},{signal}]);
+        const response=await bounded(signal,()=>Reflect.apply(method.value,activeClient,[{model,problemKind:finite.problemKind,observations:finite.observations},{signal}]));
         alive(signal);guard(authorization,signal);
         const projected=captureSupport(response,['ok','data'],[],'LEARNER_SUPPORT_MODEL_OUTPUT_INVALID');
         if(projected.ok!==true)throw own('LEARNER_SUPPORT_MODEL_OUTPUT_INVALID');
         const guide=validateLearnerSupportGuide(prepared,projected.data,{signal});
         if(captured.beforePublish!==undefined){
-          try{await captured.beforePublish({signal});}catch{if(signal.aborted)throw own('WB_CLCO_CANCELLED');throw own('ON_AI_PROVISIONING_PENDING');}
+          try{await bounded(signal,()=>captured.beforePublish({signal}));}catch{checkLifetime(signal);throw own('ON_AI_PROVISIONING_PENDING');}
         }
         alive(signal);
         const current=await authorize('explain','ai.explain',signal,expectedScope,expectedContext);

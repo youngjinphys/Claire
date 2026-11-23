@@ -4,7 +4,7 @@
 
 ## Windows·macOS·Linux 공통
 
-지원 선언은 Node.js `>=22 <25 || >=26 <27`, CI 기준은 24.19.0입니다. 기본 앱은 외부 npm 의존성이 없습니다.
+지원 선언은 Node.js `>=22.15 <23 || >=23.5 <25 || >=26 <27`, CI 기준은 24.19.0입니다. 기본 앱은 외부 npm 의존성이 없습니다.
 
 ```sh
 # 저장소 루트
@@ -16,9 +16,16 @@ npm run check
 npm start
 ```
 
+Windows PowerShell에서 `npm.ps1` 실행이 정책으로 차단되면, 같은 `on-client` 폴더에서 다음 명령을 사용합니다. `node src/server.mjs`는 현재 `npm start`의 앱 시작 명령이며 실행 정책을 바꾸지 않습니다.
+
+```powershell
+npm.cmd run check
+node src/server.mjs
+```
+
 `http://127.0.0.1:5189/`는 기존 세 탭, `http://127.0.0.1:5189/dashboard.html`은 통합 관제입니다. 서버 창을 유지하고 종료할 때 Ctrl+C를 누릅니다. 브라우저만 닫아서는 서버가 종료되지 않습니다. 다시 켤 때는 같은 폴더에서 같은 명령을 사용합니다.
 
-기본 상태는 SDP 미연결입니다. 예제 확인은 먼저 기존 서버를 종료하고 `npm run demo`로 실행합니다. DEMO는 가상 SDP 자료이며 실제 PC 자원 측정과 별도입니다.
+기본 상태는 SDP 미연결입니다. 예제 확인은 먼저 기존 서버를 종료하고 `npm run demo`로 실행합니다. 위 대체 실행 경로에서는 `node src/server.mjs --demo`를 사용합니다. DEMO는 가상 SDP 자료이며 실제 PC 자원 측정과 별도입니다.
 
 ## 호스트 보고서 선택
 
@@ -38,7 +45,7 @@ PowerShell:
 
 ```powershell
 $env:ON_PORT = '5190'
-npm start
+node src/server.mjs
 ```
 
 macOS/Linux 셸:
@@ -51,7 +58,7 @@ ON_PORT=5190 npm start
 
 ## 선택 사항: 기존 Windows 실행 도구
 
-[tools/start-alekov.ps1](../tools/start-alekov.ps1)은 Node 버전·폴더·포트를 확인합니다. 일반 PowerShell에서 실행할 수 있는 정책일 때만 사용합니다. 정책 때문에 실행되지 않으면 정책을 우회하는 대신 위의 `npm start` 경로를 사용합니다.
+[tools/start-alekov.ps1](../tools/start-alekov.ps1)은 Node 버전·폴더·포트를 확인합니다. 일반 PowerShell에서 실행할 수 있는 정책일 때만 사용합니다. 정책 때문에 실행되지 않으면 같은 앱 폴더에서 `node src/server.mjs`로 시작합니다. 실행 정책을 변경하지 않습니다.
 
 ```powershell
 powershell -NoProfile -File .\tools\start-alekov.ps1

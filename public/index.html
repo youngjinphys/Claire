@@ -208,6 +208,7 @@
         </div>
         <section id="workspace" class="panel" hidden style="padding:22px;margin-top:15px">
           <h3 id="workspace-title" tabindex="-1" style="margin:0 0 15px;font-size:14px">내 메모 편집</h3>
+          <button id="notes-refresh" class="secondary" type="button" aria-disabled="false">목록 새로고침</button>
           <div id="draft-warning" class="status" role="status" hidden></div>
           <form id="create-form" class="composer">
             <label for="new-title">제목<input id="new-title" maxlength="120" required></label>
@@ -246,6 +247,7 @@
     const existingEditHeld = document.querySelector('#existing-edit-held');
     const sessionLabel = document.querySelector('#session-label');
     const notesRoot = document.querySelector('#notes');
+    const notesRefresh = document.getElementById('notes-refresh');
     const createForm = document.querySelector('#create-form');
     const draftTitle = document.querySelector('#new-title');
     const draftBody = document.querySelector('#new-body');
@@ -277,10 +279,17 @@
     const existingEdits = new Map();
     const unboundEdits = new Map();
     let notesGeneration = 0;
+    let activeNotesRequest = null;
+    let failedListStatus = null;
     const mountedEditors = new Set();
+    const noteControls = new Map();
+    const registerNoteControl = (element, owner, key, name) => {
+      if (element) noteControls.set(element, {owner, key, name});
+    };
     const snapshotMountedEditors = () => {
       for (const editor of mountedEditors) { editor.snapshot(); editor.active = false; }
       mountedEditors.clear();
+      noteControls.clear();
     };
     const noteIdValid = value => typeof value === 'string' &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
@@ -323,28 +332,54 @@
       renderUncertainCreations();
     };
     const uncertainCreationStatus = status => status < 400 || status === 408 || status === 409 || status >= 500;
+    const definitiveMutationRejection = response => response && response.status >= 400 && response.status < 500 && response.status !== 408;
+    const mutationDeadline = (controller, message) => {
+      const deadline = performance.now() + 30000;
+      const stopped = () => {
+        if (performance.now() >= deadline) controller.abort();
+        return controller.signal.aborted;
+      };
+      return {stopped, check() { if (stopped()) throw Error(message); }};
+    };
     const sendCreationAttempt = async (attempt, onDispatch, onUncertain, verifyResponseId = false) => {
-      const controller = new AbortController(); let timeoutId, settled = false;
+      const controller = new AbortController(); let timeoutId, settled = false, received = null;
+      const timeoutMessage = '추가 응답 대기 시간이 지났습니다.';
+      const limit = mutationDeadline(controller, timeoutMessage);
+      const fallback = '추가에 실패했습니다.';
+      const expired = () => {
+        controller.abort();
+        if (received) return {response:received, verified:false, message:received.ok ? '' : fallback};
+        throw Error(timeoutMessage);
+      };
       const request = (async () => {
-        const response = await authFetch('/api/notes', {method:'POST', signal:controller.signal,
-          body:JSON.stringify({id:attempt.id,title:attempt.title,body:attempt.body})}, true, onDispatch);
+        let response;
+        try {
+          response = await authFetch('/api/notes', {method:'POST', signal:controller.signal,
+            body:JSON.stringify({id:attempt.id,title:attempt.title,body:attempt.body})}, true,
+          () => { received = null; onDispatch?.(); }, value => { limit.check(); received = value; }, limit.check);
+        } catch (error) {
+          if (definitiveMutationRejection(received) && !uncertainCreationStatus(received.status))
+            return {response:received, verified:false, message:fallback};
+          throw error;
+        }
         if (!settled && !response.ok && uncertainCreationStatus(response.status)) {
           rememberUncertainCreation(attempt); onUncertain?.(response);
         }
         let verified = false;
         if (verifyResponseId && response.status === 201) {
-          let payload = null;
-          try { payload = await response.json(); } catch { /* Treat unreadable bodies as unconfirmed. */ }
+          const payload = await parseJson(response, controller.signal);
           verified = Boolean(payload && typeof payload === 'object' && !Array.isArray(payload) &&
             typeof payload.id === 'string' && payload.id.toLowerCase() === attempt.id.toLowerCase());
         }
-        return {response, verified, message:response.ok ? '' : await apiError(response, '추가에 실패했습니다.')};
+        return {response, verified, message:response.ok ? '' : await apiError(response, fallback, controller.signal)};
       })();
-      const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => {
-        controller.abort(); reject(Error('추가 응답 대기 시간이 지났습니다.'));
+      const timeout = new Promise((resolve, reject) => { timeoutId = setTimeout(() => {
+        // Diagnostic bodies cannot erase an HTTP outcome already observed.
+        try { resolve(expired()); } catch (error) { reject(error); }
       }, 30000); });
-      try { return await Promise.race([request,timeout]); }
-      finally { settled = true; clearTimeout(timeoutId); }
+      try { const result = await Promise.race([request,timeout]); return limit.stopped() ? expired() : result; }
+      catch (error) { if (limit.stopped()) return expired(); throw error; }
+      finally { settled = true; clearTimeout(timeoutId); controller.abort(); discardResponse(received); }
     };
     const retryFocus = new WeakMap();
     const renderUncertainCreations = () => {
@@ -450,6 +485,7 @@
       snapshotMountedEditors();
       notesGeneration += 1;
       vaultEpoch += 1;
+      activeNotesRequest?.abort();
       deviceProof = null;
       if (deviceTimer !== null) clearTimeout(deviceTimer);
       deviceTimer = null;
@@ -505,8 +541,83 @@
         error || Boolean(heldDraftLockNotice));
     };
 
-    const parseJson = async (response) => {
-      try { return await response.json(); } catch { return null; }
+    const parseJson = async (response, signal) => {
+      try { return (await readHttpJson(() => response, {signal, tolerateInvalid:true})).data; }
+      catch { return null; } // A known HTTP rejection keeps its status even if its detail is unreadable.
+    };
+
+    // Each read owns its deadline and stream. Cookie-changing requests also
+    // drain their header transport under the auth lock after UI cancellation:
+    // a late Set-Cookie must never overtake the next authentication request.
+    const readHttpJson = async (send, {signal, timeoutMs = 10000, maxBytes = 65536,
+      timeoutMessage = '서버 응답 대기 시간이 지났습니다.', onHeaders, onStopped,
+      retainHeadersOnStop = false, tolerateInvalid = false} = {}) => {
+      const controller = new AbortController(), deadline = performance.now() + timeoutMs;
+      let responseBody, reader, headers, timedOut = false, onAbort;
+      const discarded = new WeakSet();
+      const discard = () => {
+        const stream = reader || responseBody;
+        if (!stream || (typeof stream !== 'object' && typeof stream !== 'function') || discarded.has(stream)) return;
+        discarded.add(stream);
+        const release = () => { try { stream.releaseLock?.(); } catch {} };
+        try { const pending = stream.cancel(); release(); void Promise.resolve(pending).then(release, release); }
+        catch { release(); }
+      };
+      const abort = () => controller.abort();
+      signal?.addEventListener('abort', abort, {once:true});
+      if (signal?.aborted) controller.abort();
+      const failure = () => Error(timedOut ? timeoutMessage : '요청이 취소되어 응답을 적용하지 않았습니다.');
+      const check = () => {
+        if (performance.now() >= deadline) { timedOut = true; controller.abort(); }
+        if (controller.signal.aborted) throw failure();
+      };
+      const stopped = new Promise((_, reject) => {
+        onAbort = () => { const error = failure(); reject(error); onStopped?.(error); };
+        controller.signal.addEventListener('abort', onAbort, {once:true});
+        if (controller.signal.aborted) onAbort();
+      });
+      const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+      const read = async () => {
+        check();
+        headers = Promise.resolve(send(controller.signal));
+        const response = await headers;
+        responseBody = response?.body;
+        try {
+          check();
+          onHeaders?.(response);
+          check();
+          if (response.redirected || !/^application\/json(?:;|$)/iu.test(response.headers?.get('content-type') || '') ||
+              typeof responseBody?.getReader !== 'function') throw Error('서버 응답 형식을 확인할 수 없습니다.');
+          const declared = response.headers.get('content-length');
+          if (declared !== null && (!/^\d+$/u.test(declared) || Number(declared) > maxBytes))
+            throw Error('서버 응답 크기를 확인할 수 없습니다.');
+          reader = responseBody.getReader();
+          const decoder = new TextDecoder('utf-8', {fatal:true}); let text = '', size = 0;
+          while (true) {
+            const part = await reader.read(); check(); if (part.done) break;
+            size += part.value.byteLength;
+            if (size > maxBytes) throw Error('서버 응답 크기가 허용 범위를 넘었습니다.');
+            text += decoder.decode(part.value, {stream:true});
+          }
+          text += decoder.decode(); check();
+          let data;
+          try { data = JSON.parse(text); }
+          catch { if (!tolerateInvalid) throw Error('서버 응답 형식을 확인할 수 없습니다.'); data = null; }
+          check(); return {response, data};
+        } finally { discard(); }
+      };
+      try { const result = await Promise.race([read(), stopped]); check(); return result; }
+      catch (error) { check(); throw error; }
+      finally {
+        const interrupted = controller.signal.aborted;
+        clearTimeout(timer); signal?.removeEventListener('abort', abort);
+        controller.signal.removeEventListener('abort', onAbort); controller.abort(); discard();
+        if (retainHeadersOnStop && interrupted && headers) await headers.catch(() => {});
+      }
+    };
+
+    const discardResponse = response => {
+      try { void Promise.resolve(response?.body?.cancel()).catch(() => {}); } catch {}
     };
 
     const clearDraft = () => {
@@ -782,6 +893,14 @@
 
     const authApi = (action, body, epoch = sessionEpoch, logoutIntent = null) => {
       const waitController = new AbortController();
+      const waitDeadline = performance.now() + 45000;
+      let requestDeadline = null;
+      const checkWait = () => {
+        if (requestDeadline === null && performance.now() >= waitDeadline) waitController.abort();
+        if (waitController.signal.aborted) throw Error(authPageHidden ? 'AUTH_PAGE_HIDDEN' : 'AUTH_WAIT_TIMEOUT');
+      };
+      let rejectRequest;
+      const requestExpired = new Promise((_, reject) => { rejectRequest = reject; });
       if (authPageHidden) return Promise.reject(Error('AUTH_PAGE_HIDDEN'));
       const ticket = {action,version:authVersion,logoutIntent,waitController,fetchController:null};
       authTickets.add(ticket);
@@ -798,9 +917,11 @@
         headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(body);
       }
+      body = null;
       const run = async () => {
+        checkWait();
         clearTimeout(waitTimer);
-        if (waitController.signal.aborted) throw Error('AUTH_WAIT_TIMEOUT');
+        requestDeadline = performance.now() + 45000;
         // A new, still-anonymous page may have opened while another tab held
         // the lock. Adopt only the stable generation observed under that lock.
         if (authStorage && action === 'session' && epoch === 0 && sessionEpoch === 0 && authVersion === null) {
@@ -867,19 +988,42 @@
         };
         const controller = new AbortController();
         ticket.fetchController = controller;
-        const timeout = setTimeout(() => controller.abort(), 45000);
         activeAuthAction = action;
+        let dispatched = false;
+        // The early UI stop notification can win before this lock-owned run
+        // settles. Every stop boundary must use the same dispatch evidence.
+        const stoppedError = () => Error(authPageHidden ? 'AUTH_PAGE_HIDDEN' :
+          dispatched ? 'AUTH_REQUEST_TIMEOUT' : 'AUTH_REQUEST_NOT_SENT');
+        const checkRequest = () => {
+          if (performance.now() >= requestDeadline) controller.abort();
+          if (controller.signal.aborted || authPageHidden) throw stoppedError();
+        };
         try {
           const sessionAtRequest = session;
-          const response = await fetch(`/api/auth/${action}`, {...init, signal:controller.signal});
-          if (action === 'session' && response.status === 401 && sessionAtRequest?.access_token && session === sessionAtRequest) {
-            const newerIntent = epoch !== sessionEpoch;
-            const priorStatus = loginStatus.textContent;
-            const heldDraft = invalidateSession(!newerIntent);
-            setAuthLockNotice(newerIntent ? priorStatus : '서버에서 세션을 거부해 자료실을 잠갔습니다. 다시 로그인해 주세요.', heldDraft, !newerIntent);
-          }
-          const data = await parseJson(response);
-          if (controller.signal.aborted) throw Error('AUTH_REQUEST_TIMEOUT');
+          checkRequest();
+          const {response, data} = await readHttpJson(signal => {
+            const requestInit = {...init, signal};
+            checkRequest();
+            const response = fetch(`/api/auth/${action}`, requestInit);
+            dispatched = true;
+            return response;
+          }, {
+            signal:controller.signal, timeoutMs:Math.max(1, requestDeadline - performance.now()), timeoutMessage:'AUTH_REQUEST_TIMEOUT', tolerateInvalid:true,
+            retainHeadersOnStop:true,
+            onStopped() {
+              init.body = undefined;
+              rejectRequest(stoppedError());
+            },
+            onHeaders(response) {
+              if (action === 'session' && response.status === 401 && sessionAtRequest?.access_token && session === sessionAtRequest) {
+                const newerIntent = epoch !== sessionEpoch;
+                const priorStatus = loginStatus.textContent;
+                const heldDraft = invalidateSession(!newerIntent);
+                setAuthLockNotice(newerIntent ? priorStatus : '서버에서 세션을 거부해 자료실을 잠갔습니다. 다시 로그인해 주세요.', heldDraft, !newerIntent);
+              }
+            },
+          });
+          checkRequest();
           const knownTransient = response.status === 503 &&
             ['AUTH_BACKEND_UNAVAILABLE','AUTH_BACKEND_NOT_CONFIGURED'].includes(data?.error);
           const knownNoCookie = response.status === 401 && data?.error === 'NO_SESSION';
@@ -895,18 +1039,19 @@
           if (action === 'logout') clearLogoutIntent(logoutIntent);
           return {ok:response.ok,status:response.status,data};
         } catch (error) {
-          // A failed or aborted request may already have reached the server.
+          // Only an actual dispatch can leave an uncertain remote outcome.
+          // An unsent logout keeps its intent marker to prevent restoration.
           if (pending !== null && !finishFailed) {
-            finish(true, action === 'logout' ? 'logout-unconfirmed:' :
+            finish(dispatched, action === 'logout' ? 'logout-unconfirmed:' :
               action === 'login' ? 'login-unconfirmed:' : '');
-            if (action === 'logout') clearLogoutIntent(logoutIntent);
+            if (action === 'logout' && dispatched) clearLogoutIntent(logoutIntent);
           }
-          if (controller.signal.aborted) throw Error('AUTH_REQUEST_TIMEOUT');
+          if (authPageHidden || controller.signal.aborted || error?.message === 'AUTH_REQUEST_TIMEOUT') throw stoppedError();
           throw error;
-        } finally { activeAuthAction = null;ticket.fetchController = null;clearTimeout(timeout); }
+        } finally { activeAuthAction = null;ticket.fetchController = null;controller.abort(); }
       };
       const task = authTail.then(async () => {
-        if (waitController.signal.aborted) throw Error('AUTH_WAIT_TIMEOUT');
+        checkWait();
         if (authCoordinationBroken) throw Error('AUTH_LOCK_UNAVAILABLE');
         if (!authLock) return run();
         let entered = false;
@@ -932,7 +1077,14 @@
           reject(Error(authPageHidden ? 'AUTH_PAGE_HIDDEN' : 'AUTH_WAIT_TIMEOUT'));
         }, {once:true});
       });
-      return Promise.race([task,waitExpired]).finally(() => {clearTimeout(waitTimer);authTickets.delete(ticket);});
+      return Promise.race([task,waitExpired,requestExpired]).then(result => {
+        checkWait();
+        if (authPageHidden) throw Error('AUTH_PAGE_HIDDEN');
+        // The cookie transaction has already finished under its lock. Reject
+        // a late positive UI result without rewriting a newer shared marker.
+        if (result.ok && requestDeadline !== null && performance.now() >= requestDeadline) throw Error('AUTH_REQUEST_TIMEOUT');
+        return result;
+      }).finally(() => {clearTimeout(waitTimer);authTickets.delete(ticket);init.body = undefined;});
     };
 
     const invalidateSession = (advanceEpoch = true) => {
@@ -1010,16 +1162,17 @@
       return promise;
     };
 
-    const apiError = async (response, fallback) => {
-      const data = await parseJson(response);
+    const apiError = async (response, fallback, signal) => {
+      const data = await parseJson(response, signal);
       return typeof data?.error === 'string' ? data.error : fallback;
     };
 
-    const authFetch = async (path, init = {}, retry = true, onDispatch = null) => {
+    const authFetch = async (path, init = {}, retry = true, onDispatch = null, onResponse = null, checkBeforeSend = null) => {
       if (init.signal?.aborted) throw Error('저장 응답 대기 시간이 지났습니다.');
       if (!session?.access_token && !(await restoreSession()) && !session?.access_token) {
         throw new Error('로그인이 필요합니다.');
       }
+      if (init.signal?.aborted) throw Error('저장 응답 대기 시간이 지났습니다.');
       const requestEpoch = sessionEpoch;
       const requestSession = session;
       const requestVaultEpoch = vaultEpoch;
@@ -1032,17 +1185,28 @@
         if (!deviceProof) throw Error('기기 서명 인증이 필요합니다.');
         headers.set('x-aleph-device-proof', deviceProof);
       }
-      onDispatch?.();
-      const response = await fetch(path, {
+      const requestInit = {
         ...init,
         headers,
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'error',
-      });
+      };
       if (init.signal?.aborted) throw Error('저장 응답 대기 시간이 지났습니다.');
+      checkBeforeSend?.();
+      const pendingResponse = fetch(path, requestInit);
+      // Only a request actually handed to fetch reserves mutation state.
+      // Deadline checks run before this notification, so an unsent request
+      // cannot be reported as an uncertain remote mutation.
+      onDispatch?.();
+      const response = await pendingResponse;
+      if (init.signal?.aborted) { discardResponse(response); throw Error('저장 응답 대기 시간이 지났습니다.'); }
+      try { onResponse?.(response); } catch (error) { discardResponse(response); throw error; }
       if (response.status === 403 && isProtected) {
-        const payload = await response.clone().json().catch(() => null);
+        let payload;
+        try {
+          ({data:payload} = await readHttpJson(() => response.clone(), {signal:init.signal, tolerateInvalid:true}));
+        } catch (error) { discardResponse(response); throw error; }
         if (requestEpoch === sessionEpoch && requestVaultEpoch === vaultEpoch &&
             payload?.error === 'DEVICE_NOT_VERIFIED') {
           lockVault(); renderAuth(); void deviceAccess?.status();
@@ -1051,10 +1215,12 @@
       if (response.status === 401 && retry && isProtected && session && session === requestSession &&
           requestVaultEpoch === vaultEpoch) {
         if (requestEpoch !== sessionEpoch) {
+          discardResponse(response);
           const priorStatus = loginStatus.textContent;
           const heldDraft = invalidateSession(false);
           setAuthLockNotice(priorStatus, heldDraft, false);
         } else {
+          discardResponse(response);
           const pending = {session, epoch:sessionEpoch};
           sessionRevalidation = pending;
           lockVault(); renderAuth(); window.dispatchEvent(new Event('aleph:identity'));
@@ -1066,12 +1232,13 @@
           }
           if (restored) {
             window.dispatchEvent(new Event('aleph:identity'));
-            return authFetch(path, init, false, onDispatch);
+            return authFetch(path, init, false, onDispatch, onResponse, checkBeforeSend);
           }
         }
       } else if (response.status === 401 && retry && !isProtected && requestEpoch === sessionEpoch && await restoreSession(true)) {
+        discardResponse(response);
         window.dispatchEvent(new Event('aleph:identity'));
-        return authFetch(path, init, false, onDispatch);
+        return authFetch(path, init, false, onDispatch, onResponse, checkBeforeSend);
       }
       return response;
     };
@@ -1097,6 +1264,7 @@
         lockVault();
         notesRoot.replaceChildren();
         setStatus(workspaceStatus);
+        failedListStatus = null;
         const lookupNotice = document.getElementById('notes-lookup-status');
         if (lookupNotice) { lookupNotice.hidden = true; lookupNotice.textContent = ''; }
         const deleteNotice = document.getElementById('delete-operation-status');
@@ -1307,6 +1475,8 @@
         else edits.set(key, edit);
       };
       mounted.snapshot = remember; mountedEditors.add(mounted);
+      for (const [name, element] of Object.entries({title, body, save, remove, approve, discard}))
+        registerNoteControl(element, owner, key, name);
       save.addEventListener('blur', () => { if (!approved && !blocked()) mounted.updateSave(); });
       title.addEventListener('input', remember); body.addEventListener('input', remember);
       save.addEventListener('click', async () => {
@@ -1321,7 +1491,7 @@
         }
         const current = currentVaultRequest();
         const sentTitle = title.value, sentBody = body.value, sentRevision = edit.revision, sentEdit = edit;
-        let dispatched = false, timeoutId, reload = false;
+        let dispatched = false, timeoutId, reload = false, received = null;
         let saveStatusRevision, ownsSaveStatus = false;
         const reportSave = (message, error = false) => {
           if (!current()) return;
@@ -1334,6 +1504,12 @@
           markSaveUncertain(owner, key);
         };
         const controller = new AbortController();
+        const limit = mutationDeadline(controller, '저장 응답 대기 시간이 지났습니다.');
+        const expired = () => {
+          controller.abort();
+          if (received && !received.ok) return received;
+          throw Error('저장 응답 대기 시간이 지났습니다.');
+        };
         try {
           setStatus(workspaceStatus, '수정 중…');
           saveStatusRevision = workspaceStatusRevision;
@@ -1341,16 +1517,19 @@
           renderSeparateSaveResults();
           const request = authFetch(`/api/notes/${encodeURIComponent(note.id)}`, {
             method:'PUT',body:JSON.stringify({title:sentTitle,body:sentBody}),signal:controller.signal,
-          }, true, () => { if (!dispatched) { dispatched = true; if (sentEdit) sentEdit.pending += 1; } });
-          const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => {
-            controller.abort(); reject(Error('저장 응답 대기 시간이 지났습니다.'));
+          }, true, () => { received = null; if (!dispatched) { dispatched = true; if (sentEdit) sentEdit.pending += 1; } },
+          value => { limit.check(); received = value; }, limit.check).catch(error => { if (definitiveMutationRejection(received)) return received; throw error; });
+          const timeout = new Promise((resolve, reject) => { timeoutId = setTimeout(() => {
+            try { resolve(expired()); } catch (error) { reject(error); }
           }, 30000); });
-          const response = await Promise.race([request, timeout]);
+          let response = await Promise.race([request, timeout]);
+          if (limit.stopped()) response = expired();
           if (sentEdit && dispatched) sentEdit.pending -= 1;
           if (!current()) { if (sentEdit && (response.ok || response.status === 408 || response.status >= 500)) markUncertain(); return; }
           if (!response.ok) {
             if (sentEdit && (response.status === 408 || response.status >= 500)) { markUncertain(); approved = false; reload = true; }
-            const message = await apiError(response, '수정에 실패했습니다.');
+            let message = await apiError(response, '수정에 실패했습니다.', controller.signal);
+            if (limit.stopped()) message = '수정에 실패했습니다.';
             if (sentEdit && !sentEdit.uncertain && !sentEdit.pending && sentEdit.title === sentEdit.baseTitle && sentEdit.body === sentEdit.baseBody && edits.get(key) === sentEdit) { edits.delete(key); edit = null; }
             reportSave((response.status === 408 || response.status >= 500) ? message + ' 저장 여부가 확인되지 않았습니다.' : message, true);
             return;
@@ -1372,6 +1551,7 @@
           reportSave(error.message + (dispatched ? ' 저장 여부가 확인되지 않았습니다.' : ''), true);
         } finally {
           clearTimeout(timeoutId);
+          controller.abort(); discardResponse(received);
           savingSet(owner).delete(key);
           updateMutationEditors(owner, key);
           if (deviceProof && ((reload && current()) || (owner && !current() && ownerId(session?.user?.id) === owner))) {
@@ -1390,7 +1570,13 @@
         const current = currentVaultRequest();
         const requestSessionEpoch = sessionEpoch;
         const controller = new AbortController();
-        let dispatched = false, timeoutId, deleteStatusRevision;
+        const limit = mutationDeadline(controller, '삭제 응답 대기 시간이 지났습니다.');
+        let dispatched = false, timeoutId, deleteStatusRevision, received = null;
+        const expired = () => {
+          controller.abort();
+          if (received && !received.ok) return {response:received, message:'삭제에 실패했습니다.'};
+          throw Error('삭제 응답 대기 시간이 지났습니다.');
+        };
         const markUncertain = () => {
           if (!dispatched) return;
           uncertainDeletesFor(owner).add(key);
@@ -1401,16 +1587,28 @@
           setStatus(workspaceStatus, '삭제 중…');
           deleteStatusRevision = workspaceStatusRevision;
           const request = (async () => {
-            const response = await authFetch(`/api/notes/${encodeURIComponent(note.id)}`,
-              { method:'DELETE', signal:controller.signal }, true, () => { dispatched = true; });
-            if (response.status >= 500) markUncertain();
-            const message = response.ok ? '' : await apiError(response, '삭제에 실패했습니다.');
+            let response;
+            try {
+              response = await authFetch(`/api/notes/${encodeURIComponent(note.id)}`,
+                { method:'DELETE', signal:controller.signal }, true,
+                () => { dispatched = true; received = null; }, value => {
+                  limit.check();
+                  received = value;
+                  if (value.status === 408 || value.status >= 500) markUncertain();
+                }, limit.check);
+            } catch (error) {
+              if (definitiveMutationRejection(received)) return {response:received, message:'삭제에 실패했습니다.'};
+              throw error;
+            }
+            const message = response.ok ? '' : await apiError(response, '삭제에 실패했습니다.', controller.signal);
             return {response, message};
           })();
-          const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => {
-            controller.abort(); reject(Error('삭제 응답 대기 시간이 지났습니다.'));
+          const timeout = new Promise((resolve, reject) => { timeoutId = setTimeout(() => {
+            try { resolve(expired()); } catch (error) { reject(error); }
           }, 30000); });
-          const {response, message} = await Promise.race([request, timeout]);
+          let result = await Promise.race([request, timeout]);
+          if (limit.stopped()) result = expired();
+          const {response, message} = result;
           clearTimeout(timeoutId);
           if (response.ok) {
             if (current()) clearSeparateDeleteFailure(resultScope, key);
@@ -1441,6 +1639,7 @@
         }
         finally {
           clearTimeout(timeoutId);
+          controller.abort(); discardResponse(received);
           if (!deletedNotesFor(owner).has(key)) savingSet(owner).delete(key);
           updateMutationEditors(owner, key);
         }
@@ -1462,13 +1661,20 @@
         for (const field of [title,body]) if (field.style) { field.style.whiteSpace = 'pre-wrap'; field.style.overflowWrap = 'anywhere'; }
         const discard = document.createElement('button'); discard.type = 'button'; discard.textContent = '보관한 수정 버리기';
         const epoch = vaultEpoch;
+        registerNoteControl(discard, owner, key, 'retained-discard');
         discard.addEventListener('click', () => {
-          if (epoch !== vaultEpoch || !deviceProof || ownerId(session?.user?.id) !== owner) return;
+          const current = () => epoch === vaultEpoch && Boolean(deviceProof) && ownerId(session?.user?.id) === owner && edits.get(key) === edit;
+          if (!current()) return;
           const uncertain = Boolean(edit.uncertain || edit.pending > 0);
           const warning = uncertain ? ' 이전 요청이 나중에 서버 내용을 바꿀 수 있습니다.' : '';
           if (!window.confirm('이 탭에 보관된 수정 내용을 버릴까요?' + warning)) return;
+          if (!current()) return;
+          const focused = document.activeElement === discard;
           edits.delete(key); article.remove?.();
+          noteControls.delete(discard);
           if (uncertain) setStatus(workspaceStatus, '보관한 수정을 버렸습니다.' + warning, true);
+          if (focused && document.hasFocus?.() && (document.activeElement === document.body || document.activeElement === discard))
+            document.getElementById('vault-title')?.focus?.({preventScroll:true});
         });
         article.append(notice,title,body,discard); pending.push(article);
       }
@@ -1478,10 +1684,17 @@
     async function loadNotes({statusGuard = null} = {}) {
       if (!session?.access_token || !deviceProof) return;
       const epoch = vaultEpoch, authEpoch = sessionEpoch, generation = ++notesGeneration;
+      activeNotesRequest?.abort();
+      const controller = new AbortController(); activeNotesRequest = controller;
+      notesRefresh?.setAttribute('aria-disabled', 'true');
       const owner = ownerId(session?.user?.id);
       const current = () => epoch === vaultEpoch && generation === notesGeneration && Boolean(deviceProof) && owner === ownerId(session?.user?.id);
       const ownsFailedDeleteListStatus = () => failedDeleteListStatus?.sessionEpoch === authEpoch &&
         failedDeleteListStatus.owner === owner && failedDeleteListStatus.revision === workspaceStatusRevision && failedDeleteListStatus.text === workspaceStatus.textContent;
+      // A fresh proof for the same owner may recover an earlier failed list,
+      // but a later operation's status or an older response is never cleared.
+      const ownsListFailure = () => failedListStatus?.sessionEpoch <= authEpoch && failedListStatus.vaultEpoch <= epoch &&
+        failedListStatus.owner === owner && failedListStatus.revision === workspaceStatusRevision && failedListStatus.text === workspaceStatus.textContent;
       const reportListFailure = message => {
         if (statusGuard && !statusGuard()) {
           const notice = document.getElementById('notes-lookup-status');
@@ -1493,35 +1706,20 @@
         }
         const tracksDelete = workspaceStatus.textContent === deleteCheckingNotice || ownsFailedDeleteListStatus();
         setStatus(workspaceStatus, message, true);
+        failedListStatus = {sessionEpoch:authEpoch, vaultEpoch:epoch, owner, revision:workspaceStatusRevision, text:message};
         if (tracksDelete) failedDeleteListStatus = {sessionEpoch:authEpoch, owner, revision:workspaceStatusRevision, text:message};
       };
       try {
-        const response = await authFetch('/api/notes');
+        const {response, data:notes} = await readHttpJson(signal => authFetch('/api/notes', {signal}), {
+          signal:controller.signal, maxBytes:16 * 1024 * 1024,
+          timeoutMessage:'메모 목록 응답 대기 시간이 지났습니다. 목록 새로고침으로 다시 시도하세요.',
+        });
         if (!current()) return;
         if (!response.ok) {
-          const message = await apiError(response, '자료를 읽을 수 없습니다.');
-          if (!current()) return;
-          const activeBeforeRemoval = document.activeElement;
-          const focusWasInNotes = typeof notesRoot.contains === 'function' && notesRoot.contains(activeBeforeRemoval);
-          snapshotMountedEditors();
-          reportListFailure(message + (owner && existingEdits.get(owner)?.size ? ' 수정 내용은 이 탭에 보관되어 있습니다.' : ''));
-          notesRoot.replaceChildren();
-          if (focusWasInNotes) Promise.resolve().then(() => {
-            if (!current() || !document.hasFocus() || (document.activeElement !== document.body && document.activeElement !== activeBeforeRemoval)) return;
-            const target = document.getElementById('vault-title');
-            if (!target || typeof target.focus !== 'function') return;
-            target.focus({preventScroll:true});
-            requestAnimationFrame(() => {
-              if (!current() || !document.hasFocus() || document.activeElement !== target) return;
-              const bounds = target.getBoundingClientRect();
-              if (bounds.top < 8 || bounds.bottom > window.innerHeight - 8)
-                target.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
-            });
-          });
+          const message = typeof notes?.error === 'string' ? notes.error : '자료를 읽을 수 없습니다.';
+          reportListFailure(message + ' 마지막으로 받은 목록과 수정 내용은 이 탭에 보관됩니다. 목록 새로고침으로 다시 시도하세요.');
           return;
         }
-        const notes = await response.json();
-        if (!current()) return;
         if (!Array.isArray(notes) || notes.some(note => !note || typeof note !== 'object' || Array.isArray(note) ||
             typeof note.title !== 'string' || typeof note.body !== 'string')) {
           reportListFailure('자료 형식이 맞지 않습니다.');
@@ -1541,13 +1739,8 @@
             (identity !== (owner || '') && (!identity || !owner)) ||
             (!owner && !identity && item.sessionEpoch !== sessionEpoch))));
         const active = document.activeElement;
-        let focus = null;
-        for (const editor of mountedEditors) {
-          if (typeof editor.key !== 'string' || editor.owner !== owner) continue;
-          for (const name of ['title','body','save','remove']) if (editor[name] === active) {
-            focus = {key:editor.key,name,start:active.selectionStart,end:active.selectionEnd};
-          }
-        }
+        const control = noteControls.get(active);
+        const focus = control?.owner === owner ? {...control, start:active.selectionStart, end:active.selectionEnd} : null;
         snapshotMountedEditors();
         const edits = owner && existingEdits.get(owner);
         if (edits) for (const edit of edits.values())
@@ -1563,15 +1756,17 @@
         notesRoot.replaceChildren(...articles);
         if (focus && document.hasFocus() && (document.activeElement === document.body || document.activeElement === active)) {
           const editor = !ambiguous.has(focus.key) ? [...mountedEditors].find(item=>item.owner===owner && item.key===focus.key) : null;
-          let target = editor?.[focus.name];
-          if (target?.disabled && focus.name === 'save') target = editor?.title;
-          if (!target) target = document.getElementById('vault-title');
+          const matching = [...noteControls].find(([,item])=>item.owner===focus.owner && item.key===focus.key && item.name===focus.name)?.[0];
+          let target = matching;
+          if (!target || target.disabled || target.hidden) target = editor?.title ||
+            [...noteControls].find(([element,item])=>item.owner===focus.owner && item.key===focus.key && item.name==='retained-discard' && !element.disabled && !element.hidden)?.[0] ||
+            document.getElementById('vault-title');
           if (target && !target.disabled && typeof target.focus === 'function') {
             target.focus({preventScroll:true});
-            if (target === editor?.[focus.name] && typeof focus.start === 'number' && typeof focus.end === 'number')
+            if (target === matching && ['title','body'].includes(focus.name) && typeof focus.start === 'number' && typeof focus.end === 'number')
               target.setSelectionRange?.(focus.start,focus.end);
             requestAnimationFrame(() => {
-              if (!document.hasFocus() || document.activeElement !== target) return;
+              if (!current() || !document.hasFocus() || document.activeElement !== target) return;
               if (typeof target.getBoundingClientRect !== 'function' || typeof target.scrollIntoView !== 'function') return;
               const bounds = target.getBoundingClientRect();
               if (bounds.top < 8 || bounds.bottom > window.innerHeight - 8)
@@ -1579,17 +1774,30 @@
             });
           }
         }
-        if (!notes.length && !workspaceStatus.textContent) setStatus(workspaceStatus, '메모가 없습니다.');
         if ((!statusGuard || statusGuard()) && (workspaceStatus.textContent === deleteCheckingNotice || ownsFailedDeleteListStatus())) {
           if (ambiguousDeleteListed)
             setStatus(workspaceStatus, '목록을 다시 읽었습니다. 계정 식별 정보가 없어 이전 요청과 현재 계정이 같은지 확인할 수 없어 해당 메모의 작업을 계속 막습니다.', true);
           else if (confirmedDeleteListed) setStatus(workspaceStatus, '삭제했습니다.');
         }
+        if ((!statusGuard || statusGuard()) && ownsListFailure()) {
+          failedListStatus = null;
+          setStatus(workspaceStatus);
+        }
+        if (!notes.length && !workspaceStatus.textContent) setStatus(workspaceStatus, '메모가 없습니다.');
       } catch (error) {
         if (!current()) return;
-        reportListFailure(error.message + (owner && existingEdits.get(owner)?.size ? ' 수정 내용은 이 탭에 보관되어 있습니다.' : ''));
+        reportListFailure(error.message + ' 마지막으로 받은 목록과 수정 내용은 이 탭에 보관됩니다.');
+      } finally {
+        if (activeNotesRequest === controller) {
+          activeNotesRequest = null;
+          notesRefresh?.setAttribute('aria-disabled', 'false');
+        }
       }
     }
+
+    notesRefresh?.addEventListener('click', () => {
+      if (notesRefresh.getAttribute('aria-disabled') !== 'true') void loadNotes();
+    });
 
     loginForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -1648,10 +1856,13 @@
           return;
         }
         if (error?.message === 'AUTH_PAGE_HIDDEN') return;
+        if (['AUTH_REQUEST_TIMEOUT','AUTH_REQUEST_NOT_SENT'].includes(error?.message)) document.querySelector('#password').value = '';
         setAuthLockNotice(error?.message === 'AUTH_WAIT_TIMEOUT'
-          ? '이전 인증 요청이 끝나지 않아 대기 시간이 초과되었습니다. 다시 시도하세요.'
+          ? '이전 인증 요청이 끝나지 않아 대기 시간이 초과되었습니다. 잠시 후 직접 다시 로그인하세요. 계속 대기하면 페이지를 새로고침하세요. 작성 내용은 탭을 닫으면 사라집니다.'
+          : error?.message === 'AUTH_REQUEST_NOT_SENT'
+            ? '요청을 보내기 전에 대기 시간이 초과되었습니다. 로그인 요청은 전송되지 않았습니다. 다시 로그인해 주세요.'
           : error?.message === 'AUTH_REQUEST_TIMEOUT'
-            ? '인증 응답 시간이 초과되었습니다. 서버의 처리 여부는 확인되지 않았습니다.'
+            ? '인증 응답 시간이 초과되었습니다. 서버의 처리 여부는 확인되지 않았습니다. 잠시 후 직접 다시 로그인하세요. 계속 대기하면 페이지를 새로고침하세요. 작성 내용은 탭을 닫으면 사라집니다.'
             : '로그인 서버에 연결할 수 없습니다.', undefined, true);
       }
     });
@@ -1673,8 +1884,10 @@
             (!logoutProtected ? ' 새로고침하면 기존 세션이 다시 열릴 수 있습니다.' : '')
           : '자료실은 잠겼지만 서버 로그아웃을 확인하지 못했습니다.' +
             (!logoutProtected ? ' 새로고침하면 기존 세션이 다시 열릴 수 있습니다.' : '')), !response.ok);
-      } catch {
-        if (epoch === sessionEpoch) setStatus(loginStatus, draftNotice + '자료실은 잠겼지만 서버 로그아웃을 확인하지 못했습니다.' +
+      } catch (error) {
+        if (epoch === sessionEpoch) setStatus(loginStatus, draftNotice + (error?.message === 'AUTH_REQUEST_NOT_SENT'
+          ? '자료실은 잠겼지만 서버 로그아웃 요청을 보내지 못했습니다.'
+          : '자료실은 잠겼지만 서버 로그아웃을 확인하지 못했습니다.') +
           (!logoutProtected ? ' 새로고침하면 기존 세션이 다시 열릴 수 있습니다.' : ''), true);
       }
     });
@@ -1750,19 +1963,51 @@
       }
     })();
 
-    import('/device.mjs').then(({initDeviceAccess}) => {
+    const pendingUiLoads = new Set();
+    window.addEventListener('pagehide', () => {
+      for (const cancel of pendingUiLoads) cancel();
+    });
+    const loadOptionalUi = async (load, mount, unavailable) => {
+      const deadline = performance.now() + 10000;
+      let timer, cancel, stopped = false;
+      const cancelled = new Promise((_, reject) => {
+        cancel = () => { stopped = true; reject(Error('UI_LOAD_INTERRUPTED')); };
+      });
+      pendingUiLoads.add(cancel);
+      timer = setTimeout(cancel, 10000);
+      try {
+        if (authPageHidden) throw Error('UI_LOAD_INTERRUPTED');
+        const module = await Promise.race([load(), cancelled]);
+        if (stopped || authPageHidden || performance.now() >= deadline) throw Error('UI_LOAD_INTERRUPTED');
+        mount(module);
+      } catch { unavailable(); }
+      finally { clearTimeout(timer); pendingUiLoads.delete(cancel); }
+    };
+    void loadOptionalUi(() => import('/device.mjs'), ({initDeviceAccess}) => {
       deviceAccess = initDeviceAccess({
         getAccessToken: () => isSessionRevalidating() ? null : session?.access_token ?? null,
         onAuthorized: verifiedVault,
         onLocked: () => { lockVault(); renderAuth(); }
       });
-    }).catch(() => {
+    }, () => {
+      // A module that failed to load cannot reveal its own recovery guidance.
+      const panel = document.getElementById('device-panel');
+      if (panel) panel.hidden = false;
       const status = document.querySelector('#device-state');
-      if (status) status.textContent = '기기 검증 구성 오류';
+      if (status) status.textContent = '기기 검증 화면 로드 실패';
+      const detail = document.getElementById('device-detail');
+      if (detail) detail.textContent = '기기 검증 화면을 불러오지 못했습니다. 브라우저 새로고침으로 다시 시도하세요. 확인되지 않은 보호 자료는 열지 않습니다.';
+      for (const id of ['device-enroll','device-unlock','device-refresh']) {
+        const button = document.getElementById(id); if (button) button.disabled = true;
+      }
     });
-    import('/operations.mjs').then(({ initOperations }) => {
+    void loadOptionalUi(() => import('/operations.mjs'), ({ initOperations }) => {
       initOperations({getToken: () => isSessionRevalidating() ? null : session?.access_token ?? null, getDeviceProof: () => deviceProof});
-    }).catch(() => { const el = document.querySelector('#ops-state'); if (el) el.textContent = '동적 화면을 불러오지 못했습니다.'; });
+    }, () => {
+      const state = document.querySelector('#ops-state');
+      if (state) state.textContent = '관측 화면을 불러오지 못했습니다. 브라우저 새로고침으로 다시 시도하세요. 로그인 화면은 계속 이용할 수 있습니다.';
+      const button = document.getElementById('ops-refresh'); if (button) button.disabled = true;
+    });
   })();
   </script>
 </body>

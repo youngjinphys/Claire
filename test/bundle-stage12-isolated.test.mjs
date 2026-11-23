@@ -1,14 +1,51 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import config from '../aleph.config.json' with { type: 'json' };
 import { runStage12ReadOnlyChecks } from '../src/attack-check-stage12.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fixture = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const origin = new URL(config.publicAppUrl);
+
+// bundle.mjs resolves its output from import.meta.dirname, not process.cwd().
+// Copy the module and its minimal inputs so no test can rewrite a student's
+// existing artifacts/submission.json, private notes, or Git metadata.
+function withBundleFixture(run, source = root) {
+  const isolated = mkdtempSync(join(tmpdir(), 'aleph-bundle-isolated-'));
+  try {
+    for (const path of ['scripts', 'src', 'package', 'aleph.config.json', 'package.json']) {
+      cpSync(join(source, path), join(isolated, path), { recursive: true });
+    }
+    const manifest = JSON.parse(readFileSync(join(isolated, 'package', 'bundle-commit-files.json'), 'utf8'));
+    for (const path of manifest.files) {
+      const target = resolve(isolated, path);
+      assert.ok(target.startsWith(isolated + sep), 'fixture input must stay inside its directory');
+      if (existsSync(target)) continue;
+      mkdirSync(dirname(target), { recursive: true });
+      cpSync(resolve(source, path), target);
+    }
+    mkdirSync(join(isolated, '.git'));
+    writeFileSync(join(isolated, '.git', 'HEAD'), 'a'.repeat(40) + '\n');
+    return run(isolated);
+  } finally {
+    rmSync(isolated, { recursive: true, force: true });
+  }
+}
+
+function runIsolated(program, { timeout = 30000, source = root } = {}) {
+  return withBundleFixture(cwd => {
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', program], {
+      cwd, encoding: 'utf8', timeout,
+    });
+    assert.ifError(child.error);
+    return child;
+  }, source);
+}
 
 function http(status, body = null, extra = {}) {
   return new Response(body === null ? null : typeof body === 'string' ? body : JSON.stringify(body), {
@@ -133,9 +170,7 @@ test('sandbox-style Node import allowlist does not traverse node:os or node:fs/p
     "const checks = await runAttackChecks(config);",
     "if (checks.length !== 20 || checks.some(x => x.observed !== 'not_run')) process.exit(81);",
   ].join('\n');
-  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-    cwd:root, encoding:'utf8', timeout:15000,
-  });
+  const child = runIsolated(script, { timeout: 15000 });
   if (child.status === 80) t.skip('Node version lacks module.registerHooks');
   else assert.equal(child.status, 0, child.stderr);
 });
@@ -222,9 +257,7 @@ test('entire bundle rejects ALL child processes and every forbidden builtin impo
     "  throw Error('INVALID_MANIFEST');",
     "console.log('ZERO_CHILD_PROCESSES; HTTPS_GET_HEAD=' + requests.length);",
   ].join('\n');
-  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
-    cwd:root, encoding:'utf8', timeout:30000,
-  });
+  const child = runIsolated(code, { timeout: 30000 });
   assert.equal(child.status, 0, child.stderr || child.stdout);
   assert.match(child.stdout, /ZERO_CHILD_PROCESSES; HTTPS_GET_HEAD=12/u);
 });
@@ -313,9 +346,7 @@ test('regular clone never opens missing .git/commondir, including the full bundl
     "if (b.attackAttempts.length !== 20) throw Error('INVALID_ATTACK_ATTEMPTS');",
     "console.log('NO_MISSING_COMMONDIR_READ');",
   ].join('\n');
-  const child = spawnSync(process.execPath, ['--input-type=module','-e', program], {
-    cwd:root, encoding:'utf8', timeout:30000
-  });
+  const child = runIsolated(program, { timeout: 30000 });
   assert.equal(child.status,0,child.stderr || child.stdout);
   assert.match(child.stdout,/NO_MISSING_COMMONDIR_READ/u);
 });
@@ -355,9 +386,7 @@ test('entire Stage12 bundle works with structuredClone unavailable and network b
     "  throw Error('FALSE_EVIDENCE');",
     "console.log('NO_STRUCTURED_CLONE_REQUIRED');",
   ].join('\n');
-  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
-    cwd:root, encoding:'utf8', timeout:30000,
-  });
+  const child = runIsolated(code, { timeout: 30000 });
   assert.equal(child.status, 0, child.stderr || child.stdout);
   assert.match(child.stdout, /NO_STRUCTURED_CLONE_REQUIRED/u);
 });
@@ -381,9 +410,7 @@ test('invalid Stage8 resource zone is not misreported as a Stage5 URL error', ()
     "await import('./scripts/bundle.mjs');",
     "if (process.exitCode !== 1) throw Error('EXPECTED_FAILURE_MISSING');",
   ].join('\n');
-  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
-    cwd:root, encoding:'utf8', timeout:30000,
-  });
+  const child = runIsolated(code, { timeout: 30000 });
   assert.equal(child.status, 1, child.stderr || child.stdout);
   assert.match(child.stderr, /8단계 resourceZones/u);
   assert.doesNotMatch(child.stderr, /5단계 originalApiUrl/u);
@@ -444,9 +471,7 @@ test('entire isolated bundle stays valid when global URL and structuredClone are
     "if(requests!==12)throw Error('MISSING_READONLY_CHECKS');",
     "console.log('SAFE_WITHOUT_GLOBAL_URL_OR_STRUCTUREDCLONE');",
   ].join('\n');
-  const child=spawnSync(process.execPath,['--input-type=module','-e',script],{
-    cwd:root,encoding:'utf8',timeout:30000
-  });
+  const child=runIsolated(script, { timeout: 30000 });
   assert.equal(child.status,0,child.stderr||child.stdout);
   assert.match(child.stdout,/SAFE_WITHOUT_GLOBAL_URL_OR_STRUCTUREDCLONE/u);
 });
@@ -468,9 +493,7 @@ test('Stage12 ignores private bundle-notes.json in the restricted checkout', () 
     "if (b.explanation !== template.explanation) throw Error('INCORRECT_THREE_LINE_NOTES');",
     "console.log('PRIVATE_NOTES_NOT_READ');",
   ].join('\n');
-  const child = spawnSync(process.execPath, ['--input-type=module','-e',script],{
-    cwd:root, encoding:'utf8',timeout:30000
-  });
+  const child = runIsolated(script, { timeout: 30000 });
   assert.equal(child.status,0,child.stderr||child.stdout);
   assert.match(child.stdout,/PRIVATE_NOTES_NOT_READ/u);
 });
@@ -632,10 +655,31 @@ test('Stage12 bundle rejects noncanonical configured repository URLs before netw
     "await import('./scripts/bundle.mjs');",
     "if(process.exitCode!==1)throw Error('BUNDLE_MUST_REJECT_INVALID_REPO_URL');",
   ].join('\n');
-  const child=spawnSync(process.execPath,['--input-type=module','-e',source],{
-    cwd:root,encoding:'utf8',timeout:30000
-  });
+  const child=runIsolated(source, { timeout: 30000 });
   assert.equal(child.status,1,child.stderr||child.stdout);
   assert.match(child.stderr,/12단계 제출 저장소 URL/u);
   assert.doesNotMatch(child.stderr,/NETWORK_MUST_NOT_RUN/u);
+});
+
+
+test('isolated bundle execution preserves existing checkout submissions and private notes', () => {
+  withBundleFixture(source => {
+    mkdirSync(join(source, 'artifacts'));
+    const submission = '{"existing":"synthetic student submission"}\n';
+    const notes = '{"explanation":"synthetic private notes"}\n';
+    writeFileSync(join(source, 'artifacts', 'submission.json'), submission);
+    writeFileSync(join(source, 'bundle-notes.json'), notes);
+    const child = runIsolated([
+      "import {existsSync, readFileSync} from 'node:fs';",
+      "if(existsSync('artifacts/submission.json') || existsSync('bundle-notes.json')) throw Error('PRIVATE_INPUT_COPIED');",
+      "globalThis.fetch = async () => {throw Error('synthetic offline fixture');};",
+      "await import('./scripts/bundle.mjs');",
+      "if(process.exitCode) throw Error('BUNDLE_FAILED');",
+      "const bundle = JSON.parse(readFileSync('artifacts/submission.json', 'utf8'));",
+      "if(bundle.commit !== 'a'.repeat(40)) throw Error('REAL_GIT_IDENTITY_LEAKED');",
+    ].join('\n'), { source });
+    assert.equal(child.status, 0, child.stderr || child.stdout);
+    assert.equal(readFileSync(join(source, 'artifacts', 'submission.json'), 'utf8'), submission);
+    assert.equal(readFileSync(join(source, 'bundle-notes.json'), 'utf8'), notes);
+  });
 });

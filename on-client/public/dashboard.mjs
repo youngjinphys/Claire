@@ -1,7 +1,7 @@
 import {
   appendSample, appendGap, trendSummary, normalizeSnapshot, normalizeSecurity, normalizeEvents,
   HISTORY_WINDOW_MS, seriesSegments, pairedSamples,
-  requestDashboardJson, exportMeasurements, readingFreshness,
+  requestDashboardJson, exportMeasurements, readingFreshness, trimHistory,
 } from '/dashboard-model.mjs';
 
 const $ = id => document.getElementById(id);
@@ -57,6 +57,7 @@ let latestSnapshot = null;
 let latestSecurity = null;
 let latestEvents = { status: 'unavailable', reason: 'NOT_STARTED', mode: 'unknown', events: [] };
 let history = [];
+let lastHistoryNow = null;
 let observing = false;
 let busy = false;
 let generation = 0;
@@ -310,6 +311,13 @@ function svg(tag, attrs = {}, label = null) {
   return el;
 }
 
+function advanceHistoryClock(now) {
+  // Both acquisition and freshness rendering can be the first work after a
+  // browser clock rollback. Record it before either mutates the history.
+  if (lastHistoryNow !== null && now < lastHistoryNow && history.length) history = appendGap(history, now);
+  lastHistoryNow = now;
+}
+
 function renderChart() {
   const plot = $('resource-chart');
   if (!plot) return;
@@ -319,7 +327,8 @@ function renderChart() {
   plot.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
   const left = 40, top = 16, right = width - 12, bottom = height - 16;
   const now = Date.now();
-  history = history.filter(point => point.time >= now - HISTORY_WINDOW_MS && point.time <= now + 1000);
+  advanceHistoryClock(now);
+  history = trimHistory(history, now);
   const elements = [];
   for (const percent of [0, 25, 50, 75, 100]) {
     const y = bottom - percent / 100 * (bottom - top);
@@ -570,7 +579,8 @@ async function measureOnce() {
     if (token !== generation) return;
     const snapshot = normalizeSnapshot(response, { requestedAt, receivedAt });
     latestSnapshot = snapshot.status === 'ok' ? snapshot : { status: 'error', reason: snapshot.reason };
-    history = snapshot.status === 'ok' ? appendSample(history, snapshot) : appendGap(history);
+    advanceHistoryClock(receivedAt);
+    history = snapshot.status === 'ok' ? appendSample(history, snapshot, receivedAt) : appendGap(history, receivedAt);
     // A failed read is not permission to retry. The user must explicitly restart monitoring.
     const now = Date.now();
     const observedCount = snapshot.status === 'ok' ? ['cpu','memory','disk'].filter(key =>

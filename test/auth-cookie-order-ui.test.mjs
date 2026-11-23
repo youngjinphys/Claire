@@ -7,6 +7,15 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const until=async fn=>{for(let i=0;i<100;i++){if(fn())return;await tick();}throw Error('fixture timed out');};
 const deferred=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});return {promise,resolve,reject};};
 const reply=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
+const delayedReply=(pending,status,onRead=()=>{})=>{
+  let cancelled=false,started=false;
+  return new Response(new ReadableStream({
+    pull(controller){
+      if(started)return;started=true;onRead();
+      pending.then(body=>{if(cancelled)return;controller.enqueue(new TextEncoder().encode(JSON.stringify(body)));controller.close();});
+    },cancel(){cancelled=true;},
+  }),{status,headers:{'Content-Type':'application/json'}});
+};
 class Element extends EventTarget{
   constructor(){super();this.hidden=false;this.disabled=false;this.textContent='';this.value='';this.children=[];this.classList={toggle(){},add(){},remove(){}};}
   append(...children){this.children.push(...children);}
@@ -18,8 +27,8 @@ const inline=html.match(/<script>\s*([\s\S]*?)<\/script>/)?.[1];
 assert.ok(inline);
 const script=inline.replace("import('/device.mjs')","Promise.resolve({initDeviceAccess:({onAuthorized})=>{window.__authorize=()=>onAuthorized('fixture-proof',120);return {status(){},lock(){}}}})")
   .replace("import('/operations.mjs')","Promise.resolve({initOperations(){}})");
-function sharedContext({locks=true,storageAvailable=locks,deliverStorageEvents=true,manualTimers=false,seedPointer=true}={}){
-  let tail=Promise.resolve(),version=0,stableWriteHook=null,lockFailure=null,syncObservationFailure=false,observationGate=null,observationStarted=false;
+function sharedContext({locks=true,storageAvailable=locks,deliverStorageEvents=true,manualTimers=false,seedPointer=true,now=manualTimers?()=>0:()=>performance.now()}={}){
+  let tail=Promise.resolve(),version=0,stableWriteHook=null,pendingWriteHook=null,lockFailure=null,syncObservationFailure=false,observationGate=null,observationStarted=false,authResultGate=null;
   const stored=new Map(),cookies=new Map(),windows=[],writes=[],cookieWrites=[];
   // Tests that start with a session represent an existing bound browser.
   // The value is a synthetic coordination marker, not a credential.
@@ -27,14 +36,15 @@ function sharedContext({locks=true,storageAvailable=locks,deliverStorageEvents=t
   const lockManager=locks?{request(_name,options,callback){
     if(!options.signal&&syncObservationFailure&&lockFailure)throw new DOMException('synthetic lock failure',lockFailure);
     if(!options.signal&&observationGate){const gate=observationGate;observationGate=null;observationStarted=true;return gate.promise;}
+    const gate=options.signal?authResultGate:null;if(gate)authResultGate=null;
     const run=tail.then(()=>{if(options.signal?.aborted)throw new DOMException('aborted','AbortError');if(lockFailure)throw new DOMException('synthetic lock failure',lockFailure);return callback({});});
-    tail=run.catch(()=>{});return run;
+    tail=run.catch(()=>{});return gate?run.then(async value=>{gate.started=true;await gate.promise;return value;}):run;
   }}:undefined;
-  function page(fetch,{pageLocks=locks,storageWritesBlocked=false}={}){
+  function page(fetch,{pageLocks=locks,storageWritesBlocked=false,beforeAuthSend}={}){
     const nodes=new Map(ids.map(id=>[id,new Element()]));let failStorageWrites=storageWritesBlocked,failStorageReads=false;const timers=[];
     for(const id of ['signed-in','workspace','device-panel','draft-warning'])nodes.get(id).hidden=true;
     const win=new EventTarget();windows.push(win);win.matchMedia=()=>({matches:false});win.confirm=()=>true;
-    const storage={getItem(key){if(failStorageReads)throw Error('fixture storage denied');return stored.get(key)??null;},setItem(key,value){if(failStorageWrites)throw Error('fixture storage denied');if(stableWriteHook&&key==='aleph.auth.version.v1'&&!String(value).startsWith('pending:')){const hook=stableWriteHook;stableWriteHook=null;hook();}writes.push([key,String(value)]);stored.set(key,String(value));if(!deliverStorageEvents)return;for(const other of windows){if(other===win)continue;const e=new Event('storage');Object.assign(e,{key,newValue:String(value),storageArea:other.localStorage});other.dispatchEvent(e);}},removeItem(key){if(failStorageWrites)throw Error('fixture storage denied');stored.delete(key);}};
+    const storage={getItem(key){if(failStorageReads)throw Error('fixture storage denied');return stored.get(key)??null;},setItem(key,value){if(failStorageWrites)throw Error('fixture storage denied');if(stableWriteHook&&key==='aleph.auth.version.v1'&&!String(value).startsWith('pending:')){const hook=stableWriteHook;stableWriteHook=null;hook();}writes.push([key,String(value)]);stored.set(key,String(value));if(pendingWriteHook&&key==='aleph.auth.version.v1'&&String(value).startsWith('pending:')){const hook=pendingWriteHook;pendingWriteHook=null;hook();}if(!deliverStorageEvents)return;for(const other of windows){if(other===win)continue;const e=new Event('storage');Object.assign(e,{key,newValue:String(value),storageArea:other.localStorage});other.dispatchEvent(e);}},removeItem(key){if(failStorageWrites)throw Error('fixture storage denied');stored.delete(key);}};
     if(storageAvailable)win.localStorage=storage;
     const doc={querySelector:s=>nodes.get(s.slice(1)),getElementById:id=>nodes.get(id),createElement:()=>new Element()};
     Object.defineProperty(doc,'cookie',{
@@ -51,16 +61,151 @@ function sharedContext({locks=true,storageAvailable=locks,deliverStorageEvents=t
     });
     const nav=pageLocks&&lockManager?{locks:lockManager}:{};
     const crypto={randomUUID:()=>`fixture-version-${++version}`,getRandomValues:a=>{a.fill(++version);return a;}};
-    const schedule=manualTimers?fn=>{const timer={fn,active:true};timers.push(timer);return timer;}:setTimeout;
+    const schedule=manualTimers?(fn,delay)=>{const timer={fn,delay,active:true};timers.push(timer);return timer;}:setTimeout;
     const cancel=manualTimers?timer=>{if(timer)timer.active=false;}:clearTimeout;
     const location={protocol:'https:',hostname:'fixture.invalid',port:''};
-    const context={window:win,document:doc,location,navigator:nav,crypto,fetch,Response,Headers,Event,EventTarget,AbortController,DOMException,setTimeout:schedule,clearTimeout:cancel,console};
-    runInNewContext(script,context);
-    return {nodes,win,setFailStorageWrites(value){failStorageWrites=value;},setFailStorageReads(value){failStorageReads=value;},fireTimers(){for(const timer of timers)if(timer.active){timer.active=false;timer.fn();}},click:id=>nodes.get(id).dispatchEvent(new Event('click')),
+    const context={window:win,document:doc,location,navigator:nav,crypto,fetch,Response,Headers,Event,EventTarget,AbortController,DOMException,performance:{now},TextDecoder,setTimeout:schedule,clearTimeout:cancel,console};
+    let pageScript=script;
+    if(beforeAuthSend){
+      // This point runs inside the installed HTTP lifetime, before its final
+      // dispatch check. A pending-marker hook expires too early to cover it.
+      const boundary='const requestInit = {...init, signal};';
+      assert.ok(script.includes(boundary));
+      win.__beforeAuthSendForTest=action=>beforeAuthSend(action,win);
+      pageScript=script.replace(boundary,boundary+' window.__beforeAuthSendForTest(action);');
+    }
+    runInNewContext(pageScript,context);
+    return {nodes,win,activeTimers:()=>timers.filter(timer=>timer.active).length,setFailStorageWrites(value){failStorageWrites=value;},setFailStorageReads(value){failStorageReads=value;},fireTimer(delay){const timer=timers.find(timer=>timer.active&&timer.delay===delay);assert.ok(timer);timer.active=false;timer.fn();},fireTimers(){for(const timer of timers)if(timer.active){timer.active=false;timer.fn();}},click:id=>nodes.get(id).dispatchEvent(new Event('click')),
       login(){nodes.get('email').value='fixture@example.invalid';nodes.get('password').value='fixture-only';nodes.get('login-form').dispatchEvent(new Event('submit',{cancelable:true}));}};
   }
-  return {page,writes,cookieWrites,setLockFailure(name,{syncObservation=false}={}){lockFailure=name;syncObservationFailure=syncObservation;},holdNextObservation(){observationGate=deferred();observationStarted=false;return observationGate;},get observationStarted(){return observationStarted;},onNextStableWrite(fn){stableWriteHook=fn;}};
+  return {page,writes,cookieWrites,setLockFailure(name,{syncObservation=false}={}){lockFailure=name;syncObservationFailure=syncObservation;},holdNextObservation(){observationGate=deferred();observationStarted=false;return observationGate;},holdNextAuthResult(){authResultGate={...deferred(),started:false};return authResultGate;},get observationStarted(){return observationStarted;},onNextStableWrite(fn){stableWriteHook=fn;},onNextPendingWrite(fn){pendingWriteHook=fn;}};
 }
+
+for(const action of ['login','logout'])test(`an unsent ${action} expiring inside the installed HTTP lifetime reports NOT_SENT and releases local ownership`,async()=>{
+  let clock=0,sessions=0,logins=0,logouts=0,intercept=false,boundaries=0;
+  const shared=sharedContext({manualTimers:true,now:()=>clock});
+  const fetch=async path=>{
+    if(path==='/api/auth/session'){sessions++;return reply({accessToken:'fixture-session',user:{email:'fixture@example.invalid'}});}
+    if(path==='/api/auth/login'){logins++;return reply({accessToken:'fixture-new',user:{email:'fixture@example.invalid'}});}
+    if(path==='/api/auth/logout'){logouts++;return reply({ok:true});}
+    throw Error('unexpected fixture request');
+  };
+  const page=shared.page(fetch,{beforeAuthSend(current){
+    if(intercept&&current===action){boundaries++;intercept=false;clock=45001;}
+  }});
+  await until(()=>sessions===1&&!page.nodes.get('signed-in').hidden);
+  const previous=shared.writes.filter(([key])=>key==='aleph.auth.version.v1').at(-1)?.[1]??'';
+  intercept=true;
+  if(action==='login')page.login();else page.click('logout');
+  await until(()=>!/로그인 중|로그아웃 확인 중/u.test(page.nodes.get('login-status').textContent));
+  await tick();await tick();
+  assert.equal(boundaries,1);assert.equal(logins,0);assert.equal(logouts,0);
+  assert.match(page.nodes.get('login-status').textContent,action==='login'?/요청은 전송되지 않았습니다/u:/요청을 보내지 못했습니다/u);
+  assert.doesNotMatch(page.nodes.get('login-status').textContent,/처리 여부는 확인되지|서버 로그아웃을 확인하지 못/u);
+  assert.equal(page.nodes.get('password').value,'');assert.equal(page.activeTimers(),0);
+  const markers=shared.writes.filter(([key])=>key==='aleph.auth.version.v1').map(([,value])=>value);
+  assert.equal(markers.at(-1),previous);assert.ok(!markers.some(value=>/^(login|logout)-unconfirmed:/u.test(value)));
+  if(action==='logout'){
+    const later=shared.page(fetch);await tick();await tick();await tick();
+    assert.equal(sessions,1,'an unsent logout still prevents automatic session restoration');
+    assert.equal(later.nodes.get('signed-in').hidden,true);
+  }
+  page.login();await until(()=>logins===1&&!page.nodes.get('signed-in').hidden);
+  assert.equal(page.activeTimers(),0,'an explicit retry can finish after unsent work releases the lock');
+});
+
+test('pagehide inside the installed auth lifetime retains its distinct cancellation outcome',async()=>{
+  let sessions=0,logins=0,intercept=false;
+  const shared=sharedContext({manualTimers:true});
+  const page=shared.page(async path=>{
+    if(path==='/api/auth/session'){sessions++;return reply({error:'NO_SESSION'},401);}
+    if(path==='/api/auth/login'){logins++;return reply({accessToken:'fixture-new',user:{email:'fixture@example.invalid'}});}
+    throw Error('unexpected fixture request');
+  },{beforeAuthSend(action,win){if(intercept&&action==='login'){intercept=false;win.dispatchEvent(new Event('pagehide'));}}});
+  await until(()=>sessions===1);await tick();await tick();
+  intercept=true;page.login();await tick();await tick();
+  assert.equal(logins,0);assert.doesNotMatch(page.nodes.get('login-status').textContent,/대기 시간이 초과|응답 시간이 초과|전송되지 않았습니다/u);
+  page.win.dispatchEvent(new Event('pageshow'));
+  assert.match(page.nodes.get('login-status').textContent,/화면 이동으로 로그인 요청이 취소/u);
+  assert.equal(page.activeTimers(),0);
+});
+
+test('session restoration expiring inside the installed lifetime stays signed out without changing cookie lineage',async()=>{
+  let clock=0,sessions=0,logins=0,boundaries=0;
+  const shared=sharedContext({manualTimers:true,now:()=>clock});
+  const page=shared.page(async path=>{
+    if(path==='/api/auth/session'){sessions++;return reply({accessToken:'fixture-session',user:{email:'fixture@example.invalid'}});}
+    if(path==='/api/auth/login'){logins++;return reply({accessToken:'fixture-new',user:{email:'fixture@example.invalid'}});}
+    throw Error('unexpected fixture request');
+  },{beforeAuthSend(action){if(action==='session'){boundaries++;clock=45001;}}});
+  await until(()=>boundaries===1&&shared.writes.filter(([key])=>key==='aleph.auth.version.v1').length>=2);
+  await tick();await tick();
+  assert.equal(sessions,0);assert.equal(page.nodes.get('signed-in').hidden,true);assert.equal(page.nodes.get('workspace').hidden,true);
+  const markers=shared.writes.filter(([key])=>key==='aleph.auth.version.v1').map(([,value])=>value);
+  assert.equal(markers.at(-1),'');assert.ok(!markers.some(value=>/^(login|logout)-unconfirmed:/u.test(value)));
+  assert.equal(page.activeTimers(),0);
+  page.login();await until(()=>logins===1&&!page.nodes.get('signed-in').hidden);
+});
+
+for(const action of ['login','logout'])test(`an unsent ${action} expiring during request preparation preserves the prior cookie lineage`,async()=>{
+  let clock=0,sessions=0,mutations=0;
+  const shared=sharedContext({manualTimers:true,now:()=>clock});
+  const fetch=async path=>{
+    if(path==='/api/auth/session'){sessions++;return reply({accessToken:'fixture-session',user:{email:'fixture@example.invalid'}});}
+    if(path===`/api/auth/${action}`){mutations++;return reply({ok:true});}
+    throw Error('unexpected fixture request');
+  };
+  const page=shared.page(fetch);await until(()=>sessions===1&&!page.nodes.get('signed-in').hidden);
+  const previous=shared.writes.filter(([key])=>key==='aleph.auth.version.v1').at(-1)?.[1]??'';
+  shared.onNextPendingWrite(()=>{clock=45001;});
+  if(action==='login')page.login();else page.click('logout');
+  await until(()=>!/로그인 중|로그아웃 확인 중/u.test(page.nodes.get('login-status').textContent));
+  assert.equal(mutations,0);
+  assert.match(page.nodes.get('login-status').textContent,action==='login'?/요청은 전송되지 않았습니다/u:/요청을 보내지 못했습니다/u);
+  const markers=shared.writes.filter(([key])=>key==='aleph.auth.version.v1').map(([,value])=>value);
+  assert.equal(markers.at(-1),previous);assert.ok(!markers.some(value=>/^(login|logout)-unconfirmed:/u.test(value)));
+  if(action==='logout'){
+    const later=shared.page(fetch);await tick();await tick();await tick();
+    assert.equal(sessions,1,'an unsent logout retains its intent to block silent session restoration');
+    assert.equal(later.nodes.get('signed-in').hidden,true);
+  }
+});
+
+test('an expired auth queue entry cannot dispatch when its timer has not run',async()=>{
+  let clock=0,sessions=0,logins=0;
+  const headers=deferred(),shared=sharedContext({manualTimers:true,now:()=>clock});
+  const page=shared.page(async path=>{
+    if(path==='/api/auth/session'){sessions++;return headers.promise;}
+    if(path==='/api/auth/login'){logins++;return reply({accessToken:'fixture-new',user:{email:'fixture@example.invalid'}});}
+    throw Error('unexpected fixture request');
+  });
+  await until(()=>sessions===1);page.login();await tick();
+  clock=45001;headers.resolve(reply({error:'NO_SESSION'},401));
+  await until(()=>/대기 시간이 초과/u.test(page.nodes.get('login-status').textContent));
+  assert.equal(logins,0,'an expired queued request must not send credentials');
+  assert.equal(page.nodes.get('signed-in').hidden,true);
+});
+
+test('a positive auth result cannot open the UI after expiry at the lock return boundary',async()=>{
+  let clock=0,sessions=0,logins=0;
+  const shared=sharedContext({manualTimers:true,now:()=>clock});
+  const page=shared.page(async path=>{
+    if(path==='/api/auth/session'){sessions++;return reply({error:'NO_SESSION'},401);}
+    if(path==='/api/auth/login'){logins++;return reply({accessToken:'fixture-new',user:{email:'fixture@example.invalid'}});}
+    throw Error('unexpected fixture request');
+  });
+  await until(()=>sessions===1);await tick();await tick();
+  const gate=shared.holdNextAuthResult();
+  try{
+    page.login();await until(()=>gate.started);
+    const writes=shared.writes.length;
+    clock=45001;gate.resolve();
+    await until(()=>/응답 시간이 초과/u.test(page.nodes.get('login-status').textContent));
+    assert.equal(logins,1);assert.equal(page.nodes.get('signed-in').hidden,true);
+    assert.equal(page.nodes.get('password').value,'');
+    assert.equal(shared.writes.length,writes,'post-lock expiry must not rewrite a shared auth generation');
+  }finally{gate.resolve();}
+});
 
 test('a fresh browser without a coordination cookie permits an explicit login',async()=>{
   let logins=0;
@@ -254,15 +399,7 @@ test('pagehide releases logout after response headers when the body is stalled',
     if(path==='/api/auth/login'){logins++;return reply({accessToken:'fixture-new',user:{email:'fixture@example.invalid'}});}
     if(path==='/api/auth/logout'){
       logouts++;logoutSignal=init.signal;
-      return {ok:true,status:200,json:()=>{
-        readStarted=true;
-        // A real Fetch response body rejects when its request is aborted.
-        return new Promise((resolve,reject)=>{
-          const abort=()=>reject(new DOMException('aborted','AbortError'));
-          if(logoutSignal.aborted) abort();
-          else {logoutSignal.addEventListener('abort',abort,{once:true});body.promise.then(resolve,reject);}
-        });
-      }};
+      return delayedReply(body.promise,200,()=>{readStarted=true;});
     }
     throw Error('unexpected fixture request');
   };
@@ -284,7 +421,7 @@ test('the auth request timeout remains active while the response body is pending
   const page=sharedContext({manualTimers:true}).page(async(path,init)=>{
     if(path!=='/api/auth/session')throw Error('unexpected fixture request');
     sessionCalls++;controllerSignal=init.signal;
-    return {status:200,ok:true,json:()=>new Promise((_,reject)=>controllerSignal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')),{once:true}))};
+    return delayedReply(new Promise(()=>{}),200);
   });
   await until(()=>sessionCalls===1);await tick();await tick();
   page.fireTimers();await tick();
@@ -524,22 +661,52 @@ test('logout intent racing the stable write remains effective for an uncertain r
 });
 
 test('a timed-out fetch retains the lock until the aborted operation actually settles',async()=>{
-  const gate=deferred();let sessions=0,logins=0,firstSignal;
+  const gate=deferred();let sessions=0,logins=0,firstSignal,cancelled=0;
   const shared=sharedContext({manualTimers:true});
   const x=shared.page(async(path,init)=>{
     if(path==='/api/auth/session'){sessions++;return reply({accessToken:'old',user:{email:'old@example.invalid'}});}
     if(path==='/api/auth/login'){
       logins++;
-      if(logins===1){firstSignal=init.signal;await gate.promise;}
+      if(logins===1){firstSignal=init.signal;await gate.promise;return new Response(new ReadableStream({cancel(){cancelled++;}}),{headers:{'content-type':'application/json'}});}
       return reply({accessToken:'new',user:{email:'new@example.invalid'}});
     }
     throw Error('unexpected fixture request');
   });
   await until(()=>sessions===1&&!x.nodes.get('signed-in').hidden);
   x.login();await until(()=>logins===1);x.fireTimers();assert.equal(firstSignal.aborted,true);
+  await until(()=>/응답 시간이 초과/u.test(x.nodes.get('login-status').textContent));
+  assert.match(x.nodes.get('login-status').textContent,/처리 여부는 확인되지 않았습니다.*직접 다시 로그인/u);
+  assert.equal(x.nodes.get('password').value,'','a timed-out request does not keep credentials in the form');
   x.login();await tick();await tick();assert.equal(logins,1,'new auth must not begin while old fetch remains unsettled');
   gate.resolve();await until(()=>logins===2);
   await until(()=>x.nodes.get('session-label').textContent.includes('new@example.invalid'));
+  assert.equal(cancelled,1,'the late response is discarded before the next cookie-mutating request');
+});
+
+for(const action of ['login','logout'])test(`a stalled ${action} body times out without holding the cookie lock or losing the unconfirmed marker`,async()=>{
+  let sessions=0,logins=0,cancelled=0,stalledSignal;
+  const shared=sharedContext({manualTimers:true});
+  const fetch=async(path,init)=>{
+    if(path==='/api/auth/session'){sessions++;return reply({accessToken:'old',user:{email:'old@example.invalid'}});}
+    if(path==='/api/auth/login')logins++;
+    if(path===`/api/auth/${action}`&&!stalledSignal){
+      stalledSignal=init.signal;
+      return new Response(new ReadableStream({cancel(){cancelled++;return new Promise(()=>{});}}),{headers:{'content-type':'application/json'}});
+    }
+    return reply({accessToken:'new',user:{email:'new@example.invalid'}});
+  };
+  const first=shared.page(fetch);
+  await until(()=>sessions===1&&!first.nodes.get('signed-in').hidden);
+  if(action==='login')first.login();else first.click('logout');
+  await until(()=>stalledSignal);await tick();
+  first.fireTimer(45000);
+  await until(()=>cancelled===1&&shared.writes.some(([key,value])=>key==='aleph.auth.version.v1'&&value.startsWith(`${action}-unconfirmed:`)));
+  assert.equal(stalledSignal.aborted,true);
+  assert.doesNotMatch(first.nodes.get('login-status').textContent,/로그인 중|로그아웃 확인 중/u);
+  const next=shared.page(fetch);await tick();await tick();
+  assert.equal(sessions,1,'unconfirmed cookie changes cannot silently restore another page');
+  next.login();await until(()=>next.nodes.get('session-label').textContent.includes('new@example.invalid'));
+  assert.equal(logins,action==='login'?2:1,'an explicit login can proceed after headers have already settled');
 });
 
 test('a queued older login is discarded before any request is sent',async()=>{

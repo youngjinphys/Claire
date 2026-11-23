@@ -21,7 +21,8 @@ function projectTrusted(value) {
       || value.networkBaselineVerified !== true
       || value.networkDeviation !== 'unusual') return null;
   const timestamp = Date.parse(value.at);
-  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value.at) return null;
+  const canonical = value.at.includes('.') ? value.at : value.at.replace(/Z$/u, '.000Z');
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== canonical) return null;
   return { timestamp, subject: value.subject, deviceId: value.deviceId };
 }
 

@@ -41,6 +41,7 @@ function runIsolated(path, input) {
         NODE_OPTIONS:'--no-warnings',
       },
     });
+    assert.ifError(result.error);
     assert.equal(result.status,0,'isolated execution failed for '+path+
       '; exit='+result.status);
     return JSON.parse(result.stdout);

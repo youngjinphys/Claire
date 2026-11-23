@@ -122,6 +122,7 @@ test('심판 격리: decide.mjs만 임시 디렉터리로 복사하여 오프라
     const child=spawnSync(process.execPath,['--input-type=module','--eval',exec],{
       cwd:sandbox,encoding:'utf8',timeout:5000,env:{PATH:process.env.PATH??''},
     });
+    assert.ifError(child.error);
     assert.equal(child.status,0,child.stderr||String(child.error));
     assert.equal(child.stderr,'');
     const result=JSON.parse(child.stdout);

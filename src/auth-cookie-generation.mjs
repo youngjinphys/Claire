@@ -1,13 +1,16 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 
-// The legacy cookie remains readable while an already-open Claire client
-// migrates. Each new auth operation gets a distinct, signed cookie NAME: a
-// late Set-Cookie response cannot overwrite a newer operation's slot.
+// Enforce mode accepts only time-bounded v2 generations. Bare legacy/v1
+// credentials require explicit login; the handler's explicit legacy mode is
+// a separate compatibility rollback, not an automatic authentication fallback.
 const LEGACY = 'aleph_refresh';
 const PREFIX = 'aleph_auth_g_';
 const MAX_AGE = 7 * 24 * 60 * 60;
+const ORDERING_AGE = 8 * 24 * 60 * 60;
+const MAX_CLOCK_SKEW_MS = 30000;
 const MAX_COOKIE_HEADER = 16000;
-// Normal authentication remains capped at 16 KiB. Explicit login may only
+// Normal authentication uses the ASCII header bound above. Explicit login may only
 // discover bounded cookie *names* from a larger header to clear stale slots.
 const MAX_RECOVERY_HEADER = 65536;
 const MAX_RECOVERY_NAMES = 32;
@@ -42,13 +45,20 @@ function parseOrdinal(text) {
 }
 
 export function createAuthCookieGeneration({ env = process.env, supabaseFactory = null,
-  nextGeneration = null } = {}) {
+  nextGeneration = null, clock = Date.now, monotonic = () => performance.now() } = {}) {
   if (typeof env.SUPABASE_SECRET_KEY !== 'string' || env.SUPABASE_SECRET_KEY.length < 24)
     throw Error('AUTH_GENERATION_CONFIGURATION_INVALID');
   // Domain separation avoids treating the Supabase service key as a raw cookie MAC key.
   const key = createHmac('sha256', env.SUPABASE_SECRET_KEY)
     .update('claire-cookie-generation-key/v1').digest();
   let admin;
+  const reservations = new WeakMap(), validated = new WeakSet();
+  const time = () => {
+    const value = clock();
+    if (!Number.isSafeInteger(value) || value <= 0 || value > Number.MAX_SAFE_INTEGER - MAX_AGE * 1000)
+      throw Error('AUTH_GENERATION_UNAVAILABLE');
+    return value;
+  };
   const ordinal = async () => {
     let value;
     if (nextGeneration) value = await nextGeneration();
@@ -58,6 +68,8 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
         admin = supabaseFactory(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY,
         { auth: { persistSession: false, autoRefreshToken: false } });
       }
+      const started = monotonic();
+      if (!Number.isFinite(started)) throw Error('AUTH_GENERATION_UNAVAILABLE');
       const request = admin.rpc('s12_auth_cookie_generation_next');
       const controller = AbortSignal.timeout(8000);
       const cancellable = typeof request?.abortSignal === 'function'
@@ -70,7 +82,8 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
             timer = setTimeout(() => reject(Error('AUTH_GENERATION_UNAVAILABLE')), 8000);
           }),
         ]);
-        if (result?.error) throw Error('AUTH_GENERATION_UNAVAILABLE');
+        const elapsed = monotonic() - started;
+        if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed >= 8000 || result?.error) throw Error('AUTH_GENERATION_UNAVAILABLE');
         value = result?.data;
       } finally { clearTimeout(timer); }
 
@@ -80,8 +93,17 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
     if (parsed <= 0n || parsed > MAX_GENERATION) throw Error('AUTH_GENERATION_UNAVAILABLE');
     return parsed;
   };
-  const mac = (generation, kind, token) => createHmac('sha256', key)
-    .update(`claire/v1\0${generation.toString(10)}\0${kind}\0${token}`)
+  async function reserve() {
+    // Capture the acceptance window BEFORE allocator/provider work. A late
+    // response must not acquire another seven days of server acceptance.
+    const issuedAt = time(), started = monotonic();
+    const generation = await ordinal();
+    const claim = Object.freeze({ generation });
+    reservations.set(claim, { generation, issuedAt, expiresAt: issuedAt + MAX_AGE * 1000, started });
+    return claim;
+  }
+  const mac = (generation, kind, issuedAt, token) => createHmac('sha256', key)
+    .update(`claire/v2\0${generation.toString(10)}\0${kind}\0${issuedAt}\0${token}`)
     .digest('base64url');
   function decodeCookie(name, value) {
     const parsed = GEN_NAME.exec(name);
@@ -90,16 +112,22 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
       return null;
     const delimiter = value.indexOf('.');
     const second = value.indexOf('.', delimiter + 1);
-    if (delimiter !== 1 || second < 0) return null;
-    const kind = value[0], signature = value.slice(2, second), raw = value.slice(second + 1);
+    const third = value.indexOf('.', second + 1);
+    if (delimiter !== 1 || second < 0 || third < 0) return null;
+    const kind = value[0], signature = value.slice(2, second), timestamp = value.slice(second + 1, third), raw = value.slice(third + 1);
+    const issuedAt = Number(timestamp);
+    if (!/^[1-9][0-9]{0,15}$/u.test(timestamp) || !Number.isSafeInteger(issuedAt)
+      || issuedAt > Number.MAX_SAFE_INTEGER - MAX_AGE * 1000) return null;
     if (!['r','x'].includes(kind) || !SIGNATURE.test(signature)) return null;
     let token;
     try { token = decodeURIComponent(raw); } catch { return null; }
     if ((kind === 'r' && !checkToken(token)) || (kind === 'x' && token !== '')) return null;
     const actual = Buffer.from(signature, 'base64url');
-    const expected = Buffer.from(mac(generation, kind, token), 'base64url');
+    const expected = Buffer.from(mac(generation, kind, issuedAt, token), 'base64url');
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
-    return { name, generation, kind, token };
+    const entry = Object.freeze({ name, generation, kind, token, issuedAt, expiresAt: issuedAt + MAX_AGE * 1000 });
+    validated.add(entry);
+    return entry;
   }
   function parse(header = '') {
     // Do not stop discovering removable names at the first invalid version.
@@ -138,13 +166,8 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
     }
     entries.sort((a, b) => a.generation < b.generation ? -1 : a.generation > b.generation ? 1 : 0);
     if (entries.length) return { invalid: false, legacy: null, entries, selected: entries.at(-1), cleanupNames };
-    if (legacy.length > 1) return invalid();
-    const raw = legacy[0];
-    if (raw == null) return { invalid: false, legacy: null, entries: [], selected: null, cleanupNames };
-    let token;
-    try { token = decodeURIComponent(raw); } catch { token = null; }
-    if (!checkToken(token)) return invalid();
-    return { invalid: false, legacy: token, entries: [], selected: null, cleanupNames };
+    if (legacy.length) return invalid();
+    return { invalid: false, legacy: null, entries: [], selected: null, cleanupNames };
   }
   const clear = name => name + '=; ' + cookieAttrs(env, 0);
   function observedNames(seen) {
@@ -158,27 +181,42 @@ export function createAuthCookieGeneration({ env = process.env, supabaseFactory 
     // No versioned names: keep the old single Set-Cookie shape for legacy clients.
     response.setHeader('Set-Cookie', cookies.length === 1 ? cookies[0] : cookies);
   }
-  function cookieOf(sequence, kind, token) {
+  function cookieOf(sequence, kind, issuedAt, token) {
     const name = PREFIX + sequence.toString(36);
-    const value = `${kind}.${mac(sequence, kind, token)}.${encodeURIComponent(token)}`;
-    return name + '=' + value + '; ' + cookieAttrs(env, MAX_AGE);
+    const value = `${kind}.${mac(sequence, kind, issuedAt, token)}.${issuedAt}.${encodeURIComponent(token)}`;
+    // Keep ordering evidence beyond the seven-day acceptance window, including
+    // bounded worker skew. Browser receipt delay cannot extend signed expiry.
+    return name + '=' + value + '; ' + cookieAttrs(env, ORDERING_AGE);
   }
-  function write(response, seen, sequence, { token = null, revoked = false } = {}) {
-    if (typeof sequence !== 'bigint' || sequence <= 0n || sequence > MAX_GENERATION || (revoked ? token !== null : !checkToken(token)))
+  function write(response, seen, claim, { token = null, revoked = false } = {}) {
+    const reservation = reservations.get(claim);
+    const entry = reservation || (revoked && claim === seen?.selected && validated.has(claim) ? claim : null);
+    if (!entry || (revoked ? token !== null : !checkToken(token)))
       throw Error('AUTH_GENERATION_INVALID');
+    const { generation: sequence, issuedAt, expiresAt } = entry;
+    const at = time();
+    const elapsed = reservation ? monotonic() - reservation.started : null;
+    if (reservation && (!Number.isFinite(reservation.started) || !Number.isFinite(elapsed) || elapsed < 0
+      || at < issuedAt - MAX_CLOCK_SKEW_MS || at >= expiresAt
+      || Math.abs((at - issuedAt) - elapsed) > MAX_CLOCK_SKEW_MS))
+      throw Error('AUTH_GENERATION_EXPIRED');
     const issuedName = PREFIX + sequence.toString(36);
     // Refresh failure can invalidate its input generation, not other sessions.
     // Never clear and reset the same cookie name in one HTTP response.
     const out = observedNames(seen).filter(name => name !== issuedName).map(clear);
-    // Keep the old cookie/JSON surface compatible with already-loaded clients.
-    out.push(revoked ? clear(LEGACY) : LEGACY + '=' + encodeURIComponent(token) + '; ' + cookieAttrs(env, MAX_AGE));
-    out.push(cookieOf(sequence, revoked ? 'x' : 'r', revoked ? '' : token));
+    // Keep routes/JSON compatible, but never issue an unsigned fallback token.
+    out.push(clear(LEGACY));
+    out.push(cookieOf(sequence, revoked ? 'x' : 'r', issuedAt, revoked ? '' : token));
     response.setHeader('Set-Cookie', out);
   }
   function refreshToken(seen) {
     if (seen.invalid) return null;
-    if (seen.selected) return seen.selected.kind === 'r' ? seen.selected.token : null;
-    return seen.legacy;
+    const selected = seen.selected;
+    if (!selected || selected.kind !== 'r') return null;
+    // The greatest signed generation is authoritative even when expired.
+    // Filtering expired entries first would revive an older credential.
+    const at = time();
+    return at >= selected.issuedAt - MAX_CLOCK_SKEW_MS && at < selected.expiresAt ? selected.token : null;
   }
-  return Object.freeze({ parse, next: ordinal, refreshToken, write, clearObserved });
+  return Object.freeze({ parse, next: reserve, refreshToken, write, clearObserved });
 }

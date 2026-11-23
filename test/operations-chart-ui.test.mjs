@@ -18,8 +18,9 @@ class Element extends EventTarget {
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 let fixtureId=0;
 async function setup(t,{settle=true,networkFailure=false}={}){
+  const win=new EventTarget();
   const saved=Object.fromEntries(['document','window','fetch'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
-  t.after(()=>{for(const [key,descriptor] of Object.entries(saved))if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];});
+  t.after(()=>{win.dispatchEvent(new Event('pagehide'));for(const [key,descriptor] of Object.entries(saved))if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];});
   const nodes=new Map();
   const node=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
   const doc={getElementById:node,createElement:()=>new Element(),createElementNS:()=>new Element()};
@@ -31,8 +32,8 @@ async function setup(t,{settle=true,networkFailure=false}={}){
     {id:'authenticated_notes',outcome:'unrun',httpStatus:null},
   ];
   const snapshot=operationsSnapshot(records,{target:'https://example.vercel.app'});
-  const fetch=settle?async()=>({ok:true,json:async()=>snapshot}):()=>new Promise(()=>{});
-  for(const [key,value] of Object.entries({document:doc,window:new EventTarget(),fetch}))
+  const fetch=settle?async()=>Response.json(snapshot):()=>new Promise(()=>{});
+  for(const [key,value] of Object.entries({document:doc,window:win,fetch}))
     Object.defineProperty(globalThis,key,{configurable:true,writable:true,value});
   const {initOperations}=await import(`../public/operations.mjs?chart-test=${++fixtureId}`);
   initOperations();

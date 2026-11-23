@@ -1,3 +1,4 @@
+import {createResponseLifetime} from '../../public/http-response.mjs';
 // Read-only OSV lookup. Public package approval is supplied by the caller, never inferred online.
 export const OSV_QUERY_BATCH_URL = 'https://api.osv.dev/v1/querybatch';
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -62,77 +63,98 @@ function endpointFor(endpoint, allowLoopbackHttp) {
     || url.username || url.password || url.search || url.hash || url.pathname !== '/v1/querybatch') return null;
   return url.href;
 }
-async function readBoundedJson(response, maxBytes, signal) {
+async function readBoundedJson(response, maxBytes, lifetime, check) {
   const chunks = [];
   let bytes = 0;
-  if (!response.body) throw new Error('OSV_INVALID_RESPONSE');
-  for await (const chunk of response.body) {
-    if (signal.aborted) throw new Error('OSV_CANCELLED');
-    bytes += chunk.byteLength;
+  if (!response.body?.getReader) throw new Error('OSV_INVALID_RESPONSE');
+  const reader = lifetime.reader(response.body.getReader());
+  for (;;) {
+    check();const part = await reader.read();check();if (part.done) break;
+    bytes += part.value.byteLength;
     if (bytes > maxBytes) throw new Error('OSV_RESPONSE_TOO_LARGE');
-    chunks.push(chunk);
+    chunks.push(part.value);
   }
-  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+  const result = JSON.parse(new TextDecoder('utf-8', { fatal:true }).decode(Buffer.concat(chunks)));
+  check();return result;
 }
 
-export function createOsvClient({ endpoint = OSV_QUERY_BATCH_URL, allowLoopbackHttp = false, fetchImpl = globalThis.fetch } = {}) {
+export function createOsvClient({ endpoint = OSV_QUERY_BATCH_URL, allowLoopbackHttp = false, fetchImpl = globalThis.fetch,
+  monotonic = () => performance.now() } = {}) {
   const url = endpointFor(endpoint, allowLoopbackHttp);
   return Object.freeze({
     async lookupPackages(queries, { signal: externalSignal, timeoutMs = 10000, maxPages = 10, maxResponseBytes = 1048576 } = {}) {
       if (!Array.isArray(queries)) return [];
       const checkedAt = new Date().toISOString();
-      // Never echo extra fields, local paths, URLs, cursors or arbitrary error messages.
+      // Never echo extra fields, local paths, URLs, cursors or arbitrary errors.
       const states = queries.map(query => ({ query: validQuery(query) ? structuredClone(query) : null,
         result: { name: npmName(query?.package?.name) ? query.package.name : null, version: version(query?.version) ? query.version : null,
-          status: 'unverifiable', vulnerabilities: [], source: OSV_QUERY_BATCH_URL, checkedAt }, cursor: null, seenCursors: new Set(), finished: false }));
-      const results = () => states.map(state => ({ ...state.result, vulnerabilities: state.result.vulnerabilities.map(row => ({ ...row })) }));
-      if (!url || typeof fetchImpl !== 'function' || externalSignal?.aborted || !limitsValid(timeoutMs, maxPages, maxResponseBytes)) return results();
-      const controller = new AbortController();
-      let timer;
-      let cancel;
+          status:'unverifiable', source:OSV_QUERY_BATCH_URL, checkedAt }, findings:new Map(), cursor:null, seenCursors:new Set(), finished:false }));
+      const results = () => states.map(state => ({ ...state.result, vulnerabilities:[...state.findings.values()].map(row => ({ ...row })) }));
+      if (!url || typeof fetchImpl !== 'function' || typeof monotonic !== 'function' || externalSignal?.aborted || !limitsValid(timeoutMs,maxPages,maxResponseBytes)) return results();
+      const started = monotonic();
+      if (!Number.isFinite(started)) return results();
+      const controller = new AbortController(), deadline = started + timeoutMs;
+      let timer, cancel, deadlineMissed = false;
+      const check = () => {
+        const current = monotonic();
+        if (!Number.isFinite(current) || current < started || current >= deadline) { deadlineMissed = true; throw Error('OSV_TIMEOUT'); }
+        if (controller.signal.aborted) throw Error('OSV_CANCELLED');
+      };
       const stopped = new Promise((_, reject) => {
-        cancel = () => { controller.abort(); reject(new Error('OSV_CANCELLED')); };
-        timer = setTimeout(() => { controller.abort(); reject(new Error('OSV_TIMEOUT')); }, timeoutMs);
-        externalSignal?.addEventListener('abort', cancel, { once: true });
+        cancel = () => { controller.abort(); reject(Error('OSV_CANCELLED')); };
+        timer = setTimeout(() => { deadlineMissed = true; controller.abort(); reject(Error('OSV_TIMEOUT')); }, timeoutMs);
+        externalSignal?.addEventListener('abort',cancel,{once:true});
       });
       const work = async () => {
         for (let page = 0; page < maxPages; page++) {
+          check();
           const pending = states.filter(state => state.query && !state.finished);
-          if (!pending.length || controller.signal.aborted) break;
-          const response = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
-            body: JSON.stringify({ queries: pending.map(state => ({ ...state.query, ...(state.cursor ? { page_token: state.cursor } : {}) })) }), redirect: 'manual', signal: controller.signal });
-          if (controller.signal.aborted) break; // An uncooperative late fetch cannot process or dispatch more pages.
-          if (!response?.ok || !Number.isInteger(response.status) || response.status >= 300 || response.status < 200) break;
-          const payload = await readBoundedJson(response, maxResponseBytes, controller.signal);
-          if (controller.signal.aborted) break;
-          if (!plain(payload) || !Array.isArray(payload.results) || payload.results.length !== pending.length) break;
-          for (let i = 0; i < pending.length; i++) {
-            const state = pending[i];
-            const row = payload.results[i];
-            if (!plain(row) || Object.keys(row).some(key => !['vulns', 'next_page_token'].includes(key))
-              || (row.vulns !== undefined && (!Array.isArray(row.vulns) || row.vulns.some(finding => !validFinding(finding))))
-              || (row.next_page_token !== undefined && row.next_page_token !== '' && !safeCursor(row.next_page_token))) { state.finished = true; continue; }
-            for (const finding of row.vulns ?? []) {
-              const existing = state.result.vulnerabilities.find(value => value.id === finding.id);
-              if (!existing) state.result.vulnerabilities.push({ id: finding.id, modified: finding.modified });
-              else if (Date.parse(finding.modified) > Date.parse(existing.modified)) existing.modified = finding.modified;
+          if (!pending.length) break;
+          const lifetime = createResponseLifetime(controller.signal);
+          try {
+            const response = lifetime.response(await fetchImpl(url,{method:'POST',headers:{'content-type':'application/json',accept:'application/json'},
+              body:JSON.stringify({queries:pending.map(state => ({...state.query,...(state.cursor?{page_token:state.cursor}:{})}))}),redirect:'manual',signal:controller.signal}));
+            check();
+            if (!response?.ok || response.redirected || !Number.isInteger(response.status) || response.status >= 300 || response.status < 200) break;
+            const declared=response.headers.get('content-length');
+            if (declared!==null && (!/^\d+$/.test(declared) || Number(declared)>maxResponseBytes)) break;
+            const payload = await readBoundedJson(response,maxResponseBytes,lifetime,check);
+            if (!plain(payload) || !Array.isArray(payload.results) || payload.results.length !== pending.length) break;
+            for (let i = 0; i < pending.length; i++) {
+              check();const state = pending[i], row = payload.results[i];
+              if (!plain(row) || Object.keys(row).some(key => !['vulns','next_page_token'].includes(key))
+                || row.vulns !== undefined && !Array.isArray(row.vulns)
+                || row.next_page_token !== undefined && row.next_page_token !== '' && !safeCursor(row.next_page_token)) { state.finished = true; continue; }
+              let valid = true;
+              for (const finding of row.vulns ?? []) { check();if (!validFinding(finding)) { valid = false;break; } }
+              if (!valid) { state.finished = true;continue; }
+              for (const finding of row.vulns ?? []) {
+                check();const existing = state.findings.get(finding.id);
+                if (!existing || Date.parse(finding.modified) > Date.parse(existing.modified)) state.findings.set(finding.id,{id:finding.id,modified:finding.modified});
+              }
+              check();const cursor = row.next_page_token;
+              if (cursor) {
+                if (state.seenCursors.has(cursor)) { state.finished = true;continue; }
+                state.seenCursors.add(cursor);state.cursor = cursor;
+              } else {
+                state.finished = true;
+                state.result.status = state.findings.size ? 'known_vulnerabilities' : 'none_found';
+              }
             }
-            const cursor = row.next_page_token;
-            if (cursor) {
-              if (state.seenCursors.has(cursor)) { state.finished = true; continue; }
-              state.seenCursors.add(cursor);
-              state.cursor = cursor;
-            } else {
-              state.finished = true;
-              state.result.status = state.result.vulnerabilities.length ? 'known_vulnerabilities' : 'none_found';
-            }
-          }
+          } finally { lifetime.close(); }
         }
+        check();
       };
-      try { await Promise.race([work(), stopped]); }
-      catch { /* Failure is an unverifiable comparison, never a clean bill of health. */ }
-      finally { clearTimeout(timer); externalSignal?.removeEventListener('abort', cancel); controller.abort(); }
-      return results();
+      try { await Promise.race([work(),stopped]);check(); }
+      catch { /* An incomplete comparison never becomes a clean bill of health. */ }
+      finally { clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);controller.abort(); }
+      const output = results();
+      // A large result projection can also defer timer delivery. Re-check the
+      // monotonic deadline before publishing any complete result.
+      const completedAt = monotonic();
+      if (deadlineMissed || externalSignal?.aborted || !Number.isFinite(completedAt) || completedAt < started || completedAt >= deadline)
+        for (const row of output) row.status = 'unverifiable';
+      return output;
     },
   });
 }

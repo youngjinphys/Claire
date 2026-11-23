@@ -1,4 +1,5 @@
 import { URL } from 'node:url';
+import { probeResponse, readBoundedJson, readBoundedText } from './probe-response-lifetime.mjs';
 
 // The student changes this check as each stage adds an attack to the same app.
 // Never return tokens, private keys, real names, or note bodies.
@@ -12,9 +13,8 @@ const appUrl = (config) => {
   return app;
 };
 
-const safeJson = async (response) => {
-  try { return await response.json(); } catch { return null; }
-};
+const httpObserved = (response, detail) => Number.isInteger(response?.status) ? detail : 'not_run';
+const objectBody = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 // A platform-auth challenge and a handler's Bearer challenge can both be
 // HTTP 401. Credit only a structured response from the application handler.
@@ -26,31 +26,77 @@ const applicationBearer401 = (response, body) => response.status === 401
   && /^application\/json\b/iu.test(response.headers.get('content-type') || '');
 
 
-export async function runAttackChecks(config) {
+export async function runAttackChecks(config, { fetchImpl = globalThis.fetch, probeTimeoutMs = 10000 } = {}) {
+  if (!Number.isSafeInteger(probeTimeoutMs) || probeTimeoutMs < 1 || probeTimeoutMs > 10000) {
+    throw new Error('INVALID_PROBE_TIMEOUT');
+  }
   const app = appUrl(config);
   if (config.step === 12) {
     const { runStage12ReadOnlyChecks } = await import('./attack-check-stage12.mjs');
-    return runStage12ReadOnlyChecks(config, app);
+    return runStage12ReadOnlyChecks(config, app, fetchImpl, {
+      probeTimeoutMs: Math.min(probeTimeoutMs, 8000),
+    });
   }
+
+  // Every retained stage consumes/discards each response inside its own probe
+  // deadline. Later reporting reads only already-bounded values and headers.
+  const bodies = new WeakMap();
+  const absentResponse = Object.freeze({ status: null, ok: false,
+    headers: Object.freeze({ get: () => null }) });
+  const fetch = async (url, init = {}) => {
+    const target = new URL(url);
+    const method = init.method ?? 'GET';
+    if (target.protocol !== 'https:' || !['GET', 'HEAD'].includes(method)) {
+      throw new Error('UNSAFE_ATTACK_CHECK_REQUEST');
+    }
+    const publicJson = target.origin === app.origin
+      && ['/data.json', '/aleph.json', '/api/ops', '/manifest.webmanifest'].includes(target.pathname);
+    const publicStage2Notes = config.step === 2 && target.origin === app.origin && target.pathname === '/api/notes';
+    const homepage = target.origin === app.origin && target.pathname === '/';
+    const result = await probeResponse({
+      url: target.href, fetchImpl, timeoutMs: probeTimeoutMs,
+      init: { ...init, method, redirect: 'error', credentials: 'omit' },
+      consume: async (response, ownership) => {
+        if (method === 'HEAD') return null;
+        if (homepage) {
+          return config.step === 5 && response.ok
+            ? readBoundedText(response, ownership, { maxBytes: 128 * 1024, contentType: /^text\/html(?:;|$)/iu })
+            : null;
+        }
+        // Stages 1/2 intentionally demonstrate public synthetic data. Starting
+        // at stage 3, unexpected successful private responses are never read.
+        const safe = publicJson || publicStage2Notes ? response.ok : response.status >= 400;
+        return safe ? readBoundedJson(response, ownership) : null;
+      },
+    });
+    if (!result.response) return absentResponse;
+    bodies.set(result.response, result.value);
+    return result.response;
+  };
+  const safeJson = response => bodies.get(response) ?? null;
+  const safeText = response => {
+    const value = bodies.get(response);
+    return typeof value === 'string' ? value : null;
+  };
 
   if (config.step === 1) {
     if (typeof config.sampleMarker !== 'string' || !config.sampleMarker) {
       throw new Error('가상 자료 확인 표시를 넣어 주세요.');
     }
     const response = await fetch(new URL('/data.json', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
     });
     const data = response.ok ? await safeJson(response) : null;
     const visible = data?.sampleMarker === config.sampleMarker
       && Array.isArray(data.notes) && data.notes.length > 0;
     return [{ attackId: 'anonymous_note_read', expected: '비로그인 화면에서 가상 자료를 확인',
-      observed: visible ? '비로그인 요청에서 공개 가상 자료 확인 표시가 보임'
-        : `비로그인 요청에서 확인 표시가 보이지 않음 (HTTP ${response.status})` }];
+      observed: httpObserved(response, visible ? '비로그인 요청에서 공개 가상 자료 확인 표시가 보임'
+        : `비로그인 요청에서 확인 표시가 보이지 않음 (HTTP ${response.status})`) }];
   }
 
   if (config.step === 2) {
     const staticResponse = await fetch(new URL('/data.json', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
     });
     const staticCache = staticResponse.headers.get('cache-control') || '';
     const staticData = staticResponse.ok ? await safeJson(staticResponse) : null;
@@ -58,7 +104,7 @@ export async function runAttackChecks(config) {
       && !Object.hasOwn(staticData, 'sampleMarker') && /\bno-store\b/iu.test(staticCache);
 
     const identityResponse = await fetch(new URL('/aleph.json', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
     });
     const identityCache = identityResponse.headers.get('cache-control') || '';
     const identityData = identityResponse.ok ? await safeJson(identityResponse) : null;
@@ -66,7 +112,7 @@ export async function runAttackChecks(config) {
       && !Object.hasOwn(identityData, 'sampleMarker') && /\bno-store\b/iu.test(identityCache);
 
     const apiResponse = await fetch(new URL('/api/notes', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
     });
     const apiCache = apiResponse.headers.get('cache-control') || '';
     const apiData = apiResponse.ok ? await safeJson(apiResponse) : null;
@@ -74,68 +120,68 @@ export async function runAttackChecks(config) {
 
     return [
       { attackId: 'static_note_copy_removed', expected: '정적 /data.json은 메모·1단계 표시 없이 notes=[]이고 no-store',
-        observed: staticEmpty ? '정적 /data.json은 notes=[]·표시 없음·Cache-Control=no-store'
-          : `정적 /data.json 검증 실패 (HTTP ${staticResponse.status}, Cache-Control=${staticCache || '없음'})` },
+        observed: httpObserved(staticResponse, staticEmpty ? '정적 /data.json은 notes=[]·표시 없음·Cache-Control=no-store'
+          : `정적 /data.json 검증 실패 (HTTP ${staticResponse.status}, Cache-Control=${staticCache || '없음'})`) },
       { attackId: 'step1_marker_removed', expected: '2단계 /aleph.json은 1단계 표시 없이 no-store',
-        observed: identityClean ? '2단계 /aleph.json은 표시 없음·Cache-Control=no-store'
-          : `/aleph.json 검증 실패 (HTTP ${identityResponse.status}, Cache-Control=${identityCache || '없음'})` },
+        observed: httpObserved(identityResponse, identityClean ? '2단계 /aleph.json은 표시 없음·Cache-Control=no-store'
+          : `/aleph.json 검증 실패 (HTTP ${identityResponse.status}, Cache-Control=${identityCache || '없음'})`) },
       { attackId: 'public_notes_api_remains', expected: '비로그인 /api/notes는 4건을 반환하고 no-store이며 공개 주소 약점이 남음',
-        observed: apiCount === null ? `공개 API가 자료 목록을 반환하지 않음 (HTTP ${apiResponse.status})`
-          : `비로그인 /api/notes가 ${apiCount}건 반환·Cache-Control=${/\bno-store\b/iu.test(apiCache) ? 'no-store' : (apiCache || '없음')}·공개 주소 유지` },
+        observed: httpObserved(apiResponse, apiCount === null ? `공개 API가 자료 목록을 반환하지 않음 (HTTP ${apiResponse.status})`
+          : `비로그인 /api/notes가 ${apiCount}건 반환·Cache-Control=${/\bno-store\b/iu.test(apiCache) ? 'no-store' : (apiCache || '없음')}·공개 주소 유지`) },
     ];
   }
 
   if (config.step === 3) {
     const listResponse = await fetch(new URL('/api/notes', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const listBody = await safeJson(listResponse);
     const listDenied = listResponse.status === 401
-      && !Array.isArray(listBody) && !Array.isArray(listBody?.notes);
+      && objectBody(listBody) && !Array.isArray(listBody?.notes);
 
     const itemResponse = await fetch(new URL('/api/notes/00000000-0000-4000-8000-000000000000', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const itemBody = await safeJson(itemResponse);
     const itemDenied = itemResponse.status === 401
-      && !itemBody?.title && !itemBody?.body;
+      && objectBody(itemBody) && !itemBody?.title && !itemBody?.body;
 
     return [
       { attackId: 'anonymous_note_list_denied', expected: '무로그인 목록 GET은 자료 없이 401 거부',
-        observed: listDenied ? '무로그인 /api/notes가 자료 없이 HTTP 401로 거부됨'
-          : `무로그인 목록 거부 검증 실패 (HTTP ${listResponse.status})` },
+        observed: httpObserved(listResponse, listDenied ? '무로그인 /api/notes가 자료 없이 HTTP 401로 거부됨'
+          : `무로그인 목록 거부 검증 실패 (HTTP ${listResponse.status})`) },
       { attackId: 'anonymous_note_item_denied', expected: '무로그인 한 건 GET은 자료 없이 401 거부',
-        observed: itemDenied ? '무로그인 /api/notes/:id가 자료 없이 HTTP 401로 거부됨'
-          : `무로그인 한 건 거부 검증 실패 (HTTP ${itemResponse.status})` },
+        observed: httpObserved(itemResponse, itemDenied ? '무로그인 /api/notes/:id가 자료 없이 HTTP 401로 거부됨'
+          : `무로그인 한 건 거부 검증 실패 (HTTP ${itemResponse.status})`) },
     ];
   }
 
   if (config.step === 4) {
     const listResponse = await fetch(new URL('/api/notes', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const listBody = await safeJson(listResponse);
     const listDenied = listResponse.status === 401
-      && !Array.isArray(listBody) && !Array.isArray(listBody?.notes);
+      && objectBody(listBody) && !Array.isArray(listBody?.notes);
 
     const itemResponse = await fetch(new URL('/api/notes/00000000-0000-4000-8000-000000000000', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const itemBody = await safeJson(itemResponse);
     const itemDenied = itemResponse.status === 401
-      && !itemBody?.title && !itemBody?.body;
+      && objectBody(itemBody) && !itemBody?.title && !itemBody?.body;
 
     return [
       { attackId: 'anonymous_note_list_denied', expected: '4단계 무로그인 목록 GET은 자료 없이 401 거부',
-        observed: listDenied ? '무로그인 /api/notes가 자료 없이 HTTP 401로 거부됨'
-          : `무로그인 목록 거부 검증 실패 (HTTP ${listResponse.status})` },
+        observed: httpObserved(listResponse, listDenied ? '무로그인 /api/notes가 자료 없이 HTTP 401로 거부됨'
+          : `무로그인 목록 거부 검증 실패 (HTTP ${listResponse.status})`) },
       { attackId: 'anonymous_note_item_denied', expected: '4단계 무로그인 한 건 GET은 자료 없이 401 거부',
-        observed: itemDenied ? '무로그인 /api/notes/:id가 자료 없이 HTTP 401로 거부됨'
-          : `무로그인 한 건 거부 검증 실패 (HTTP ${itemResponse.status})` },
+        observed: httpObserved(itemResponse, itemDenied ? '무로그인 /api/notes/:id가 자료 없이 HTTP 401로 거부됨'
+          : `무로그인 한 건 거부 검증 실패 (HTTP ${itemResponse.status})`) },
     ];
   }
 
@@ -182,7 +228,7 @@ export async function runAttackChecks(config) {
     });
 
     const identityResponse = await fetch(new URL('/aleph.json', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
     });
     const identity = identityResponse.ok ? await safeJson(identityResponse) : null;
     const manifestOk = identity?.step === config.step
@@ -191,27 +237,26 @@ export async function runAttackChecks(config) {
       && Array.isArray(identity.allowedRoutes)
       && identity.allowedRoutes.includes(config.restoreRoute);
     const pageResponse = await fetch(app, {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'text/html' },
     });
     const notesResponse = await fetch(new URL('/api/notes', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const notesBody = await safeJson(notesResponse);
     const notesDenied = notesResponse.status === 401
-      && !Array.isArray(notesBody) && !Array.isArray(notesBody?.notes);
+      && objectBody(notesBody) && !Array.isArray(notesBody?.notes);
     const restoreResponse = await fetch(
       new URL('/api/restore/notes/cccccccc-cccc-4ccc-8ccc-cccccccccccc', app),
-      { redirect: 'error', signal: AbortSignal.timeout(10000),
-        headers: { Accept: 'application/json' } },
+      { redirect: 'error', headers: { Accept: 'application/json' } },
     );
     const restoreBody = await safeJson(restoreResponse);
     // A disabled restore service is not proof that a verified backup was
     // restored. Keep observable deployment readiness separate from security.
     const restoreError = typeof restoreBody?.error === 'string'
       ? restoreBody.error : null;
-    const restoreNoData = !restoreBody?.title && !restoreBody?.body;
+    const restoreNoData = objectBody(restoreBody) && !restoreBody.title && !restoreBody.body;
     const restoreBlocked = [401, 403, 503].includes(restoreResponse.status)
       && restoreNoData;
     const restoreObserved = !restoreBlocked
@@ -227,7 +272,7 @@ export async function runAttackChecks(config) {
     if (config.step === 12) {
       try {
         const opsResponse = await fetch(new URL('/api/ops', app), {
-          redirect: 'error', signal: AbortSignal.timeout(10000),
+          redirect: 'error',
           headers: { Accept: 'application/json' },
         });
         const opsBody = opsResponse.ok ? await safeJson(opsResponse) : null;
@@ -250,8 +295,7 @@ export async function runAttackChecks(config) {
     if(config.step===12){
       try {
         const r=await fetch(new URL('/manifest.webmanifest',app),{
-          redirect:'error',signal:AbortSignal.timeout(10000),
-          headers:{Accept:'application/manifest+json'}
+          redirect:'error',headers:{Accept:'application/manifest+json'}
         });
         const manifest=r.ok?await safeJson(r):null;
         manifestObserved=r.status===200 && manifest?.name==='BYTE BACK · 내 보안 자료실'
@@ -262,8 +306,7 @@ export async function runAttackChecks(config) {
       }catch {manifestObserved='미검증: 설치형 manifest 호출 실패';}
       try {
         const r=await fetch(new URL('/api/device?action=status',app),{
-          redirect:'error',signal:AbortSignal.timeout(10000),
-          headers:{Accept:'application/json'}
+          redirect:'error',headers:{Accept:'application/json'}
         });
         const body=await safeJson(r);
         deviceStatusObserved=r.status===401 && body?.error==='UNAUTHORIZED'
@@ -299,20 +342,20 @@ export async function runAttackChecks(config) {
           : '로컬 가상 메모 해시 비교 실패' },
       { attackId: 'deployed_restore_route',
         expected: '배포 manifest와 복구 경로 일치',
-        observed: manifestOk ? 'production step=' + config.step + ' 및 restoreRoute 일치'
-          : '배포 복구 설정 불일치 (HTTP ' + identityResponse.status + ')' },
+        observed: httpObserved(identityResponse, manifestOk ? 'production step=' + config.step + ' 및 restoreRoute 일치'
+          : '배포 복구 설정 불일치 (HTTP ' + identityResponse.status + ')') },
       { attackId: 'existing_browser_ui',
         expected: '기존 자료실 첫 화면 응답',
-        observed: pageResponse.ok
+        observed: httpObserved(pageResponse, pageResponse.ok
           ? '기존 자료실 HTTP ' + pageResponse.status
-          : '기존 자료실 응답 실패 (HTTP ' + pageResponse.status + ')' },
+          : '기존 자료실 응답 실패 (HTTP ' + pageResponse.status + ')') },
       { attackId: 'anonymous_notes_denied',
         expected: '비로그인 메모 목록은 자료 없이 401',
-        observed: notesDenied ? '무로그인 /api/notes HTTP 401, 자료 없음'
-          : '무로그인 메모 거부 검증 실패 (HTTP ' + notesResponse.status + ')' },
+        observed: httpObserved(notesResponse, notesDenied ? '무로그인 /api/notes HTTP 401, 자료 없음'
+          : '무로그인 메모 거부 검증 실패 (HTTP ' + notesResponse.status + ')') },
       { attackId: 'recovery_default_fail_closed',
         expected: '무인증 복구 거부와 복구 준비/미검증 상태를 별도 구분',
-        observed: restoreObserved },
+        observed: httpObserved(restoreResponse, restoreObserved) },
       { attackId: 'live_policy_restore_unverified',
         expected: '검증된 침해 전 운영 정책 사본의 실복원 검증',
         observed: '미실행: 침해 전 독립 검증된 운영 정책 사본 없음' },
@@ -358,7 +401,7 @@ export async function runAttackChecks(config) {
     const unknownRoute = await decide({ ...normal, path: '/notes/export' });
 
     const manifestResponse = await fetch(new URL('/aleph.json', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const manifest = manifestResponse.ok ? await safeJson(manifestResponse) : null;
@@ -367,11 +410,11 @@ export async function runAttackChecks(config) {
       && config.allowedRoutes?.every(route => manifest?.allowedRoutes?.includes(route));
 
     const anonymousNote = await fetch(new URL('/api/notes', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const anonymousNotice = await fetch(new URL('/api/announcements/00000000-0000-4000-8000-000000000000', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const noteData = await safeJson(anonymousNote);
@@ -391,15 +434,15 @@ export async function runAttackChecks(config) {
       { attackId: 'unknown_route_denied', expected: '등록되지 않은 기능/자원 경로 기본 거부',
         observed: unknownRoute.decision === 'deny' ? '로컬 미등록 export 경로 deny' : '미등록 경로 거부 실패' },
       { attackId: 'stage8_deployed_resource_zones', expected: '실제 배포 manifest 구역 ID·경로와 현재 단계 일치',
-        observed: manifestCorrect ? 'production /aleph.json 8단계·구역 ID 일치'
-          : '배포 구역 manifest 검사 실패 (HTTP ' + manifestResponse.status + ')' },
+        observed: httpObserved(manifestResponse, manifestCorrect ? 'production /aleph.json 8단계·구역 ID 일치'
+          : '배포 구역 manifest 검사 실패 (HTTP ' + manifestResponse.status + ')') },
       { attackId: 'anonymous_note_zone_denied', expected: '실제 메모 API 무로그인 자료 없이 401',
-        observed: applicationBearer401(anonymousNote, noteData) && !Array.isArray(noteData)
-          ? '실제 /api/notes HTTP 401, 자료 없음' : '애플리케이션 Bearer 거부 미확인 (HTTP ' + anonymousNote.status + ')' },
+        observed: httpObserved(anonymousNote, applicationBearer401(anonymousNote, noteData) && !Array.isArray(noteData)
+          ? '실제 /api/notes HTTP 401, 자료 없음' : '애플리케이션 Bearer 거부 미확인 (HTTP ' + anonymousNote.status + ')') },
       { attackId: 'anonymous_notice_zone_denied', expected: '실제 공지 API 무로그인 자료 없이 401',
-        observed: applicationBearer401(anonymousNotice, noticeData) && !noticeData?.title && !noticeData?.body
+        observed: httpObserved(anonymousNotice, applicationBearer401(anonymousNotice, noticeData) && !noticeData?.title && !noticeData?.body
           ? '실제 /api/announcements/:id HTTP 401, 자료 없음'
-          : '애플리케이션 Bearer 거부 미확인 (HTTP ' + anonymousNotice.status + ')' },
+          : '애플리케이션 Bearer 거부 미확인 (HTTP ' + anonymousNotice.status + ')') },
       { attackId: 'live_role_and_ownership_unverified', expected: '실제 A/B 로그인과 강사 메타데이터 직접 권한 확인',
         observed: '미실행: 실제 A/B·강사 JWT로 소유권·권한을 확인한 E2E가 없어 별도 검증 필요' },
     ];
@@ -453,7 +496,7 @@ export async function runAttackChecks(config) {
       && withoutVerifier.action === 'observe';
 
     const manifestResponse = await fetch(new URL('/aleph.json', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const manifest = manifestResponse.ok ? await safeJson(manifestResponse) : null;
@@ -465,16 +508,16 @@ export async function runAttackChecks(config) {
       && config.allowedRoutes?.every(route => manifest.allowedRoutes.includes(route));
 
     const homeResponse = await fetch(app, {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'text/html' },
     });
     const anonymousResponse = await fetch(new URL('/api/notes', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const anonymousData = await safeJson(anonymousResponse);
     const unauthorized = anonymousResponse.status === 401
-      && !Array.isArray(anonymousData) && !Array.isArray(anonymousData?.notes);
+      && objectBody(anonymousData) && !Array.isArray(anonymousData?.notes);
 
     return [
       { attackId: 'virtual_event_contract', expected: '제공된 여섯 가상 사건 계약 검증',
@@ -492,14 +535,14 @@ export async function runAttackChecks(config) {
           ? '클라이언트 deviceId/network/headers 무시, 출력 불변'
           : '추가 클라이언트 필드의 영향 발견' },
       { attackId: 'deployed_stage9_manifest', expected: '배포 manifest는 단계 9 및 기존 주소를 보존',
-        observed: deployed ? 'production /aleph.json 9단계·보호 서비스·경로 일치'
-          : '배포 manifest 검사 실패 (HTTP ' + manifestResponse.status + ')' },
+        observed: httpObserved(manifestResponse, deployed ? 'production /aleph.json 9단계·보호 서비스·경로 일치'
+          : '배포 manifest 검사 실패 (HTTP ' + manifestResponse.status + ')') },
       { attackId: 'existing_browser_ui', expected: '기존 로그인 화면의 응답 유지',
-        observed: homeResponse.ok ? '기존 자료실 첫 화면 HTTP ' + homeResponse.status
-          : '기존 자료실 첫 화면 확인 실패 (HTTP ' + homeResponse.status + ')' },
+        observed: httpObserved(homeResponse, homeResponse.ok ? '기존 자료실 첫 화면 HTTP ' + homeResponse.status
+          : '기존 자료실 첫 화면 확인 실패 (HTTP ' + homeResponse.status + ')') },
       { attackId: 'anonymous_notes_denied', expected: '무로그인 자료 목록은 반환 없이 401',
-        observed: unauthorized ? '무로그인 /api/notes HTTP 401, 자료 없음'
-          : '무로그인 API 거부 확인 실패 (HTTP ' + anonymousResponse.status + ')' },
+        observed: httpObserved(anonymousResponse, unauthorized ? '무로그인 /api/notes HTTP 401, 자료 없음'
+          : '무로그인 API 거부 확인 실패 (HTTP ' + anonymousResponse.status + ')') },
       { attackId: 'local_verified_device_anomaly',
         expected: '가상 검증 콜백의 네트워크 변화와 동일 기기 폭주가 함께 있을 때만 회수 제안',
         observed: deviceProposalOk
@@ -530,7 +573,7 @@ export async function runAttackChecks(config) {
       await Promise.all([normal, suspicious, refreshed, untrusted].map(decide));
 
     const manifestResponse = await fetch(new URL('/aleph.json', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const manifest = manifestResponse.ok ? await safeJson(manifestResponse) : null;
@@ -538,15 +581,15 @@ export async function runAttackChecks(config) {
       && manifest?.protectedService?.serviceId === config.protectedService?.serviceId
       && manifest?.protectedService?.readRoute === config.protectedService?.readRoute;
     const homeResponse = await fetch(app, {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'text/html' },
     });
     const listResponse = await fetch(new URL('/api/notes', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const listBody = await safeJson(listResponse);
-    const denied = listResponse.status === 401 && !Array.isArray(listBody)
+    const denied = listResponse.status === 401 && objectBody(listBody)
       && !Array.isArray(listBody?.notes);
 
     return [
@@ -566,15 +609,15 @@ export async function runAttackChecks(config) {
           ? '로컬 client_header 출처 거부 (실제 엔진 헤더는 미확인)'
           : '출처 불명 신호 거부 검증 실패' },
       { attackId: 'deployed_stage7_identity', expected: '배포 manifest가 7단계 및 기존 서비스 연결 보존',
-        observed: configMatches ? 'production /aleph.json step=7 및 보호 서비스 일치'
-          : '배포 manifest 설정 확인 실패 (HTTP ' + manifestResponse.status + ')' },
+        observed: httpObserved(manifestResponse, configMatches ? 'production /aleph.json step=7 및 보호 서비스 일치'
+          : '배포 manifest 설정 확인 실패 (HTTP ' + manifestResponse.status + ')') },
       { attackId: 'existing_browser_ui', expected: '기존 자료실 주소에서 첫 화면 응답',
-        observed: homeResponse.ok
+        observed: httpObserved(homeResponse, homeResponse.ok
           ? '기존 자료실 HTTP ' + homeResponse.status + ' (접속 도구는 미검증)'
-          : '첫 화면 HTTP ' + homeResponse.status },
+          : '첫 화면 HTTP ' + homeResponse.status) },
       { attackId: 'anonymous_notes_denied', expected: '비로그인 서버 메모 API는 자료 없이 401',
-        observed: denied ? '무로그인 메모 목록 HTTP 401, 자료 없음'
-          : '비로그인 메모 거부 실패 (HTTP ' + listResponse.status + ')' },
+        observed: httpObserved(listResponse, denied ? '무로그인 메모 목록 HTTP 401, 자료 없음'
+          : '비로그인 메모 거부 실패 (HTTP ' + listResponse.status + ')') },
       { attackId: 'real_subject_reauth_unverified',
         expected: '동일 사용자 새 로그인 시각을 엔진이 검증한 환경에서만 실측',
         observed: '미실행: v1 계약에는 동일 주체의 신규 로그인 증명 및 운영 리다이렉트 확인 근거가 없음' },
@@ -589,7 +632,7 @@ export async function runAttackChecks(config) {
     const rejected = trials.find(item => item.name === '미등록 기기의 가상 요청');
 
     const manifestResponse = await fetch(new URL('/aleph.json', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const manifest = manifestResponse.ok ? await safeJson(manifestResponse) : null;
@@ -597,16 +640,16 @@ export async function runAttackChecks(config) {
       && manifest?.protectedService?.serviceId === config.protectedService?.serviceId
       && manifest?.protectedService?.readRoute === config.protectedService?.readRoute;
     const uiResponse = await fetch(app, {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'text/html' },
     });
     const listResponse = await fetch(new URL('/api/notes', app), {
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error',
       headers: { Accept: 'application/json' },
     });
     const unauthenticated = await safeJson(listResponse);
     const denied = listResponse.status === 401
-      && !Array.isArray(unauthenticated) && !Array.isArray(unauthenticated?.notes);
+      && objectBody(unauthenticated) && !Array.isArray(unauthenticated?.notes);
 
     return [
       { attackId: 'local_registered_device', expected: '엔진 계약 모양의 등록 기기 모의 요청은 allow',
@@ -616,14 +659,14 @@ export async function runAttackChecks(config) {
         observed: rejected?.passed ? '로컬 가상 요청 deny 통과 (실제 접속 도구는 미확인)'
           : '로컬 미등록 기기 모의 요청 검증 실패' },
       { attackId: 'deployed_protected_service', expected: '배포 식별정보의 보호 서비스 ID·읽기 경로 일치',
-        observed: matches ? 'production /aleph.json의 서비스 ID·경로 일치'
-          : 'production 연결 정보 검증 실패 (HTTP ' + manifestResponse.status + ')' },
+        observed: httpObserved(manifestResponse, matches ? 'production /aleph.json의 서비스 ID·경로 일치'
+          : 'production 연결 정보 검증 실패 (HTTP ' + manifestResponse.status + ')') },
       { attackId: 'existing_browser_ui', expected: '기존 HTTPS 자료실 첫 화면이 응답',
-        observed: uiResponse.ok ? '기존 주소 첫 화면 HTTP ' + uiResponse.status + ' (엔진 경유는 미확인)'
-          : '기존 주소 첫 화면 HTTP ' + uiResponse.status },
+        observed: httpObserved(uiResponse, uiResponse.ok ? '기존 주소 첫 화면 HTTP ' + uiResponse.status + ' (엔진 경유는 미확인)'
+          : '기존 주소 첫 화면 HTTP ' + uiResponse.status) },
       { attackId: 'anonymous_note_denial', expected: '무로그인 메모 목록 직접 요청은 자료 없이 거부',
-        observed: denied ? '무로그인 자료실 API HTTP 401, 메모 없음 (기기 검증은 미확인)'
-          : '무로그인 자료실 요청 검증 실패 (HTTP ' + listResponse.status + ')' },
+        observed: httpObserved(listResponse, denied ? '무로그인 자료실 API HTTP 401, 메모 없음 (기기 검증은 미확인)'
+          : '무로그인 자료실 요청 검증 실패 (HTTP ' + listResponse.status + ')') },
     ];
   }
 
@@ -637,15 +680,15 @@ export async function runAttackChecks(config) {
   }
 
   const listResponse = await fetch(new URL('/api/notes', app), {
-    redirect: 'error', signal: AbortSignal.timeout(10000),
+    redirect: 'error',
     headers: { Accept: 'application/json' },
   });
   const listBody = await safeJson(listResponse);
   const listDenied = listResponse.status === 401
-    && !Array.isArray(listBody) && !Array.isArray(listBody?.notes);
+    && objectBody(listBody) && !Array.isArray(listBody?.notes);
 
   const manifestResponse = await fetch(new URL('/aleph.json', app), {
-    redirect: 'error', signal: AbortSignal.timeout(10000),
+    redirect: 'error',
     headers: { Accept: 'application/json' },
   });
   const manifestBody = manifestResponse.ok ? await safeJson(manifestResponse) : null;
@@ -655,43 +698,44 @@ export async function runAttackChecks(config) {
     && manifestBody.allowedRoutes.length > 0;
 
   const screenResponse = await fetch(app, {
-    redirect: 'error', signal: AbortSignal.timeout(10000),
+    redirect: 'error',
     headers: { Accept: 'text/html' },
   });
-  const screenText = screenResponse.ok ? await screenResponse.text() : '';
+  const screenText = safeText(screenResponse);
   const contentTypeOptions = screenResponse.headers.get('x-content-type-options') || '';
   const contentSecurityPolicy = screenResponse.headers.get('content-security-policy') || '';
   const screenHardened = contentTypeOptions.toLowerCase() === 'nosniff'
     || Boolean(contentSecurityPolicy.trim());
-  const publicKeyAbsent = !/sb_publishable_[A-Za-z0-9_-]+/u.test(screenText)
+  const publicKeyAbsent = screenText !== null && !/sb_publishable_[A-Za-z0-9_-]+/u.test(screenText)
     && !/eyJ[A-Za-z0-9_-]{12,}\.eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{8,}/u.test(screenText);
 
   const originResponse = await fetch(original, {
-    redirect: 'error', signal: AbortSignal.timeout(10000),
+    redirect: 'error',
     headers: { Accept: 'application/json' },
   });
   const originBody = await safeJson(originResponse);
   const originDenied = [401, 403].includes(originResponse.status)
-    && !Array.isArray(originBody);
+    && objectBody(originBody);
 
   return [
     { attackId: 'anonymous_note_list_denied', expected: '무로그인 Vercel 자료 API는 자료 없이 401 거부',
-      observed: listDenied ? '무로그인 /api/notes가 자료 없이 HTTP 401로 거부됨'
-        : `무로그인 목록 거부 검증 실패 (HTTP ${listResponse.status})` },
+      observed: httpObserved(listResponse, listDenied ? '무로그인 /api/notes가 자료 없이 HTTP 401로 거부됨'
+        : `무로그인 목록 거부 검증 실패 (HTTP ${listResponse.status})`) },
     { attackId: 'deployment_manifest_original_api', expected: '/aleph.json의 originalApiUrl이 제출 설정과 일치',
-      observed: manifestMatches ? '배포 /aleph.json의 step=5와 originalApiUrl이 제출 설정과 일치함'
-        : `배포 manifest 원본 주소 검증 실패 (HTTP ${manifestResponse.status})` },
+      observed: httpObserved(manifestResponse, manifestMatches ? '배포 /aleph.json의 step=5와 originalApiUrl이 제출 설정과 일치함'
+        : `배포 manifest 원본 주소 검증 실패 (HTTP ${manifestResponse.status})`) },
     { attackId: 'deployment_manifest_allowed_routes', expected: '/aleph.json의 allowedRoutes에 허용 경로가 하나 이상 있음',
-      observed: manifestRoutes ? `배포 /aleph.json allowedRoutes에 ${manifestBody.allowedRoutes.length}개 경로가 있음`
-        : '배포 /aleph.json allowedRoutes가 비어 있거나 없음' },
+      observed: httpObserved(manifestResponse, manifestRoutes ? `배포 /aleph.json allowedRoutes에 ${manifestBody.allowedRoutes.length}개 경로가 있음`
+        : '배포 /aleph.json allowedRoutes가 비어 있거나 없음') },
     { attackId: 'first_screen_security_header', expected: '첫 화면 응답에 nosniff 또는 CSP 보안 헤더가 있음',
-      observed: screenHardened ? `첫 화면 보안 헤더 확인: ${contentTypeOptions || 'CSP'}`
-        : `첫 화면 보안 헤더 없음 (HTTP ${screenResponse.status})` },
+      observed: httpObserved(screenResponse, screenHardened ? `첫 화면 보안 헤더 확인: ${contentTypeOptions || 'CSP'}`
+        : `첫 화면 보안 헤더 없음 (HTTP ${screenResponse.status})`) },
     { attackId: 'screen_public_key_absent', expected: '첫 화면 코드에 Supabase publishable/anon 키가 없음',
-      observed: publicKeyAbsent ? '첫 화면 코드에 Supabase 공개 키 패턴이 없음'
-        : '첫 화면 코드에서 Supabase 공개 키 패턴을 발견함' },
+      observed: httpObserved(screenResponse, screenText === null ? '첫 화면 코드 확인 미완료 (HTTP ' + screenResponse.status + ')'
+        : publicKeyAbsent ? '첫 화면 코드에 Supabase 공개 키 패턴이 없음'
+        : '첫 화면 코드에서 Supabase 공개 키 패턴을 발견함') },
     { attackId: 'direct_origin_without_key_denied', expected: '원본 자료 HTTPS 경로는 키 없는 직접 요청을 거부',
-      observed: originDenied ? `원본 자료 경로가 자료 없이 HTTP ${originResponse.status}로 거부됨`
-        : `원본 자료 직접 요청 거부 검증 실패 (HTTP ${originResponse.status})` },
+      observed: httpObserved(originResponse, originDenied ? `원본 자료 경로가 자료 없이 HTTP ${originResponse.status}로 거부됨`
+        : `원본 자료 직접 요청 거부 검증 실패 (HTTP ${originResponse.status})`) },
   ];
 }

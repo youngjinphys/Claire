@@ -197,7 +197,10 @@ export function createAuthHandler({
       catch { return response.status(503).json({ error: 'AUTH_RISK_GUARD_UNAVAILABLE' }); }
       // Never forward arbitrary provider error strings or verbose account existence hints.
       if (!success) return response.status(401).json({ error: 'LOGIN_FAILED' });
-      if (generation) generation.write(response, existingCookies, issueGeneration, { token: session.refresh_token });
+      if (generation) {
+        try { generation.write(response, existingCookies, issueGeneration, { token: session.refresh_token }); }
+        catch { return response.status(503).json({ error: 'AUTH_GENERATION_UNAVAILABLE' }); }
+      }
       else setRefreshCookie(response, session.refresh_token, env);
       return response.status(200).json(publicSession(session));
     }
@@ -220,7 +223,7 @@ export function createAuthHandler({
               // with a newer generation. Logout, unlike refresh failure, still
               // writes a newly allocated global tombstone.
               const failedGeneration = existingCookies.selected?.kind === 'r'
-                ? existingCookies.selected.generation : issueGeneration;
+                ? existingCookies.selected : issueGeneration;
               generation.write(response, existingCookies, failedGeneration, { revoked: true });
             } else clearRefreshCookie(response, env);
             return response.status(401).json({error:'SESSION_EXPIRED'});

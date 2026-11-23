@@ -164,6 +164,7 @@ test('심판 격리: decide.mjs 단일 파일을 의존성 없이 로딩하고 �
       cwd: temp, encoding: 'utf8', timeout: 3000,
       env: { PATH: process.env.PATH ?? '', JEV_API_KEY: 'dummy-no-network' },
     });
+    assert.ifError(run.error);
     assert.equal(run.status, 0, run.stderr || String(run.error));
     assert.equal(run.stderr, '');
     const results = JSON.parse(run.stdout);

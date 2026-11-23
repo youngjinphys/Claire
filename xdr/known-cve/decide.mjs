@@ -64,50 +64,76 @@ const PATTERNS = Object.freeze([
   }
 ]);
 
+// Keep this parser self-contained: the isolated judge receives only decide.mjs.
+// Regression tests compare this contract with the readers' built-in IP parser.
+function validIPv4(value) {
+  if (!/^(?:0|[1-9]\d{0,2})(?:\.(?:0|[1-9]\d{0,2})){3}$/u.test(value)) return false;
+  return value.split('.').every((part) => Number(part) <= 255);
+}
+
 function validIp(value) {
-  if (typeof value !== 'string' || value.length > 45) return false;
-  if (/^(?:\d{1,3}\.){3}\d{1,3}$/u.test(value)) {
-    return value.split('.').every(part => part.length > 0 && Number(part) <= 255);
+  if (typeof value !== 'string' || value.length === 0) return false;
+  let address = value;
+  const zone = address.indexOf('%');
+  if (zone !== -1) {
+    if (!/^[0-9A-Za-z.:-]+$/u.test(address.slice(zone + 1))) return false;
+    address = address.slice(0, zone);
+    if (!address.includes(':')) return false;
   }
-  if (!/^[a-f0-9:.]+$/iu.test(value) || !value.includes(':')) return false;
-  const segments = value.split('::');
-  if (segments.length > 2) return false;
-  const groups = segments.flatMap(part => part ? part.split(':') : []);
-  if (groups.some(group => !/^[a-f0-9]{1,4}$/iu.test(group))) return false;
-  return segments.length === 2 ? groups.length < 8 : groups.length === 8;
+  if (address.length > 45) return false;
+  if (validIPv4(address)) return true;
+  if (!address.includes(':') || !/^[a-fA-F0-9:.]+$/u.test(address)) return false;
+  if (address.includes('.')) {
+    const lastColon = address.lastIndexOf(':');
+    if (!validIPv4(address.slice(lastColon + 1))) return false;
+    // An embedded IPv4 suffix occupies exactly two IPv6 groups.
+    address = address.slice(0, lastColon) + ':0:0';
+  }
+  const sides = address.split('::');
+  if (sides.length > 2) return false;
+  const parts = sides.flatMap((side) => side ? side.split(':') : []);
+  if (parts.some((part) => !/^[a-fA-F0-9]{1,4}$/u.test(part))) return false;
+  return sides.length === 2 ? parts.length < 8 : parts.length === 8;
 }
 
 function decodeSafely(value) {
-  if (typeof value !== 'string') return '';
+  if (typeof value !== 'string') return { text: '', complete: false };
   let text = value.slice(0, 2048);
+  let complete = value.length <= 2048;
   // Decode URL escaping only; never evaluate JNDI or substitute variables.
   for (let i = 0; i < 2; i += 1) {
     try {
       const decoded = decodeURIComponent(text);
       if (decoded === text) break;
       text = decoded.slice(0, 2048);
-    } catch { break; }
+    } catch { complete = false; break; }
   }
-  return text;
+  return { text, complete: complete && !/%[a-f0-9]{2}/iu.test(text) };
 }
 
 function requestValues(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return { header: '', parameter: '' };
+    return { header: '', parameter: '', complete: false };
   }
+  const rawValues = [data.useragent, data.userAgent, data.referer, data.referrer, data.url, data.query, data.queryString];
+  let complete = rawValues.every(value => value === undefined || typeof value === 'string');
   const headerParts = [data.useragent, data.userAgent, data.referer, data.referrer]
     .filter(value => typeof value === 'string').slice(0, 8);
   if (data.headers && typeof data.headers === 'object' && !Array.isArray(data.headers)) {
-    for (const value of Object.values(data.headers).slice(0, 16)) {
+    const values = Object.values(data.headers);
+    complete = complete && values.length <= 16 && values.every(value => typeof value === 'string');
+    for (const value of values.slice(0, 16)) {
       if (typeof value === 'string') headerParts.push(value);
     }
+  } else if (data.headers !== undefined) {
+    complete = false;
   }
   const paramParts = [data.url, data.query, data.queryString]
     .filter(value => typeof value === 'string').slice(0, 8);
-  return {
-    header: decodeSafely(headerParts.join(' ')),
-    parameter: decodeSafely(paramParts.join(' ')),
-  };
+  const header = decodeSafely(headerParts.join(' '));
+  const parameter = decodeSafely(paramParts.join(' '));
+  return { header: header.text, parameter: parameter.text,
+    complete: complete && header.complete && parameter.complete && headerParts.length + paramParts.length > 0 };
 }
 
 function readAlert(alert) {
@@ -131,6 +157,7 @@ function readAlert(alert) {
     level: Number.isInteger(level) && level >= 0 && level <= 16 ? level : null,
     tagged: ids.includes('T1190'),
     description: typeof description === 'string' ? description.slice(0, 1024) : '',
+    descriptionComplete: typeof description === 'string' && description.length <= 1024,
     requests: requestValues(data),
     repetitions,
   };
@@ -140,6 +167,11 @@ function readAlert(alert) {
 // A description that quotes the same text is NOT proof of an attack.
 const JNDI_REMOTE = /\$\{\s*jndi\s*:\s*(?:ldap|ldaps|rmi|dns|iiop|nis|corba)\s*:\/\/[^\s}]{1,512}\s*\}/iu;
 const NO_EXPLOIT = Object.freeze({ action: 'record', confidence: 0.1, reason: 'no_t1190_signal' });
+
+function normalApplicationActivity(row) {
+  return row.descriptionComplete && row.requests.complete
+    && /^(?:공개\s*화면을\s*열었습니다|상태\s*확인\s*주소가\s*열렸습니다|로그인이\s*성공했습니다|정적\s*스타일\s*파일을\s*받았습니다|내\s*메모를\s*조회했습니다|세션\s*유지를\s*확인했습니다|반\s*공지를\s*조회했습니다|로그아웃했습니다)\.?$/u.test(row.description.trim());
+}
 
 export function decide(alert) {
   const row = readAlert(alert);
@@ -170,6 +202,10 @@ export function decide(alert) {
       && (row.tagged || row.level !== null && row.level >= 5)) {
     const pattern = scan ? PATTERNS[4] : PATTERNS[5];
     return { action: 'alert', confidence: pattern.confidence, reason: pattern.name };
+  }
+  if (row.at && row.source && row.level !== null && !inHeader && !inParameter && !rawHint && !hint
+      && normalApplicationActivity(row)) {
+    return { action: 'record', confidence: 0.1, reason: 'normal_application_activity' };
   }
   return { ...NO_EXPLOIT };
 }

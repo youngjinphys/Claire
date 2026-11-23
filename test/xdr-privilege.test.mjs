@@ -109,6 +109,7 @@ test('심판 격리: decide.mjs만 복사, import 없이 동기 판정 가능', 
     const run=spawnSync(process.execPath,['--input-type=module','--eval',script],{
       cwd:dir,encoding:'utf8',timeout:4000,env:{PATH:process.env.PATH??''},
     });
+    assert.ifError(run.error);
     assert.equal(run.status,0,run.stderr||String(run.error));
     assert.equal(run.stderr,'');
     const decisions=JSON.parse(run.stdout);

@@ -135,9 +135,12 @@ function createChart(onFilter) {
     });
   };
 }
-export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
+export function initOperations({getToken=()=>null,getDeviceProof=()=>null,requestTimeoutMs=12000}={}) {
+  if(!Number.isSafeInteger(requestTimeoutMs)||requestTimeoutMs<1||requestTimeoutMs>60000)throw Error('OPERATIONS_REQUEST_LIMIT_INVALID');
   let snapshot=null;
   let requestNumber=0;
+  let activeRequest=null;
+  let suspended=false,scheduledRefresh=null;
   const stage=byId('filter-stage'),kind=byId('filter-kind'),outcome=byId('filter-state');
   const table=byId('evidence-body');
   const count=byId('table-count');
@@ -210,7 +213,29 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
   }
   const button=byId('ops-refresh');
   async function refresh(){
+    if(suspended)return;
     const current=++requestNumber;
+    activeRequest?.abort();
+    const controller=new AbortController();activeRequest=controller;
+    let reader,responseBody,onAbort;
+    const discarded=new WeakSet();
+    const discard=()=>{
+      const stream=reader||responseBody;
+      if(!stream||(typeof stream!=='object'&&typeof stream!=='function')||discarded.has(stream))return;
+      discarded.add(stream);
+      const release=()=>{try{stream.releaseLock?.();}catch{}};
+      try{const pending=stream.cancel();release();void Promise.resolve(pending).then(release,release);}
+      catch{release();}
+    };
+    const deadline=performance.now()+requestTimeoutMs;
+    const check=()=>{
+      if(controller.signal.aborted||performance.now()>=deadline)throw Error('OBSERVATION_CANCELLED');
+    };
+    const stopped=new Promise((_,reject)=>{
+      onAbort=()=>reject(Error('OBSERVATION_CANCELLED'));
+      controller.signal.addEventListener('abort',onAbort,{once:true});
+    });
+    const timer=setTimeout(()=>controller.abort(),requestTimeoutMs);
     button.setAttribute('aria-disabled','true');
     byId('ops-state').classList.remove('status-failed');
     byId('ops-state').textContent='HTTP 관측 중 · 완료 전 수치 변경 없음';
@@ -222,22 +247,63 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
         const proof=getDeviceProof();
         if(typeof proof==='string'&&proof)headers['x-aleph-device-proof']=proof;
       }
-      const response=await fetch('/api/ops',{
-        method:'GET',headers,cache:'no-store',redirect:'error',signal:AbortSignal.timeout(12000),
-      });
-      if(!response.ok)throw Error('HTTP_'+response.status);
-      const body=await response.json();
+      const read=async()=>{
+        check();
+        const response=await fetch('/api/ops',{
+          method:'GET',headers,cache:'no-store',redirect:'error',signal:controller.signal,
+        });
+        responseBody=response?.body;
+        try{
+          check();
+          if(!response.ok)throw Error('HTTP_'+response.status);
+          if(response.redirected||!/^application\/json(?:;|$)/iu.test(response.headers?.get('content-type')||'')
+            ||typeof responseBody?.getReader!=='function')throw Error('INVALID_EVIDENCE_CONTRACT');
+          const declared=response.headers.get('content-length');
+          if(declared!==null&&(!/^\d+$/u.test(declared)||Number(declared)>262144))throw Error('INVALID_EVIDENCE_CONTRACT');
+          reader=responseBody.getReader();
+          const decoder=new TextDecoder('utf-8',{fatal:true});let text='',size=0;
+          while(true){
+            const part=await reader.read();check();if(part.done)break;
+            size+=part.value.byteLength;if(size>262144)throw Error('INVALID_EVIDENCE_CONTRACT');
+            text+=decoder.decode(part.value,{stream:true});
+          }
+          const body=JSON.parse(text+decoder.decode());check();return body;
+        }finally{discard();}
+      };
+      const body=await Promise.race([read(),stopped]);
+      check();
       if(current!==requestNumber)return;
       validateSnapshot(body);
+      check();
       render(body);
     }catch(error){
       if(current!==requestNumber)return;
+      if(controller.signal.aborted||performance.now()>=deadline){controller.abort();error=Error('OBSERVATION_CANCELLED');}
       const code=/^(?:HTTP_\d{3}|INVALID_EVIDENCE_CONTRACT|SERVER_RECORD_COUNT_MISMATCH)$/u.test(error?.message)
         ? ' ('+error.message+')' : '';
       byId('ops-state').textContent='증적 조회 실패'+code+(snapshot?' · 마지막으로 받은 기록을 표시합니다.':' · 다시 시도할 수 있습니다.');
       byId('ops-state').classList.add('status-failed');
       if(!snapshot)byId('ops-info').textContent='받은 HTTP 기록 없음';
-    }finally{if(current===requestNumber)button.setAttribute('aria-disabled','false');}
+    }finally{
+      clearTimeout(timer);controller.signal.removeEventListener('abort',onAbort);controller.abort();discard();
+      if(activeRequest===controller)activeRequest=null;
+      if(current===requestNumber)button.setAttribute('aria-disabled','false');
+    }
+  }
+  function scheduleRefresh(resume=false){
+    if((suspended&&!resume)||scheduledRefresh)return;
+    // Invalidate the old identity immediately, but start its replacement in
+    // a task after all current lifecycle listeners and microtasks have run.
+    requestNumber++;
+    activeRequest?.abort();activeRequest=null;
+    button.setAttribute('aria-disabled','true');
+    const ticket={};scheduledRefresh=ticket;
+    ticket.timer=setTimeout(()=>{
+      if(scheduledRefresh!==ticket)return;
+      scheduledRefresh=null;
+      if(resume)suspended=false;
+      if(!suspended)void refresh();
+    },0);
   }
   const updateChart=createChart((value,keyboard)=>{
     stage.value='all';kind.value='all';outcome.value=value;rows();
@@ -247,17 +313,45 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
   const paintChart=()=>updateChart({records:snapshot?.records||[]});
   for(const item of [stage,kind,outcome])item.addEventListener('change',rows);
   button.addEventListener('click',()=>{
-    if(button.getAttribute('aria-disabled')!=='true')void refresh();
+    if(button.getAttribute('aria-disabled')!=='true')scheduleRefresh();
   });
   exportButton.addEventListener('click',()=>{
     if(!snapshot)return;
-    const data=JSON.stringify(snapshot,null,2)+'\n';
-    const url=URL.createObjectURL(new Blob([data],{type:'application/json'}));
-    const a=$('a');a.href=url;a.download='aleph-operations-redacted.json';a.click();
-    URL.revokeObjectURL(url);
+    let url,link;
+    try{
+      const data=JSON.stringify(snapshot,null,2)+'\n';
+      url=URL.createObjectURL(new Blob([data],{type:'application/json'}));
+      link=$('a');link.href=url;link.download='aleph-operations-redacted.json';
+      doc.body.append(link);link.click();
+      byId('ops-state').textContent='JSON 저장을 요청했습니다. 브라우저 다운로드 결과를 확인하세요. 관측 기록은 유지됩니다.';
+      byId('ops-state').classList.remove('status-failed');
+    }catch{
+      byId('ops-state').textContent='JSON 저장 확인 불가 · 브라우저 파일 저장 권한을 확인하고 직접 다시 시도하세요. 관측 기록은 유지됩니다.';
+      byId('ops-state').classList.add('status-failed');
+    }finally{
+      try{link?.remove();}catch{}
+      if(url)setTimeout(()=>{try{URL.revokeObjectURL(url);}catch{}},5000);
+    }
   });
   byId('ops-reset').addEventListener('click',()=>{stage.value='all';kind.value='all';outcome.value='all';rows();});
-  window.addEventListener('aleph:session',refresh);
+  window.addEventListener('aleph:session',()=>scheduleRefresh());
+  // Cancellation must work in either capture or registration order. A
+  // listener that announced a session change earlier can only queue work.
+  window.addEventListener('pagehide',()=>{
+    suspended=true;requestNumber++;
+    const queued=scheduledRefresh;scheduledRefresh=null;
+    if(queued)clearTimeout(queued.timer);
+    const request=activeRequest;activeRequest=null;
+    request?.abort();
+    button.setAttribute('aria-disabled','true');
+    if(request||queued){
+      byId('ops-state').textContent='관측 일시 중지'+(snapshot?' · 마지막으로 받은 기록을 표시합니다.':' · 페이지 복귀 후 다시 조회합니다.');
+      byId('ops-state').classList.remove('status-failed');
+    }
+  },{capture:true});
+  window.addEventListener('pageshow',()=>{
+    if(suspended)scheduleRefresh(true);
+  },{capture:true});
   paintChart();
   rows();refresh();
 }

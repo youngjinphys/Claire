@@ -1,10 +1,13 @@
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { deploymentIdentity } from './deployment-identity.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const source = resolve(root, 'data.json');
 const output = resolve(root, 'public', 'data.json');
+const identityPath = resolve(root, 'public', 'aleph.json');
+// A local or failed build must not advertise an earlier production commit.
+await rm(identityPath, { force: true });
 const config = JSON.parse(await readFile(resolve(root, 'aleph.config.json'), 'utf8'));
 
 await mkdir(resolve(root, 'public'), { recursive: true });
@@ -26,7 +29,7 @@ if (config.step === 1) {
 
 if (!process.argv.includes('--local')) {
   const identity = deploymentIdentity(process.env, config);
-  await writeFile(resolve(root, 'public', 'aleph.json'),
+  await writeFile(identityPath,
     `${JSON.stringify(identity, null, 2)}\n`, 'utf8');
   console.log('배포 저장소·커밋·주소를 public/aleph.json에 기록했습니다.');
 }

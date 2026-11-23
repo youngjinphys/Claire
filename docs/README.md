@@ -1,6 +1,8 @@
 # Claire 문서 색인
 
-**현재 안내 검토:** 2026-11-18 코드·계약 감사. 기준 소스와 검토 범위는 [DOCUMENTATION_STATUS.json](DOCUMENTATION_STATUS.json)에 기록합니다. 특정 이전 커밋을 현재 HEAD라고 고정하지 않습니다. 버전은 저장소에서 `git rev-parse HEAD`로 확인하고, 시험 결과는 해당 SHA의 CI/실측과 연결합니다. 문서 개정은 운영 DB·방화벽·공식 성취를 변경하지 않습니다. 코드 존재, 합성 시험, CI 실행, 사용자 PC 실측, 운영 연결, 공식 평가를 분리합니다.
+**현재 안내 검토:** 2026-11-23 코드·계약 감사. 기준 소스와 검토 범위는 [DOCUMENTATION_STATUS.json](DOCUMENTATION_STATUS.json)에 기록합니다. 특정 이전 커밋을 현재 HEAD라고 고정하지 않습니다. 버전은 저장소에서 `git rev-parse HEAD`로 확인하고, 시험 결과는 해당 SHA의 CI/실측과 연결합니다. 문서 개정은 운영 DB·방화벽·공식 성취를 변경하지 않습니다. 코드 존재, 합성 시험, CI 실행, 사용자 PC 실측, 운영 연결, 공식 평가를 분리합니다.
+
+이번 재귀 검토의 원인별 수정과 라운드 판정은 [검토 기록](RECURSIVE_REVIEW_2026-11-23.json)에 남깁니다.
 
 ## 먼저 읽기
 
@@ -12,7 +14,7 @@
 
 ## 현행 안내
 
-아래 문서는 현재 사용/개발 범위입니다. 날짜가 파일명에 남아 있어도 이 목록에 있으면 내용은 현행 안내이며, 과거 실측과 현재 live 상태를 섞지 않습니다. `AUTH_COOKIE_GENERATIONS.md`의 상세 경계는 기존 내용을 유지합니다.
+아래 문서는 현재 사용/개발 범위입니다. 날짜가 파일명에 남아 있어도 이 목록에 있으면 내용은 현행 안내이며, 과거 실측과 현재 live 상태를 섞지 않습니다. `AUTH_COOKIE_GENERATIONS.md`는 v2 서명 기한과 배포·재로그인 조건을 설명합니다.
 
 - [README.md](../README.md)
 - [docs/AUTH_COOKIE_GENERATIONS.md](AUTH_COOKIE_GENERATIONS.md)
@@ -85,10 +87,12 @@ CURRICULUM·시작 틀 manifest·재현 JSON·원 함수 기준표·기존 설�
 2. 기능 추가·수정 시 해당 주제 안내와 한계를 같이 대조합니다. 계획을 완료 기능으로 적지 않습니다.
 3. 버전·실행 결과는 package/같은 커밋의 CI·실제 관측 근거를 확인합니다. 과거 시험 횟수·성능 보장·모델 작업 메타정보를 현재 사실로 반복하지 않습니다.
 4. 기존 원본·제출 증적의 해시를 바꾸어 현재 코드에 맞춘 것처럼 만들지 않습니다.
-5. `package/bundle-commit-files.json`은 Stage 12 제출 묶음의 파일 집합이고, `package/commit-files.json`은 현재 커밋의 부모 대비 변경 목록입니다. 두 manifest를 혼용하지 않습니다. CI는 후자만 Git diff와 대조합니다.
+5. `package/bundle-commit-files.json`은 Stage 12 제출 묶음의 파일 집합이고, `package/commit-files.json`은 현재 커밋의 부모 대비 변경 목록입니다. 두 manifest를 혼용하지 않습니다. CI는 PR의 병합 결과에서 전체 회귀시험을 실행하되, 후자는 정확한 원천 커밋과 그 부모의 Git diff로 따로 대조합니다.
 
 전체 51개 Markdown 파일의 현행 35개·보호 원본 5개·과거 증적(이전 README/프롬프트 사본 포함) 11개 분류는 [DOCUMENTATION_STATUS.json](DOCUMENTATION_STATUS.json)에 있습니다. 보존본은 현재 실행 지침이 아닙니다. 이후 문서/코드 불일치를 방지하려고 [문서 일관성 회귀시험](../test/docs-consistency.test.mjs)에서 분류·상대 링크·주요 코드 계약을 확인합니다.
 
 ### 읽기 전용 감사 검증
 
-커밋 메시지에 `[readonly-audit]`를 사용하는 단일 fast-forward 변경은 허용 파일 목록·부모 대비 변경 목록 검증을 거쳐 Linux·Windows·macOS에서 문서와 호스트 관측 회귀시험만 실행합니다. 범위를 벗어나면 실패합니다. 일반 커밋 및 PR은 기존 전체 품질 검사를 유지합니다. 이 경로는 포장, 공격 모의시험, 운영 배포를 실행하지 않으며 시험용 fixture는 사용자 PC 실측을 입증하지 않습니다.
+모든 push와 PR은 [Quality checks](../.github/workflows/quality.yml)의 기본 Linux·Windows 품질 검사를 실행합니다. push의 HEAD 커밋 메시지에 `[readonly-audit]`가 있으면 Linux·Windows·macOS의 `readonly-audit` 작업이 추가됩니다. 이 추가 작업은 단일 fast-forward 변경인지 확인하고 허용 파일 목록·부모 대비 변경 목록을 검증한 뒤, 클라이언트 구문 검사와 문서·호스트 관측 회귀시험을 실행합니다. 허용 범위를 벗어나면 해당 작업이 실패합니다.
+
+추가 감사 작업 자체는 포장, 공격 모의시험, 운영 배포를 실행하지 않습니다. 기본 품질 검사의 실행 범위는 감사 태그로 축소되지 않으며, 시험용 fixture는 사용자 PC 실측을 입증하지 않습니다. 배포 식별자 확인과의 구분은 [배포 드리프트 대응 안내](DEPLOYMENT_DRIFT_RUNBOOK_2026-10-30.md)를 참고하세요.

@@ -83,6 +83,7 @@ test('Standalone judge module runs without any sibling files or network',async()
       'console.log(JSON.stringify(await Promise.all(xs.map(x=>m.decide(x)))));';
     const child=spawnSync(process.execPath,['--input-type=module','--eval',program],
       {cwd:dir,encoding:'utf8',timeout:5000,env:{PATH:process.env.PATH??''}});
+    assert.ifError(child.error);
     assert.equal(child.status,0,child.stderr||String(child.error));
     const result=JSON.parse(child.stdout);
     assert.deepEqual(result.map(v=>v.decision),['allow','deny','deny']);

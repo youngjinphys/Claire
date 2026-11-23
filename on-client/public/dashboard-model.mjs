@@ -1,3 +1,5 @@
+import { createResponseLifetime } from './http-response.mjs';
+
 export const HISTORY_WINDOW_MS = 10 * 60 * 1000;
 export const MAX_SAMPLES = 120;
 export const MAX_MEASUREMENT_AGE_MS = 30_000;
@@ -19,6 +21,36 @@ const validReason = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{2,63}
 const invalid = (key, reason, measuredAt = null) => ({
   status: 'unavailable', value: null, unit: METRIC_UNITS[key], source: SOURCES[key], measuredAt, reason,
 });
+const ROUNDING_HALF_UNIT = 0.005;
+const roundingSlack = (...values) => Number.EPSILON * 8 * Math.max(1, ...values.map(Math.abs));
+const matchesRounded = (display, exact) => Math.abs(display - exact)
+  <= ROUNDING_HALF_UNIT + roundingSlack(display, exact);
+
+function memoryValuesAgree(metric) {
+  if (!finite(metric.usedGiB) || !finite(metric.totalGiB) || metric.totalGiB < 0
+    || metric.usedGiB < 0 || metric.usedGiB > metric.totalGiB) return false;
+  const hasBytes = Object.hasOwn(metric, 'usedBytes') || Object.hasOwn(metric, 'totalBytes');
+  if (hasBytes) {
+    // Byte counts are the measurement; GiB and percent are rounded displays.
+    // Dividing the two displays again loses significant precision on small hosts.
+    return int(metric.usedBytes) && int(metric.totalBytes) && metric.totalBytes > 0
+      && metric.usedBytes >= 0 && metric.usedBytes <= metric.totalBytes
+      && matchesRounded(metric.value, metric.usedBytes / metric.totalBytes * 100)
+      && matchesRounded(metric.usedGiB, metric.usedBytes / 1024 ** 3)
+      && matchesRounded(metric.totalGiB, metric.totalBytes / 1024 ** 3);
+  }
+  // Older records have only two-decimal GiB displays. Their possible exact
+  // values form rounding intervals, whose ratio bounds depend on capacity.
+  const slack = roundingSlack(metric.usedGiB, metric.totalGiB);
+  const usedLow = Math.max(0, metric.usedGiB - ROUNDING_HALF_UNIT - slack);
+  const usedHigh = metric.usedGiB + ROUNDING_HALF_UNIT + slack;
+  const totalLow = Math.max(0, metric.totalGiB - ROUNDING_HALF_UNIT - slack);
+  const totalHigh = metric.totalGiB + ROUNDING_HALF_UNIT + slack;
+  const lowestPercent = usedLow / totalHigh * 100;
+  const highestPercent = totalLow > 0 ? Math.min(100, usedHigh / totalLow * 100) : 100;
+  const percentSlack = ROUNDING_HALF_UNIT + roundingSlack(metric.value, lowestPercent, highestPercent);
+  return metric.value + percentSlack >= lowestPercent && metric.value - percentSlack <= highestPercent;
+}
 
 export function isIso(value) {
   if (typeof value !== 'string') return false;
@@ -38,21 +70,7 @@ function parseMetric(metric, key, checkedAt) {
   }
   if (metric.status !== 'ok' || !finite(metric.value) || metric.value < 0
       || (key !== 'disk' && metric.value > 100)) return invalid(key, 'MEASUREMENT_INVALID', metric.measuredAt);
-  if (key === 'memory') {
-    const hasBytes = Object.hasOwn(metric, 'usedBytes') || Object.hasOwn(metric, 'totalBytes');
-    if (hasBytes && (!int(metric.usedBytes) || !int(metric.totalBytes) || metric.totalBytes <= 0
-      || metric.usedBytes < 0 || metric.usedBytes > metric.totalBytes
-      || Math.abs(metric.usedBytes / metric.totalBytes * 100 - metric.value) > 0.011
-      || Math.abs(metric.usedBytes / 1024 ** 3 - metric.usedGiB) > 0.00501
-      || Math.abs(metric.totalBytes / 1024 ** 3 - metric.totalGiB) > 0.00501)) {
-      return invalid(key, 'MEMORY_INVALID', metric.measuredAt);
-    }
-    if (!finite(metric.usedGiB) || !finite(metric.totalGiB) || metric.totalGiB <= 0
-      || metric.usedGiB < 0 || metric.usedGiB > metric.totalGiB
-      || Math.abs(metric.usedGiB / metric.totalGiB * 100 - metric.value) > 3) {
-      return invalid(key, 'MEMORY_INVALID', metric.measuredAt);
-    }
-  }
+  if (key === 'memory' && !memoryValuesAgree(metric)) return invalid(key, 'MEMORY_INVALID', metric.measuredAt);
   if (key === 'cpu' && (!isIso(metric.measuredFrom) || Date.parse(metric.measuredFrom) > stamp
     || !finite(metric.windowMs) || metric.windowMs < 100 || metric.windowMs > 5000
     || stamp - Date.parse(metric.measuredFrom) < 100
@@ -103,7 +121,7 @@ export function readingFreshness(stamp, now = Date.now()) {
   return age > MAX_MEASUREMENT_AGE_MS ? 'stale' : 'recent';
 }
 const withinAge = (stamp, now) => readingFreshness(stamp, now) === 'recent';
-function trimHistory(history, now) {
+export function trimHistory(history, now = Date.now()) {
   return (Array.isArray(history) ? history : [])
     .filter(point => finite(point?.time) && point.time > now - HISTORY_WINDOW_MS && point.time <= now + 1000)
     .slice(-MAX_SAMPLES);
@@ -114,10 +132,16 @@ export function appendGap(history, now = Date.now()) {
   return [...recent, { time: now, cpu: null, memory: null }].slice(-MAX_SAMPLES);
 }
 export function appendSample(history, snapshot, now = Date.now()) {
-  const recent = trimHistory(history, now);
+  let recent = trimHistory(history, now);
   if (snapshot?.status !== 'ok' || !withinAge(snapshot.checkedAt, now)) return appendGap(recent, now);
   const time = Date.parse(snapshot.checkedAt);
-  if (recent.length && time <= recent[recent.length - 1].time) return recent;
+  const previous = Array.isArray(history) ? history.at(-1) : null;
+  const previousTime = previous?.time;
+  const alreadySeparated = previous?.cpu === null && previous?.memory === null && !Object.hasOwn(previous, 'metrics');
+  // Compare acquisition order before retention can remove future-dated points.
+  // Equal timestamps are a reused cached sample; a reversal is a real gap.
+  if (!alreadySeparated && finite(previousTime) && time < previousTime) recent = appendGap(recent, time);
+  else if (!alreadySeparated && time === previousTime) return recent;
   const percent = key => {
     const metric = snapshot.metrics?.[key];
     return metric?.status === 'ok' && withinAge(metric.measuredAt, now) ? metric.value : null;
@@ -299,18 +323,22 @@ export function exportMeasurements(history, generatedAt = new Date().toISOString
 // cookies to external origins, automatic retries, unbounded JSON, or leaked errors.
 export async function requestDashboardJson(path, {
   signal, fetchImpl = globalThis.fetch, timeoutMs = 12000, maxBytes = 262144,
+  monotonic = () => performance.now(),
 } = {}) {
   if (!['/api/local-pc', '/api/me', '/api/events'].includes(path)) throw Error('PATH_NOT_ALLOWED');
   if (!int(timeoutMs) || timeoutMs < 10 || timeoutMs > 30000
-    || !int(maxBytes) || maxBytes < 64 || maxBytes > 1048576) throw Error('REQUEST_LIMIT_INVALID');
+    || !int(maxBytes) || maxBytes < 64 || maxBytes > 1048576 || typeof monotonic !== 'function') throw Error('REQUEST_LIMIT_INVALID');
   if (signal?.aborted) throw Error('REQUEST_CANCELLED');
-  const local = new AbortController();
-  let timer, cancel, reader, responseBody;
-  const discardBody = () => {
-    try {
-      const task = reader ? reader.cancel() : responseBody?.cancel();
-      if (task) void task.catch(() => {});
-    } catch { /* A late or locked stream must not replace the original error. */ }
+  const started = monotonic(), deadline = started + timeoutMs;
+  if (!finite(started)) throw Error('REQUEST_LIMIT_INVALID');
+  // The supplied clock may synchronously cancel before the listener is attached.
+  if (signal?.aborted) throw Error('REQUEST_CANCELLED');
+  const local = new AbortController(), lifetime = createResponseLifetime(local.signal);
+  let timer, cancel;
+  const check = () => {
+    const now = monotonic();
+    if (!finite(now) || now < started || now >= deadline) throw Error('LOCAL_FETCH_FAILED');
+    if (local.signal.aborted) throw Error('REQUEST_CANCELLED');
   };
   const stopped = new Promise((_, reject) => {
     const end = code => { local.abort(); reject(Error(code)); };
@@ -319,42 +347,44 @@ export async function requestDashboardJson(path, {
     timer = setTimeout(() => end('LOCAL_FETCH_FAILED'), timeoutMs);
   });
   const work = async () => {
-    const response = await fetchImpl(path, {
+    check();
+    const response = lifetime.response(await fetchImpl(path, {
       cache: 'no-store', credentials: 'same-origin', mode: 'same-origin', redirect: 'error',
       headers: { Accept: 'application/json' }, signal: local.signal,
-    });
-    responseBody = response?.body ?? null;
+    }));
     try {
-      if (local.signal.aborted) throw Error('REQUEST_CANCELLED');
-    const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (type !== 'application/json' || response.redirected) throw Error('RESPONSE_CONTRACT_INVALID');
-    const declared = response.headers.get('content-length');
-    if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw Error('RESPONSE_TOO_LARGE');
-    if (!response.body || typeof response.body.getReader !== 'function') throw Error('RESPONSE_CONTRACT_INVALID');
-    reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8', { fatal: true });
-    let bytes = 0, text = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      if (local.signal.aborted) throw Error('REQUEST_CANCELLED');
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > maxBytes) throw Error('RESPONSE_TOO_LARGE');
-      try { text += decoder.decode(value, { stream: true }); }
+      check();
+      const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (type !== 'application/json' || response.redirected) throw Error('RESPONSE_CONTRACT_INVALID');
+      const declared = response.headers.get('content-length');
+      if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw Error('RESPONSE_TOO_LARGE');
+      if (!response.body || typeof response.body.getReader !== 'function') throw Error('RESPONSE_CONTRACT_INVALID');
+      const reader = lifetime.reader(response.body.getReader());
+      const decoder = new TextDecoder('utf-8', { fatal: true });
+      let bytes = 0, text = '';
+      while (true) {
+        check();
+        const { value, done } = await reader.read();
+        check();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > maxBytes) throw Error('RESPONSE_TOO_LARGE');
+        try { text += decoder.decode(value, { stream: true }); }
+        catch { throw Error('RESPONSE_CONTRACT_INVALID'); }
+      }
+      let body;
+      try { text += decoder.decode(); body = JSON.parse(text); }
       catch { throw Error('RESPONSE_CONTRACT_INVALID'); }
-    }
-    let body;
-    try { text += decoder.decode(); body = JSON.parse(text); }
-    catch { throw Error('RESPONSE_CONTRACT_INVALID'); }
-    if (!isObject(body) || typeof body.ok !== 'boolean' || (!response.ok && body.ok !== false)) throw Error('RESPONSE_CONTRACT_INVALID');
+      check();
+      if (!isObject(body) || typeof body.ok !== 'boolean' || (!response.ok && body.ok !== false)) throw Error('RESPONSE_CONTRACT_INVALID');
       return body;
-    } finally {
-      // Also runs when fetch resolves after the request deadline.
-      discardBody();
-    }
+    } finally { lifetime.close(); }
   };
-  try { return await Promise.race([stopped, work()]); }
-  catch (error) {
+  try {
+    const value = await Promise.race([stopped, work()]);
+    check();
+    return value;
+  } catch (error) {
     const code = ['REQUEST_CANCELLED', 'RESPONSE_TOO_LARGE', 'RESPONSE_CONTRACT_INVALID'].includes(error?.message)
       ? error.message : 'LOCAL_FETCH_FAILED';
     throw Error(code);
@@ -362,6 +392,6 @@ export async function requestDashboardJson(path, {
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
     local.abort();
-    discardBody();
+    lifetime.close();
   }
 }

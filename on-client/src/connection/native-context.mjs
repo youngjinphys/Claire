@@ -83,13 +83,15 @@ async function registry(s,request,signal,work){
 }
 export async function openNativeHostOperation(host,call={}){
   const o=nativeOwn(call,[],['signal','timeoutMs']),signal=nativeSignal(o.signal),s=state(host),timeoutMs=o.timeoutMs??10000;
-  const loginCap=await openNativeOperation(s.login,{signal,timeoutMs}),binding=nativeOperationBinding(loginCap);
+  const loginCap=await openNativeOperation(s.login,{signal,timeoutMs});let cap;
   try{
+    // Retain the acquired login operation through binding and final validation.
+    const binding=nativeOperationBinding(loginCap);
     const selected=await registry(s,{action:'select',deadline:binding.deadline,binding:null},binding.signal,async raw=>{
       const d=nativeOwn(raw,['projectId','directoryInstance','registryRevision']);if(typeof d.projectId!=='string'||typeof d.directoryInstance!=='string'||!Number.isSafeInteger(d.registryRevision))throw nativeFault('RESPONSE_INVALID');await refreshNativeOperation(loginCap);return {outcome:'read',value:d};});
     const instance=physical(s.config.projectRoot);if(!s.project||s.project.directoryInstance!==selected.directoryInstance||s.project.nodeInstance!==instance){s.projectGeneration++;s.project={...selected,nodeInstance:instance};}
-    const cap=Object.freeze(Object.create(null)),op={host,loginCap,operationId:randomUUID(),binding,project:Object.freeze({...s.project}),projectGeneration:s.projectGeneration,signal:binding.signal,closed:false};operations.set(cap,op);s.operations.add(cap);assertNativeHostOperation(host,cap);return cap;
-  }catch(e){closeNativeOperation(loginCap);throw e;}
+    cap=Object.freeze(Object.create(null));const op={host,loginCap,operationId:randomUUID(),binding,project:Object.freeze({...s.project}),projectGeneration:s.projectGeneration,signal:binding.signal,closed:false};operations.set(cap,op);s.operations.add(cap);assertNativeHostOperation(host,cap);return cap;
+  }catch(e){if(cap&&operations.has(cap))closeNativeHostOperation(cap);else closeNativeOperation(loginCap);throw e;}
 }
 export function assertNativeHostOperation(host,cap){const {s,op}=operation(host,cap),c=assertNativeOperation(op.loginCap);
   if(s.configFile){const current=configurationFile(s.configFile.path).proof;if(current.digest!==s.configFile.digest||current.identity!==s.configFile.identity)throw nativeFault('CONTEXT_CHANGED');}

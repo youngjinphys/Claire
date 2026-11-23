@@ -492,3 +492,35 @@ test('unknown report reason strings are not reflected into rendered or normalize
   assert.equal(parsed.firewall.reason, 'INVALID_REPORT_FIELD');
   assert.doesNotMatch(JSON.stringify(parsed), /PRIVATE_DIAGNOSTIC_TEXT/);
 });
+
+test('host aggregate export removes its anchor when a browser click fails and retains the report',async t=>{
+  await withDocument(async()=>{
+    const latest=normalizeHostObservation(await report('win32',Date.now()));
+    const state={pending:false,latest,history:[],error:null,requestId:0};
+    const root=hostPanel(state,'disconnected');
+    const output=root.find(el=>el.tagName==='BUTTON'&&el.textContent.includes('비식별 집계'));
+    const attached=[],revoked=[],timers=[];
+    document.body={append(link){attached.push(link);}};
+    const create=document.createElement;
+    document.createElement=tag=>{
+      const element=create(tag);
+      if(tag==='a'){
+        element.click=()=>{throw Error('private blocked click');};
+        element.remove=()=>{attached.splice(attached.indexOf(element),1);};
+      }
+      return element;
+    };
+    t.mock.method(URL,'createObjectURL',()=> 'blob:fixture-host');
+    t.mock.method(URL,'revokeObjectURL',url=>revoked.push(url));
+    t.mock.method(globalThis,'setTimeout',(fn,delay)=>{timers.push({fn,delay});return 1;});
+    await output.click();
+    assert.equal(attached.length,0);
+    assert.equal(state.latest,latest);
+    assert.equal(output.disabled,false);
+    assert.match(root.textContent,/집계 파일 저장 확인 불가/u);
+    assert.doesNotMatch(root.textContent,/private blocked/u);
+    assert.equal(revoked.length,0);
+    assert.equal(timers.length,1);assert.equal(timers[0].delay,5000);
+    timers[0].fn();assert.deepEqual(revoked,['blob:fixture-host']);
+  });
+});

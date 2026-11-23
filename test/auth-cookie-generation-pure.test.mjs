@@ -10,10 +10,10 @@ test('ordered allocation and multi cookie parse',async()=>{
  let seq=0;const api=createAuthCookieGeneration({env,nextGeneration:async()=>String(++seq)});
  const first=await api.next(); const a=bytes();api.write(a,api.parse(''),first,{token:'first-token'});
  applyHeaders(a['Set-Cookie']);const second=await api.next();const b=bytes();api.write(b,api.parse(serialize()),second,{token:'second-token'});
- applyHeaders(b['Set-Cookie']);applyHeaders(a['Set-Cookie']); // delayed first response overwrites only the legacy slot
+ applyHeaders(b['Set-Cookie']);applyHeaders(a['Set-Cookie']); // delayed first response cannot replace the newer signed slot
  assert.equal(api.refreshToken(api.parse(serialize())),'second-token');
  assert.equal(api.parse(serialize()).selected.generation,2n);
- assert.equal(jar.get('aleph_refresh'),'first-token');
+ assert.equal(jar.has('aleph_refresh'),false);
  assert.equal(a['Set-Cookie'].every(s=>/HttpOnly; SameSite=Strict; Path=\/api\/auth/.test(s)),true);
  assert.equal(a['Set-Cookie'].every(s=>/Secure/.test(s)),true);
 });
@@ -28,23 +28,29 @@ test('tombstone after logout dominates delayed refresh',async()=>{
 });
 test('signed cookie cannot be forged to select a higher generation',async()=>{
  jar.clear();const api=createAuthCookieGeneration({env,nextGeneration:async()=> '4'});
- const good=bytes();api.write(good,api.parse(''),4n,{token:'original'});applyHeaders(good['Set-Cookie']);
+ const good=bytes();api.write(good,api.parse(''),await api.next(),{token:'original'});applyHeaders(good['Set-Cookie']);
  const corrupt=serialize()+'; aleph_auth_g_z999=r.fakesignature.new';
  assert.equal(api.parse(corrupt).invalid,true);
  const tamper=serialize().replace(/(aleph_auth_g_4=r\.[^;]*\.)original/u, '$1attacker');assert.equal(api.parse(tamper).invalid,true);
 });
 test('malformed, duplicated, too many cookies rejected and no legacy fallback',async()=>{
  const api=createAuthCookieGeneration({env,nextGeneration:async()=> '5'});
- const first=bytes();api.write(first,api.parse(''),5n,{token:'valid'});
+ const first=bytes();api.write(first,api.parse(''),await api.next(),{token:'valid'});
  applyHeaders(first['Set-Cookie']);const raw=serialize();
  for(const cookie of [raw+'; aleph_auth_g_5=invalid',raw+'; aleph_auth_g_oops=r.xxx.invalid', raw+'; aleph_auth_g_z999=x.nope.', raw.repeat(150)]){
   assert.equal(api.parse(cookie).invalid,true);
  }
 });
 test('allocator RPC yields exact integer string and fails closed',async()=>{
- const api=createAuthCookieGeneration({env,supabaseFactory:()=>({rpc:async()=>({data:'7',error:null})})});assert.equal(await api.next(),7n);
+ const api=createAuthCookieGeneration({env,supabaseFactory:()=>({rpc:async()=>({data:'7',error:null})})});assert.equal((await api.next()).generation,7n);
  for(const bad of [null,8, '0','001','9007199254740992']){
   const failing=createAuthCookieGeneration({env,supabaseFactory:()=>({rpc:async()=>({data:bad,error:null})})});
   await assert.rejects(failing.next(),/AUTH_GENERATION_UNAVAILABLE/);
  }
+});
+
+test('an allocator result after its monotonic deadline is rejected even before timer delivery',async()=>{
+ let now=0;
+ const api=createAuthCookieGeneration({env,monotonic:()=>now,supabaseFactory:()=>({rpc:()=>{now=8001;return Promise.resolve({data:'7',error:null});}})});
+ await assert.rejects(api.next(),/AUTH_GENERATION_UNAVAILABLE/);
 });

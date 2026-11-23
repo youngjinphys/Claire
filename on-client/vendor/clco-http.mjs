@@ -1,3 +1,4 @@
+import {createResponseLifetime} from '../public/http-response.mjs';
 // Internal derivative of Workbench transport; dedicated finite learner-support endpoint added.
 import {types} from 'node:util';
 const supportRecord=(value,keys)=>{
@@ -56,32 +57,46 @@ export function createClcoClient({ baseUrl, token, timeoutMs = 10000, maxRespons
   async function request(endpoint, body, { signal, readStream } = {}) {
     const support=endpoint==='/learner-support';
     if (signal && (support?Reflect.apply(supportAborted,signal,[]):signal.aborted)) throw fail('WB_CLCO_CANCELLED');
-    const controller = new AbortController();
-    let timedOut = false;
+    const controller = new AbortController(), lifetime = createResponseLifetime(controller.signal);
+    const deadline = performance.now() + timeoutMs;
+    let timedOut = false, stop;
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
     const cancel = () => controller.abort();
     if(signal){if(support)Reflect.apply(EventTarget.prototype.addEventListener,signal,['abort',cancel,{once:true}]);else signal.addEventListener('abort',cancel,{once:true});}
-    try {
-      const response = await fetch(base.href.replace(/\/$/, '') + endpoint, {
+    const check = () => {
+      if (performance.now() >= deadline) { timedOut = true; controller.abort(); }
+      if (controller.signal.aborted) throw fail(timedOut ? 'WB_CLCO_TIMEOUT' : 'WB_CLCO_CANCELLED');
+    };
+    const stopped = new Promise((_,reject) => { stop = () => reject(fail(timedOut ? 'WB_CLCO_TIMEOUT' : 'WB_CLCO_CANCELLED')); controller.signal.addEventListener('abort',stop,{once:true}); });
+    const work = async () => {
+      check();
+      const response = lifetime.response(await fetch(base.href.replace(/\/$/, '') + endpoint, {
         method: body ? 'POST' : 'GET',
         headers: { authorization: `Bearer ${token}`, accept: body?.stream ? 'text/event-stream' : 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
         redirect: 'manual',
-      });
+      }));
+      check();
       if(endpoint==='/learner-support'&&response.ok&&!/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(response.headers.get('content-type')??''))throw fail('WB_CLCO_INVALID_CONTENT_TYPE',response.status);
+      const declared=response.headers.get('content-length');
+      if(declared!==null&&(!/^\d+$/.test(declared)||Number(declared)>maxResponseBytes))throw fail('WB_CLCO_RESPONSE_TOO_LARGE',response.status);
       async function* boundedBytes() {
         let size = 0;
         if (!response.body) throw fail('WB_CLCO_INVALID_RESPONSE', response.status);
-        for await (const bytes of response.body) {
-          size += bytes.byteLength;
-          if (size > maxResponseBytes) throw fail('WB_CLCO_RESPONSE_TOO_LARGE', response.status);
-          yield bytes;
-        }
+        const reader = lifetime.reader(response.body.getReader());
+        try {
+          for (;;) {
+            check();const part = await reader.read();check();if (part.done) break;
+            const bytes = part.value;size += bytes.byteLength;
+            if (size > maxResponseBytes) throw fail('WB_CLCO_RESPONSE_TOO_LARGE', response.status);
+            yield bytes;
+          }
+        } finally { lifetime.close(); }
       }
       if (response.ok && body?.stream) {
         if (!/^text\/event-stream(?:;|$)/i.test(response.headers.get('content-type') ?? '')) throw fail('WB_CLCO_INVALID_CONTENT_TYPE', response.status);
-        return await readStream(boundedBytes(), { maxBytes: maxResponseBytes });
+        const result = await readStream(boundedBytes(), { maxBytes: maxResponseBytes });check();return result;
       }
       const bytes = [];
       for await (const chunk of boundedBytes()) bytes.push(chunk);
@@ -92,8 +107,9 @@ export function createClcoClient({ baseUrl, token, timeoutMs = 10000, maxRespons
         throw fail('WB_CLCO_INVALID_RESPONSE', response.status);
       }
       if (!response.ok || payload?.error || payload?._clco?.syntheticBlocked === true) throw serverFailure(response.status, payload);
-      return payload;
-    } catch (error) {
+      check();return payload;
+    };
+    try { const result=await Promise.race([work().finally(() => lifetime.close()), stopped]);check();return result; } catch (error) {
       if (error?.[ownError]) throw error;
       if (timedOut) throw fail('WB_CLCO_TIMEOUT');
       if (signal && (support?Reflect.apply(supportAborted,signal,[]):signal.aborted)) throw fail('WB_CLCO_CANCELLED');
@@ -106,7 +122,7 @@ export function createClcoClient({ baseUrl, token, timeoutMs = 10000, maxRespons
     } finally {
       clearTimeout(timer);
       if(signal){if(support)Reflect.apply(EventTarget.prototype.removeEventListener,signal,['abort',cancel]);else signal.removeEventListener('abort',cancel);}
-      controller.abort();
+      controller.signal.removeEventListener('abort',stop);controller.abort();lifetime.close();
     }
   }
 

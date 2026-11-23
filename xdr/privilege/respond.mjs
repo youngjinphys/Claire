@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
-import { isIP } from 'node:net';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decide } from './decide.mjs';
 import { extractAlert } from './read-alerts.mjs';
+import { candidateExpiry, findActiveDenyCandidate } from '../candidate-validation.mjs';
+import { mergeCandidateIntervals } from '../candidate-intervals.mjs';
+import { addressIdentity } from '../address-identity.mjs';
+import { hasNormalEvidence } from '../normal-evidence.mjs';
 
 const TTL_MS = 15 * 60 * 1000;
 
@@ -28,8 +31,10 @@ export function buildDenyCandidates(alerts, decisions) {
   const normalSources = new Set();
   for (const alert of alerts) {
     const row = extractAlert(alert);
-    if (row.sourceAddress && decide(alert).action === 'record') {
-      normalSources.add(row.sourceAddress);
+    const sourceIdentity = addressIdentity(row.sourceAddress);
+    if (sourceIdentity && row.account && normalizedAgent(alert)
+        && hasNormalEvidence('privilege', alert, row, decide(alert))) {
+      normalSources.add(sourceIdentity);
     }
   }
   const candidates = new Map();
@@ -43,37 +48,32 @@ export function buildDenyCandidates(alerts, decisions) {
         || verified.confidence < 0.85) continue;
 
     const row = extractAlert(alert);
+    const sourceIdentity = addressIdentity(row.sourceAddress);
     const agent = normalizedAgent(alert);
     const occurredAt = Date.parse(row.at);
-    if (!agent || !row.sourceAddress || !row.account
-        || !isIP(row.sourceAddress) || !Number.isFinite(occurredAt)
-        || normalSources.has(row.sourceAddress)) continue;
+    if (!agent || !sourceIdentity || !row.account
+        || !Number.isFinite(occurredAt) || normalSources.has(sourceIdentity)) continue;
 
-    const scopedKey = agent + '\0' + row.sourceAddress + '\0' + row.account;
-    const existing = candidates.get(scopedKey);
-    const expiry = occurredAt + TTL_MS;
-    if (existing) {
-      if (!existing.evidenceAlertIds.includes(alert.id)) existing.evidenceAlertIds.push(alert.id);
-      if (Date.parse(existing.startsAt) > occurredAt) existing.startsAt = row.at;
-      if (Date.parse(existing.expiresAt) < expiry) existing.expiresAt = new Date(expiry).toISOString();
-      existing.confidence = Math.max(existing.confidence, verified.confidence);
-      if (!existing.patterns.includes(verified.reason)) existing.patterns.push(verified.reason);
-    } else {
-      candidates.set(scopedKey, {
-        id: 'xdr.privilege.' + createHash('sha256').update(scopedKey).digest('hex').slice(0, 16),
-        agentName: agent, sourceAddress: row.sourceAddress, account: row.account,
-        startsAt: row.at, expiresAt: new Date(expiry).toISOString(),
-        evidenceAlertIds: [alert.id], patterns: [verified.reason],
-        confidence: verified.confidence,
-        requiresVerifiedSubjectBinding: true,
-        requiresVerifiedSessionBinding: true,
-        requiresEventCorrelation: true,
-        // No trustworthy sessionId exists in the Wazuh alert. Never manufacture one.
-        sessionId: null,
-      });
-    }
+    const expiry = candidateExpiry(occurredAt, TTL_MS);
+    if (!expiry) continue;
+    const scopedKey = agent + '\0' + sourceIdentity + '\0' + row.account;
+    const observations = candidates.get(scopedKey) ?? [];
+    observations.push({
+      id: 'xdr.privilege.' + createHash('sha256').update(scopedKey).digest('hex').slice(0, 16),
+      agentName: agent, sourceAddress: row.sourceAddress, account: row.account,
+      startsAt: row.at, expiresAt: expiry.expiresAt,
+      evidenceAlertIds: [alert.id], patterns: [verified.reason],
+      confidence: verified.confidence,
+      requiresVerifiedSubjectBinding: true,
+      requiresVerifiedSessionBinding: true,
+      requiresEventCorrelation: true,
+      // No trustworthy sessionId exists in the Wazuh alert. Never manufacture one.
+      sessionId: null,
+    });
+    candidates.set(scopedKey, observations);
   }
-  return [...candidates.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return [...candidates.values()].map(observations => mergeCandidateIntervals(observations))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 // Additional deny gate only. This DOES NOT revoke an existing session.
@@ -91,21 +91,22 @@ export function checkZTNAExtra({ upstreamDecision, trustedContext, rules }) {
   }
 
   const { sessionId, subjectId, agentName, account, sourceAddress, eventId, at } = trustedContext;
-  const timestamp = Date.parse(at);
+  const sourceIdentity = addressIdentity(sourceAddress);
+  const timestamp = typeof at === 'string' ? Date.parse(at) : NaN;
   if (typeof sessionId !== 'string' || !/^[a-z0-9][a-z0-9._:-]{7,127}$/iu.test(sessionId)
       || typeof subjectId !== 'string' || !/^[a-z0-9][a-z0-9._:-]{7,127}$/iu.test(subjectId)
       || !validWazuhId(eventId) || !Number.isFinite(timestamp)
-      || !isIP(sourceAddress ?? '')) {
+      || !sourceIdentity
+      || typeof agentName !== 'string' || !agentName || typeof account !== 'string' || !account) {
     return { action: 'pass', reason: 'invalid_verified_session_context' };
   }
 
-  const rule = rules.find(r => r.requiresVerifiedSubjectBinding === true
+  const rule = findActiveDenyCandidate(rules, timestamp, r => r.requiresVerifiedSubjectBinding === true
     && r.requiresVerifiedSessionBinding === true
     && r.requiresEventCorrelation === true
-    && r.agentName === agentName && r.sourceAddress === sourceAddress
-    && r.account === account && r.confidence >= 0.85
-    && Array.isArray(r.evidenceAlertIds) && r.evidenceAlertIds.includes(eventId)
-    && Date.parse(r.startsAt) <= timestamp && timestamp < Date.parse(r.expiresAt));
+    && r.agentName === agentName && addressIdentity(r.sourceAddress) === sourceIdentity
+    && r.account === account
+    && r.evidenceAlertIds.includes(eventId));
   return rule
     ? { action: 'deny', reason: rule.patterns[0], ruleId: rule.id }
     : { action: 'pass', reason: 'no_active_scoped_rule' };

@@ -107,6 +107,7 @@ test('심판 격리 실행: decide.mjs 한 파일만 복사하고 동기적으�
     const run = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
       cwd: dir, encoding: 'utf8', timeout: 4000, env: { PATH: process.env.PATH ?? '' },
     });
+    assert.ifError(run.error);
     assert.equal(run.status, 0, run.stderr || String(run.error));
     assert.equal(run.stderr, '');
     const actual = JSON.parse(run.stdout);

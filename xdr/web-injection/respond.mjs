@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
-import { isIP } from 'node:net';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decide } from './decide.mjs';
 import { extractAlert } from './read-alerts.mjs';
+import { candidateExpiry, findActiveDenyCandidate } from '../candidate-validation.mjs';
+import { mergeCandidateIntervals } from '../candidate-intervals.mjs';
+import { addressIdentity } from '../address-identity.mjs';
+import { hasNormalEvidence } from '../normal-evidence.mjs';
 
 const RULE_TTL_MS = 15 * 60 * 1000;
 
@@ -22,7 +25,8 @@ function safeRoute(url) {
 function corroboratedDecision(alert, proposal) {
   const local = decide(alert);
   return proposal?.action === 'block'
-    && proposal.confidence >= 0.85
+    && Number.isFinite(proposal.confidence)
+    && proposal.confidence >= 0.85 && proposal.confidence <= 1
     && local.action === 'block'
     && proposal.reason === local.reason
     && proposal.confidence === local.confidence
@@ -41,44 +45,41 @@ export function buildDenyCandidates(alerts, decisions) {
   // is not promoted to an address-blocking candidate in this fixture.
   const normalSources = new Set();
   for (const alert of alerts) {
-    if (!alert?.data?.srcip || !isIP(alert.data.srcip)) continue;
-    if (decide(alert).action === 'record') normalSources.add(alert.data.srcip);
+    const row = extractAlert(alert);
+    const sourceIdentity = addressIdentity(alert?.data?.srcip);
+    if (sourceIdentity && safeRoute(alert?.data?.url)
+        && hasNormalEvidence('web-injection', alert, row, decide(alert))) normalSources.add(sourceIdentity);
   }
   const grouped = new Map();
   for (const alert of alerts) {
-    if (!/^wi-[A-Za-z0-9-]{1,40}$/u.test(alert?.id || '')) continue;
+    if (typeof alert?.id !== 'string' || !/^wi-[A-Za-z0-9-]{1,40}$/u.test(alert.id)) continue;
     const outcome = corroboratedDecision(alert, decisionsById.get(alert.id));
     if (!outcome) continue;
     const row = extractAlert(alert);
     const sourceAddress = row.sourceAddress;
+    const sourceIdentity = addressIdentity(sourceAddress);
     const path = safeRoute(alert?.data?.url);
     const observedAt = Date.parse(row.at);
-    if (!sourceAddress || !path || !Number.isFinite(observedAt)
-      || normalSources.has(sourceAddress)) continue;
-    const key = sourceAddress + '\0' + path;
-    const expires = observedAt + RULE_TTL_MS;
-    if (!Number.isFinite(expires)) continue;
-    const known = grouped.get(key);
-    if (known) {
-      if (!known.evidenceAlertIds.includes(alert.id)) known.evidenceAlertIds.push(alert.id);
-      if (Date.parse(known.expiresAt) < expires) known.expiresAt = new Date(expires).toISOString();
-      if (Date.parse(known.startsAt) > observedAt) known.startsAt = row.at;
-      known.confidence = Math.max(known.confidence, outcome.confidence);
-      if (!known.patterns.includes(outcome.reason)) known.patterns.push(outcome.reason);
-    } else {
-      grouped.set(key, {
-        id: 'xdr.t1190.' + createHash('sha256').update(key).digest('hex').slice(0, 16),
-        sourceAddress,
-        path,
-        startsAt: row.at,
-        expiresAt: new Date(expires).toISOString(),
-        evidenceAlertIds: [alert.id],
-        patterns: [outcome.reason],
-        confidence: outcome.confidence,
-      });
-    }
+    if (!sourceIdentity || !path || !Number.isFinite(observedAt)
+      || normalSources.has(sourceIdentity)) continue;
+    const expiry = candidateExpiry(observedAt, RULE_TTL_MS);
+    if (!expiry) continue;
+    const key = sourceIdentity + '\0' + path;
+    const observations = grouped.get(key) ?? [];
+    observations.push({
+      id: 'xdr.t1190.' + createHash('sha256').update(key).digest('hex').slice(0, 16),
+      sourceAddress,
+      path,
+      startsAt: row.at,
+      expiresAt: expiry.expiresAt,
+      evidenceAlertIds: [alert.id],
+      patterns: [outcome.reason],
+      confidence: outcome.confidence,
+    });
+    grouped.set(key, observations);
   }
-  return [...grouped.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return [...grouped.values()].map(observations => mergeCandidateIntervals(observations))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 // This is an additive local gate, not a replacement for src/decider.mjs.
@@ -91,17 +92,14 @@ export function checkZTNAExtra({ upstreamDecision, trustedContext, rules }) {
     return { action: 'pass', reason: 'missing_trusted_context' };
   }
   const { sourceAddress, path, at } = trustedContext;
-  const now = Date.parse(at);
-  if (!Number.isFinite(now) || !isIP(sourceAddress || '') || typeof path !== 'string') {
+  const sourceIdentity = addressIdentity(sourceAddress);
+  const now = typeof at === 'string' ? Date.parse(at) : NaN;
+  if (!Number.isFinite(now) || !sourceIdentity
+      || typeof path !== 'string' || !path) {
     return { action: 'pass', reason: 'invalid_trusted_context' };
   }
-  const rule = rules.find((item) => item.sourceAddress === sourceAddress
-    && item.path === path
-    && Number.isFinite(Date.parse(item.startsAt))
-    && Date.parse(item.startsAt) <= now
-    && now < Date.parse(item.expiresAt)
-    && Array.isArray(item.evidenceAlertIds) && item.evidenceAlertIds.length > 0
-    && item.confidence >= 0.85);
+  const rule = findActiveDenyCandidate(rules, now, item => addressIdentity(item.sourceAddress) === sourceIdentity
+    && item.path === path);
   return rule
     ? { action: 'deny', reason: rule.patterns[0], ruleId: rule.id }
     : { action: 'pass', reason: 'no_active_scoped_rule' };

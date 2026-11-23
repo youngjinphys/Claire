@@ -9,7 +9,8 @@ import {isNativeHostContext} from '../connection/native-context.mjs';
 // - 조치 context 9필드: relay 검증 부분(subject·project·session·accessPolicyId·engineGeneration·sourcePolicyVersion) +
 //   host 가 native 결속에서 읽은 identityVersion. identityVersion 은 조치 권한을 넓히는 데 쓰지 않고 요청 사이 변화만 막는다.
 // - c1(#968): 자기 기기 철회 뒤 본인 영수증은 nativeHost(서버 host 가 만든 native host context)를 줄 때만 켠다.
-//   sdp-host.readOwnRevokedReceipt 가 영수증 전용 SDP listener + genuine host native ticket 으로 읽는다. 없으면 기존처럼 unknown 이다.
+//   sdp-host.readOwnRevokedReceipt 가 영수증 전용 SDP listener + genuine host native ticket 으로 읽는다.
+//   현재 문맥이나 유효한 본인 영수증으로 소유권을 확인하지 못하면 service는 조회를 거부하고 기존 원장을 보존한다.
 export function createSdpActionConfiguration({sdpHost,readIdentityVersion,databasePath,policy,clock,nativeHost}={}){
   if(!isOwnedSdpHostEngine(sdpHost)||typeof readIdentityVersion!=='function'||types.isProxy(readIdentityVersion)
     ||nativeHost!==undefined&&!isNativeHostContext(nativeHost))throw Error('INVALID_SDP_ACTION_CONFIGURATION');

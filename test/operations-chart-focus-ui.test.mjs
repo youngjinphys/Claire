@@ -35,8 +35,9 @@ class Element extends EventTarget {
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 let fixtureId=0;
 async function setup(t){
+  const win=new EventTarget();
   const saved=Object.fromEntries(['document','window','fetch'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
-  t.after(()=>{for(const [key,descriptor] of Object.entries(saved))if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];});
+  t.after(()=>{win.dispatchEvent(new Event('pagehide'));for(const [key,descriptor] of Object.entries(saved))if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];});
   const nodes=new Map(), doc={};
   const node=id=>{if(!nodes.has(id))nodes.set(id,new Element(doc));return nodes.get(id);};
   doc.body=new Element(doc);doc.activeElement=doc.body;
@@ -48,13 +49,13 @@ async function setup(t){
     {id:'anonymous_restore',outcome:'inconclusive',httpStatus:null},
   ],{target:'https://example.vercel.app'});
   const fetch=()=>pending;
-  for(const [key,value] of Object.entries({document:doc,window:new EventTarget(),fetch}))
+  for(const [key,value] of Object.entries({document:doc,window:win,fetch}))
     Object.defineProperty(globalThis,key,{configurable:true,writable:true,value});
   const {initOperations}=await import(`../public/operations.mjs?focus-test=${++fixtureId}`);
   initOperations();
   const bars=()=>node('outcomes-chart').children.filter(el=>el.getAttribute('role')==='button');
   const finish=async()=>{
-    release({ok:true,json:async()=>snapshot});
+    release(Response.json(snapshot));
     for(let i=0;i<100&&node('ops-target').textContent!==snapshot.target;i++)await tick();
     assert.equal(node('ops-target').textContent,snapshot.target,'fixture must finish rendering');
   };

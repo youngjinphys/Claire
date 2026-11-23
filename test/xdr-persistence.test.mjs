@@ -107,6 +107,7 @@ test('심판 격리 모듈: import·I/O 없이 단일 decide(alert)만 동기 �
     const execution=spawnSync(process.execPath,['--input-type=module','--eval',script],{
       cwd:dir,encoding:'utf8',timeout:4000,env:{PATH:process.env.PATH??''},
     });
+    assert.ifError(execution.error);
     assert.equal(execution.status,0,execution.stderr||String(execution.error));
     assert.equal(execution.stderr,'');
     assert.deepEqual(JSON.parse(execution.stdout).map(x=>x.action),['block','alert','record']);

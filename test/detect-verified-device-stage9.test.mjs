@@ -53,6 +53,29 @@ test('검증된 같은 기기의 비정상 네트워크+121건만 기기별 회�
   assert.deepEqual(examine(reads(200, { interval: 7000 })), { action: 'observe' });
 });
 
+test('UTC seconds and millisecond timestamps share the exact 120/121 boundary', () => {
+  for (const mixed of [false, true]) {
+    const input = reads(121);
+    input.forEach((raw, i) => {
+      const projection = attested.get(raw);
+      if (!mixed || i % 2 === 0) projection.at = projection.at.replace('.000Z', 'Z');
+    });
+    assert.deepEqual(examine(input.slice(0, 120)), { action: 'observe' });
+    assert.deepEqual(examine(input), {
+      action: 'propose_revocation', reasonCode: 'unusual_network_burst',
+      subject, deviceId: deviceA,
+    });
+  }
+});
+
+test('calendar rollover, non-UTC offsets and unsupported precision remain rejected', () => {
+  for (const at of ['2026-02-30T00:00:00Z', '2026-02-30T00:00:00.000Z',
+    '2026-10-01T24:00:00Z', '2026-10-01T00:00:00+00:00',
+    '2026-10-01T00:00:00.0Z', '2026-10-01T00:00:00.0000Z']) {
+    assert.deepEqual(examine(reads(121, { at })), { action: 'observe' }, at);
+  }
+});
+
 test('지역만 다르거나 121회만 있거나 판정 미허용이면 정상 관찰 유지', () => {
   assert.deepEqual(examine(reads(121, {networkDeviation:'usual'})), {action:'observe'});
   assert.deepEqual(examine(reads(121, {networkBaselineVerified:false})), {action:'observe'});

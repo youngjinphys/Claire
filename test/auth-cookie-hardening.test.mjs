@@ -152,10 +152,10 @@ test('oversized valid signed cookie set is never authenticated and explicit logi
 });
 
 test('invalid first generation cookie does not strand valid later cookie names', async () => {
-  const api = createAuthCookieGeneration({ env, nextGeneration: async () => '5' });
+  const api = createAuthCookieGeneration({ env, nextGeneration: async () => '4' });
   const browser = cookieJar();
   const res = mockResponse();
-  api.write(res, api.parse(''), 4n, { token: 'good' });
+  api.write(res, api.parse(''), await api.next(), { token: 'good' });
   browser.apply(res);
   const invalid = api.parse('aleph_auth_g_oops=r.bad.payload; ' + browser.header());
   assert.equal(invalid.invalid, true);

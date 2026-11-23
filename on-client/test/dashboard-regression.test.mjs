@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createLocalPcSampler } from '../src/local-pc-metrics.mjs';
 import {
   appendSample, appendGap, normalizeSnapshot, normalizeEvents, normalizeSecurity, trendSummary,
-  MAX_SAMPLES, seriesSegments, securityCardState, pairedSamples, readingFreshness,
+  MAX_SAMPLES, HISTORY_WINDOW_MS, seriesSegments, securityCardState, pairedSamples, readingFreshness, trimHistory, exportMeasurements,
 } from '../public/dashboard-model.mjs';
 
 const stamp = time => new Date(time).toISOString();
@@ -20,6 +21,70 @@ function measured(time, extras = {}) {
     },
   };
 }
+test('memory normalization retains exact byte evidence despite small-capacity display rounding', async () => {
+  const time = Date.UTC(2026, 10, 23), mib = 1024 ** 2;
+  for (const [totalBytes, freeBytes] of [[128 * mib, mib], [mib, 0], [mib, mib], [312 * mib, 37 * mib], [Number.MAX_SAFE_INTEGER, 1]]) {
+    const sampler = createLocalPcSampler({
+      cpus: () => [], totalmem: () => totalBytes, freemem: () => freeBytes,
+      statfsRead: async () => ({ bsize: 1n, bavail: 1n }),
+      clock: () => new Date(time), monotonic: () => 0, wait: async () => {},
+    });
+    const data = await sampler.sample();
+    const normalized = normalizeSnapshot({ ok: true, data });
+    assert.equal(data.metrics.memory.status, 'ok');
+    assert.equal(normalized.metrics.memory.status, 'ok', `${totalBytes} total / ${freeBytes} free`);
+    assert.equal(normalized.metrics.memory.usedBytes, totalBytes - freeBytes);
+    assert.equal(normalized.metrics.memory.totalBytes, totalBytes);
+    assert.equal(normalized.metrics.memory.value, data.metrics.memory.value);
+  }
+});
+test('legacy memory percentages must fit capacity-dependent rounding intervals', () => {
+  const time = Date.UTC(2026, 10, 23), metric = measured(time).data.metrics.memory;
+  for (const value of [49.91, 50, 50.09]) {
+    assert.equal(normalizeSnapshot(measured(time, { memory: { ...metric, value } })).metrics.memory.status, 'ok');
+  }
+  for (const value of [49.9, 50.1, 52.9, 47.1]) {
+    assert.equal(normalizeSnapshot(measured(time, { memory: { ...metric, value } })).metrics.memory.reason, 'MEMORY_INVALID');
+  }
+  assert.equal(normalizeSnapshot(measured(time, { memory: { ...metric, usedGiB: 0.12, totalGiB: 0.13, value: 99.22 } })).metrics.memory.status, 'ok');
+});
+test('memory raw evidence cannot be repaired by plausible rounded display fields', () => {
+  const time = Date.UTC(2026, 10, 23), gib = 1024 ** 3;
+  const metric = { ...measured(time).data.metrics.memory, usedBytes: 4 * gib, totalBytes: 8 * gib };
+  for (const change of [{ value: 50.01 }, { usedGiB: 4.01 }, { totalGiB: 8.01 },
+    { totalBytes: 0 }, { usedBytes: -1 }, { usedBytes: 9 * gib }, { totalBytes: undefined },
+    { usedBytes: '4294967296' }, { usedGiB: NaN }, { totalGiB: Infinity }]) {
+    assert.equal(normalizeSnapshot(measured(time, { memory: { ...metric, ...change } })).metrics.memory.reason, 'MEMORY_INVALID');
+  }
+  const missing = { ...metric }; delete missing.usedBytes;
+  assert.equal(normalizeSnapshot(measured(time, { memory: missing })).metrics.memory.reason, 'MEMORY_INVALID');
+});
+test('cached duplicates coalesce while small and large clock reversals break continuity before trimming', () => {
+  const t = Date.UTC(2026, 10, 23);
+  const sample = time => normalizeSnapshot(measured(time));
+  const first = appendSample([], sample(t), t);
+  assert.deepEqual(appendSample(first, sample(t), t + 500), first);
+  for (const back of [500, 60000]) {
+    const original = appendSample(appendSample([], sample(t - back - 500), t - back - 500), sample(t), t);
+    const reversed = appendSample(original, sample(t - back), t - back);
+    assert.equal(reversed.at(-2).cpu, null, 'the acquisition reversal remains explicit');
+    assert.equal(reversed.at(-1).time, t - back);
+    assert.equal(trendSummary(reversed), null, 'old points do not become the new baseline');
+    const next = appendSample(reversed, sample(t - back + 500), t - back + 500);
+    assert.equal(trendSummary(next).from, t - back);
+    assert.equal(seriesSegments(next, 'cpu').at(-1).length, 2);
+  }
+});
+test('history display and export share the exact retention boundary and sample cap', () => {
+  const now = Date.UTC(2026, 10, 23), history = [
+    { time: now - HISTORY_WINDOW_MS, cpu: null, memory: null },
+    { time: now - HISTORY_WINDOW_MS + 1, cpu: null, memory: null },
+  ];
+  const visible = trimHistory(history, now);
+  const exported = exportMeasurements(history, stamp(now)).records;
+  assert.equal(visible.length, 1);
+  assert.deepEqual(exported.map(x => Date.parse(x.checkedAt)), visible.map(x => x.time));
+});
 test('stale sensor value never enters a trend even when the envelope timestamp is fresh', () => {
   const now = Date.now();
   const original = measured(now);

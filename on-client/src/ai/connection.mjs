@@ -1,3 +1,4 @@
+import {createResponseLifetime} from '../../public/http-response.mjs';
 // Native/app-server connection only. Reuses the Workbench challenge/approval
 // experience, never its saved credential or its runtime as an AI relay.
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
@@ -38,31 +39,35 @@ export function createAlekovAppConnector({enabled=false,gatewayOrigin=CLCO_GATEW
   const baseUrl=gateway+'/api/apps/aleph-on/v1',path=gateway+'/api/apps/aleph-on/connect/';
   async function current(expected){const value=structuredClone(await resolveCurrentContext());if(!validContext(value))fail('ALEKOV_CONNECT_CONTEXT_UNVERIFIED');if(expected&&canonical(value)!==canonical(expected))fail('ALEKOV_CONNECT_CONTEXT_CHANGED');return Object.freeze(value);}
   async function operation(signal,work){
-    const controller=new AbortController();let code='ALEKOV_CONNECT_CANCELLED',timer,stop;
+    const controller=new AbortController(),deadline=performance.now()+timeoutMs;let code='ALEKOV_CONNECT_CANCELLED',timer,stop;
     const cancelled=()=>{code='ALEKOV_CONNECT_CANCELLED';controller.abort();};
-    const alive=()=>{if(controller.signal.aborted)fail(code);};
+    const alive=()=>{if(performance.now()>=deadline){code='ALEKOV_CONNECT_TIMEOUT';controller.abort();}if(controller.signal.aborted)fail(code);};
     const bounded=async callback=>{alive();const value=await callback();alive();return value;};
     try{
       if(!configured)fail('ALEKOV_CONNECT_UNAVAILABLE');
       if(signal?.aborted)cancelled();else signal?.addEventListener('abort',cancelled,{once:true});
       const stopped=new Promise((_,reject)=>{stop=()=>reject(Object.assign(Error(code),{code}));controller.signal.addEventListener('abort',stop,{once:true});});
       timer=setTimeout(()=>{code='ALEKOV_CONNECT_TIMEOUT';controller.abort();},timeoutMs);alive();
-      return await Promise.race([work({signal:controller.signal,alive,bounded}),stopped]);
+      const result=await Promise.race([work({signal:controller.signal,alive,bounded}),stopped]);alive();return result;
     }catch(error){return safe(error);}finally{clearTimeout(timer);signal?.removeEventListener('abort',cancelled);controller.signal.removeEventListener('abort',stop);controller.abort();}
   }
   async function post(kind,body,op){
-    let response;try{response=await op.bounded(()=>fetchImpl(path+kind,{method:'POST',redirect:'manual',cache:'no-store',credentials:'omit',signal:op.signal,
-      headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)}));}catch(error){op.alive();fail('ALEKOV_CONNECT_OUTCOME_UNKNOWN');}
-    if(response.status>=300&&response.status<400){await response.body?.cancel();fail('ALEKOV_CONNECT_REDIRECT_BLOCKED');}
-    if(![200,201,202].includes(response.status)){await response.body?.cancel();fail(response.status>=500||[408,425,429].includes(response.status)?'ALEKOV_CONNECT_OUTCOME_UNKNOWN':'ALEKOV_CONNECT_REJECTED');}
-    if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(response.headers.get('content-type')??'')||!response.body)fail('ALEKOV_CONNECT_RESPONSE_INVALID');
-    const reader=response.body.getReader(),parts=[];let bytes=0;
-    const abort=()=>{void reader.cancel().catch(()=>{});};op.signal.addEventListener('abort',abort,{once:true});
-    try{while(true){const next=await op.bounded(()=>reader.read());if(next.done)break;bytes+=next.value.byteLength;if(bytes>16384)fail('ALEKOV_CONNECT_RESPONSE_INVALID');parts.push(Buffer.from(next.value));}}
-    finally{op.signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
-    let value;try{value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));}catch{fail('ALEKOV_CONNECT_RESPONSE_INVALID');}
-    return {status:response.status,value};
+    const lifetime=createResponseLifetime(op.signal);
+    try {
+      let response;try{response=await op.bounded(async()=>lifetime.response(await fetchImpl(path+kind,{method:'POST',redirect:'manual',cache:'no-store',credentials:'omit',signal:op.signal,
+        headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)})));}catch(error){op.alive();fail('ALEKOV_CONNECT_OUTCOME_UNKNOWN');}
+      if(response.redirected||response.status>=300&&response.status<400)fail('ALEKOV_CONNECT_REDIRECT_BLOCKED');
+      if(![200,201,202].includes(response.status))fail(response.status>=500||[408,425,429].includes(response.status)?'ALEKOV_CONNECT_OUTCOME_UNKNOWN':'ALEKOV_CONNECT_REJECTED');
+      if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(response.headers.get('content-type')??'')||!response.body)fail('ALEKOV_CONNECT_RESPONSE_INVALID');
+      const declared=response.headers.get('content-length');
+      if(declared!==null&&(!/^\d+$/.test(declared)||Number(declared)>16384))fail('ALEKOV_CONNECT_RESPONSE_INVALID');
+      const reader=lifetime.reader(response.body.getReader()),parts=[];let bytes=0;
+      while(true){const next=await op.bounded(()=>reader.read());if(next.done)break;bytes+=next.value.byteLength;if(bytes>16384)fail('ALEKOV_CONNECT_RESPONSE_INVALID');parts.push(Buffer.from(next.value));}
+      let value;try{value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));}catch{fail('ALEKOV_CONNECT_RESPONSE_INVALID');}
+      op.alive();return {status:response.status,value};
+    } finally { lifetime.close(); }
   }
+
   const approvalUrl=(deviceId,challenge)=>{const url=new URL('/workbench.html',portal);url.searchParams.set('appConnect','alekov');url.searchParams.set('appDevice',deviceId);url.searchParams.set('appChallenge',challenge);return url.href;};
   async function begin({signal}={}){return operation(signal,async op=>{
     const context=await op.bounded(()=>current()),deviceId=randomUUID(),verifier=randomBytes(32).toString('base64url'),challenge=createHash('sha256').update(verifier).digest('base64url');

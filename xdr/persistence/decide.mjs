@@ -93,17 +93,178 @@ const PATTERNS = Object.freeze([
   }
 ]);
 
+// Keep this parser self-contained: the isolated judge receives only decide.mjs.
+// Regression tests compare this contract with the readers' built-in IP parser.
+function validIPv4(value) {
+  if (!/^(?:0|[1-9]\d{0,2})(?:\.(?:0|[1-9]\d{0,2})){3}$/u.test(value)) return false;
+  return value.split('.').every((part) => Number(part) <= 255);
+}
+
 function validIp(value) {
-  if (typeof value !== 'string' || value.length > 45) return false;
-  if (/^(?:\d{1,3}\.){3}\d{1,3}$/u.test(value)) {
-    return value.split('.').every(part => part.length > 0 && Number(part) <= 255);
+  if (typeof value !== 'string' || value.length === 0) return false;
+  let address = value;
+  const zone = address.indexOf('%');
+  if (zone !== -1) {
+    if (!/^[0-9A-Za-z.:-]+$/u.test(address.slice(zone + 1))) return false;
+    address = address.slice(0, zone);
+    if (!address.includes(':')) return false;
   }
-  if (!/^[0-9a-f:.]+$/iu.test(value) || !value.includes(':')) return false;
-  const pieces = value.split('::');
-  if (pieces.length > 2) return false;
-  const groups = pieces.flatMap(s => s ? s.split(':') : []);
-  if (groups.some(s => !/^[0-9a-f]{1,4}$/iu.test(s))) return false;
-  return pieces.length === 2 ? groups.length < 8 : groups.length === 8;
+  if (address.length > 45) return false;
+  if (validIPv4(address)) return true;
+  if (!address.includes(':') || !/^[a-fA-F0-9:.]+$/u.test(address)) return false;
+  if (address.includes('.')) {
+    const lastColon = address.lastIndexOf(':');
+    if (!validIPv4(address.slice(lastColon + 1))) return false;
+    // An embedded IPv4 suffix occupies exactly two IPv6 groups.
+    address = address.slice(0, lastColon) + ':0:0';
+  }
+  const sides = address.split('::');
+  if (sides.length > 2) return false;
+  const parts = sides.flatMap((side) => side ? side.split(':') : []);
+  if (parts.some((part) => !/^[a-fA-F0-9]{1,4}$/u.test(part))) return false;
+  return sides.length === 2 ? parts.length < 8 : parts.length === 8;
+}
+
+// Validate whole numeric-looking tokens within independent quantity clauses.
+// Ambiguous punctuation/spacing between bare numbers remains unsupported.
+// Kept local so the isolated judge never needs another module.
+// Evidence and metadata share the same opaque-prefix boundary. Real spacing,
+// quotation and Korean word adjacency remain supported; marks never stand in
+// for a word boundary. Metadata additionally admits an explicit assignment.
+const NUMERIC_ENTRY = String.raw`(?:(?<=\s|['"\x60\p{Ps}\p{Pe}\p{Pi}\p{Pf}])|(?<=\p{Script=Hangul})(?<![\p{M}\p{Lm}])|(?<![\p{N}\p{L}\p{M}\p{P}\p{S}\p{C}]))`;
+const INTEGER_TOKEN = String.raw`${NUMERIC_ENTRY}((?:[\p{Sm}\p{Sc}\p{Pd}]\s*)?\p{N}(?:[\p{N}A-Za-z]|[\p{P}\p{S}\p{Z}\p{C}\p{M}\p{Lm}\s]+(?=\p{N})|\s+(?=[eE](?:\s|[\p{Sm}\p{Sc}\p{Pd}]|\d)))*)`;
+// Attached alphabetic components stay in their opaque numeric span. Across
+// whitespace, check the complete continuation word: a first hex letter alone
+// cannot make ordinary prose such as "caused" part of that span.
+const NUMERIC_WORD = String.raw`(?:[\p{L}\p{M}_]*\p{N}[\p{N}\p{L}\p{M}_]*|x?[a-f]+(?:p|u(?:l{1,2})?|l{1,2}u?|n)?|[exbop]|u(?:l{1,2})?|l{1,2}u?|n|nan|inf(?:inity)?)`;
+const NUMERIC_FRAGMENT = String.raw`(?:${NUMERIC_ENTRY}|(?<==))((?:[\p{Sm}\p{Sc}\p{Pd}]\s*)?\p{N}(?:[\p{N}\p{L}\p{M}]|(?:(?!\s)[\p{P}\p{S}\p{Z}\p{C}\p{M}\p{Lm}])+(?=[\p{N}\p{L}\p{M}])|[\p{P}\p{S}\p{Z}\p{C}\p{M}\p{Lm}\s]+(?=\p{N}|${NUMERIC_WORD}(?![\p{N}\p{L}\p{M}_])))*)`;
+// Metadata need not be an evidence integer. Retain formatted/Unicode numbers
+// and complete exponents, but never skip an opaque alphabetic prefix.
+const METADATA_NUMBER = /^(?:[\p{Sm}\p{Sc}\p{Pd}]\s*)?\p{N}+(?:[\p{P}\p{S}\p{Z}\p{C}\p{M}\p{Lm}\s]+\p{N}+)*(?:\s*e\s*[\p{Sm}\p{Sc}\p{Pd}]?\s*\p{N}+)?\s*$/iu;
+// Unit words use ordinary Unicode letters and their combining marks. Modifier
+// letters remain numeric separators, so a grouping apostrophe is not a unit.
+const UNIT_WORD = String.raw`(?:(?!\p{Lm})\p{L})(?:(?!\p{Lm})[\p{L}\p{M}])*(?:\/(?:(?!\p{Lm})\p{L})(?:(?!\p{Lm})[\p{L}\p{M}])*)*`;
+// A Korean prose transition follows the entire preceding unit. It cannot
+// restart inside a Korean word and call its first syllables an opaque unit.
+const PROSE_UNIT_WORD = String.raw`(?:(?!\p{Script=Hangul}|\p{Lm})\p{L})(?:(?!\p{Script=Hangul}|\p{Lm})[\p{L}\p{M}])*(?:\/(?:(?!\p{Script=Hangul}|\p{Lm})\p{L})(?:(?!\p{Script=Hangul}|\p{Lm})[\p{L}\p{M}])*)*`;
+// A candidate starts once per maximal numeric component, including within
+// formatted metadata. Retrying every suffix of a long run adds no boundary.
+const COMPLETED_QUANTITY = new RegExp(String.raw`(?<!\p{N})(\p{N}+)\s*([%٪％﹪‰‱؉؊]|per\s+cent|${UNIT_WORD}|°[CF])(?:['"\x60\p{Pe}\p{Pf}]\s*)*[\s.,:，．：、﹐﹒﹕]+`, 'giu');
+// This only proposes a boundary: completeQuantity validates the whole prefix,
+// so 1분 and 3ms후 can end ownership while 0x분 and 0b시간1F cannot.
+const KOREAN_QUANTITY = new RegExp(String.raw`(?<!\p{N})(\p{N}+)\s*([%٪％﹪‰‱؉؊]|per\s+cent|${PROSE_UNIT_WORD}|°[CF])?(?:['"\x60\p{Pe}\p{Pf}]\s*)*(?=\p{Script=Hangul})`, 'giu');
+const RADIX_COMPONENT = /(?<!\p{N})(\p{N}+)[\s_]*([xbo])/giu;
+// UnicodeData 15.0 numeric-value-zero characters outside Decimal_Number.
+const NON_DECIMAL_ZERO = /^[౸៰⁰₀↉⓪⓿〇ꛯ𐆊𖺀𝋀𝋠🄀🄁🄋🄌]$/u;
+
+function zeroPrefix(value) {
+  return value.length > 0 && [...value].every(character => {
+    if (character === '0' || NON_DECIMAL_ZERO.test(character)) return true;
+    if (!/\p{Decimal_Number}/u.test(character)) return false;
+    // UAX #44: decimal digits form ascending 0..9 ranges. Adjacent ranges
+    // (including mathematical styles) therefore retain the offset modulo 10.
+    const point = character.codePointAt(0);
+    let start = point;
+    while (start > 0 && /\p{Decimal_Number}/u.test(String.fromCodePoint(start - 1))) start--;
+    return (point - start) % 10 === 0;
+  });
+}
+
+function radixFragment(value) {
+  // Inspect every maximal numeric component in the retained span. A numeric
+  // connector before 0x must not hide it behind an earlier decimal component.
+  for (const match of value.matchAll(RADIX_COMPONENT)) {
+    if (!zeroPrefix(match[1])) continue;
+    if (match[2].toLowerCase() === 'x') return true;
+    // A binary/octal body starts numerically; even an invalid base digit is
+    // unsupported numeric syntax. An empty body retains the incomplete-marker
+    // guard. Inspect the full remainder, so baud and B/s remain complete units
+    // rather than being judged from a truncated b or a bag of suffix letters.
+    const body = value.slice(match.index + match[0].length)
+      .replace(/^[\p{P}\p{S}\p{Z}\p{C}\p{M}\p{Lm}\s]+/u, '');
+    if (body.length === 0 || /^\p{N}/u.test(body)) return true;
+  }
+  return false;
+}
+
+function completeQuantity(text, match, start) {
+  const unit = match[2] ?? '';
+  const unitStart = match.index + match[0].indexOf(unit, match[1].length);
+  const prefix = text.slice(start, unitStart).replace(/^[\s'"`\p{Ps}\p{Pi}]+/u, '');
+  if (!METADATA_NUMBER.test(prefix)) return false;
+  // Inspect the whole unit, including B/s, rather than an interior suffix.
+  if (radixFragment(prefix + unit)) return false;
+  return !/^(?:[edx]|nan|inf(?:inity)?)$/iu.test(unit) && unit !== 'n';
+}
+
+function numericFragments(text) {
+  const finder = new RegExp(NUMERIC_FRAGMENT, 'giu');
+  const completed = [...text.matchAll(COMPLETED_QUANTITY), ...text.matchAll(KOREAN_QUANTITY)]
+    .sort((a, b) => a.index - b.index || b[0].length - a[0].length);
+  const clauseEnds = [...text.matchAll(/[;!?؛；！？﹔﹖﹗。｡]+/gu)]
+    .map(match => match.index + match[0].length);
+  clauseEnds.push(text.length);
+  const fragments = [];
+  let completionIndex = 0;
+  let fragment;
+  while ((fragment = finder.exec(text))) {
+    const start = fragment.index;
+    const clauseEnd = clauseEnds.find(end => end > start);
+    let end = Math.min(start + fragment[0].length, clauseEnd);
+    let completedEnd = null;
+    while (completionIndex < completed.length && completed[completionIndex].index < start) completionIndex++;
+    for (let index = completionIndex; index < completed.length && completed[index].index < end; index++) {
+      const match = completed[index];
+      const next = match.index + match[0].length;
+      if (next > clauseEnd || !completeQuantity(text, match, start)) continue;
+      // This is an ownership boundary, not a cut in the evidence matcher.
+      // "20 failed login" must still be matched as one semantic expression.
+      end = next;
+      completedEnd = next;
+      break;
+    }
+    fragments.push({ index: start, end, completedEnd });
+    finder.lastIndex = end;
+  }
+  return fragments;
+}
+
+function numericEvidenceSegments(text) {
+  const boundaries = new Set([0, text.length]);
+  for (const match of text.matchAll(/[;!?؛；！？﹔﹖﹗。｡]+/gu)) {
+    boundaries.add(match.index + match[0].length);
+  }
+  for (const fragment of numericFragments(text)) {
+    const end = fragment.completedEnd;
+    // Only an immediately following quantity needs a separate matching slice.
+    // Ordinary prose already ended ownership, without cutting semantic units.
+    if (end !== null && /^(?:['"`\p{Ps}\p{Pi}]\s*)*(?:[\p{Sm}\p{Sc}\p{Pd}]\s*)?\p{N}/u.test(text.slice(end))) {
+      boundaries.add(end);
+    }
+  }
+  const offsets = [...boundaries].sort((a, b) => a - b);
+  return offsets.slice(1).map((end, index) => ({
+    text: text.slice(offsets[index], end), offset: offsets[index],
+  }));
+}
+
+function integerEvidence(text, unit, prefix = '', maxDigits = Infinity) {
+  const expression = new RegExp(prefix + INTEGER_TOKEN + String.raw`\s*` + unit, 'giu');
+  const values = [];
+  for (const segment of numericEvidenceSegments(text)) {
+    const fragments = numericFragments(segment.text);
+    for (const match of segment.text.matchAll(expression)) {
+      const token = match[1];
+      const start = match.index + match[0].indexOf(token);
+      // The token matcher can restart after an unsupported fractional/opaque
+      // component. Only the start of an independently owned span is evidence.
+      if (fragments.some(part => part.index < start && start < part.end)) continue;
+      if (token.length > maxDigits || !/^\d+$/u.test(token)) continue;
+      const value = Number(token);
+      if (Number.isSafeInteger(value)) values.push({ value, unit: match[2], index: segment.offset + match.index });
+    }
+  }
+  return values;
 }
 
 function normalizeAlert(alert) {
@@ -157,7 +318,8 @@ function strongSignals(row) {
       && /추가|등록|생성/iu.test(text),
     repeated_unsigned_service_registration: service && unsigned && /등록/iu.test(text)
       && /연속|반복/iu.test(text)
-      && (row.count >= 3 || /[3-9]\s*(?:번|회|건)/u.test(text)),
+      && (row.count >= PATTERNS[3].condition.minOccurrences
+        || integerEvidence(text, '(?:번|회|건)').some(({ value }) => value >= PATTERNS[3].condition.minOccurrences)),
     random_named_temp_scheduled_task: task && /이름.*임의\s*문자열|무작위\s*이름|임의\s*문자열.*이름/iu.test(text) && temp,
     unsigned_modified_service_binary: service && unsigned
       && /실행\s*파일.*(?:바뀌|변경|교체)|바뀐\s*실행\s*파일/iu.test(text),

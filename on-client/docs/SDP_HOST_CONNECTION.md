@@ -8,7 +8,7 @@
 
 운영자가 준비한 프로젝트 밖의 개인 설정을 서버의 `--sdp-host-config` 또는 Windows 실행 도구의 `-SdpHostConfig`로 전달합니다. 설정·CA·개인 인증서·개인키·토큰 파일은 Git·제출물 밖에 둡니다. 값 자체를 문서나 명령행에 넣지 않습니다.
 
-설정의 허용 키는 `schema`, `projectId`, `host`, `port`, `servername`, `caFile`, `certFile`, `keyFile`, `tokenFile`이며 schema는 `alekov.sdp.host.v1`입니다. 경로·파일·중복 키·TLS·시간·응답 검증의 정확한 조건은 설정 모듈이 정본입니다. HTTP, 인증서 검증 해제, 임의 URL/헤더 주입을 연결 해결책으로 사용하지 않습니다.
+필수 설정 키는 `schema`, `projectId`, `host`, `port`, `servername`, `caFile`, `certFile`, `keyFile`, `tokenFile`이며 schema는 `alekov.sdp.host.v1`입니다. 선택 키 `receiptPort`는 자기 기기 철회 후 본인 영수증을 조회하는 별도 listener의 포트입니다. 운영자가 제공한 설정에 포함될 경우 1~65,535의 정수여야 하며 `port`와 달라야 합니다. 생략하면 이 별도 조회 경로는 비활성입니다. 경로·파일·중복 키·TLS·시간·응답 검증의 정확한 조건은 설정 모듈이 정본입니다. HTTP, 인증서 검증 해제, 임의 URL/헤더 주입을 연결 해결책으로 사용하지 않습니다.
 
 ## 현재 제공되는 기능
 

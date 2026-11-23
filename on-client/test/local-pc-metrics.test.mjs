@@ -4,6 +4,23 @@ import { calculateCpuUsage, createLocalPcSampler } from '../src/local-pc-metrics
 
 const cpu = (busy, idle) => [{ times: { user: busy, nice: 0, sys: 0, idle, irq: 0 } }];
 
+test('sensor deadlines reject synchronous late results before timer callbacks run', async t => {
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const block = () => { elapsed += 45; };
+  let reads = 0, stamp = 1000;
+  const sampler = createLocalPcSampler({
+    cpus:() => { if (++reads === 2) block(); return cpu(reads * 30, reads * 70); },
+    statfsRead:() => { block(); return {bsize:4096n,bavail:262144n}; },
+    wait:async () => { stamp += 400; }, monotonic:() => stamp, clock:() => new Date(stamp),
+    sensorTimeoutMs:25,
+  });
+  const { metrics } = await sampler.sample();
+  assert.equal(metrics.cpu.reason, 'CPU_READ_TIMEOUT');
+  assert.equal(metrics.disk.reason, 'DISK_READ_TIMEOUT');
+  assert.equal(metrics.memory.status, 'ok');
+});
+
 test('CPU usage uses two OS tick snapshots, not an invented percentage', () => {
   assert.equal(calculateCpuUsage(cpu(100, 100), cpu(130, 170)), 30);
   assert.equal(calculateCpuUsage(cpu(100, 100), cpu(99, 200)), null);
@@ -106,4 +123,34 @@ test('a wall-clock jump and fractional memory byte counts cannot become valid me
   assert.equal(metrics.cpu.reason, 'CPU_INTERVAL_INVALID');
   assert.equal(metrics.memory.reason, 'MEMORY_INVALID');
   assert.equal(metrics.disk.status, 'ok');
+});
+
+for (const cancelAtEnvelope of [false, true]) test('final envelope clock ' + (cancelAtEnvelope ? 'cancellation rejects the sample' : 'preserves a valid sample'), async () => {
+  const caller = new AbortController();
+  let at = 1000, clockReads = 0, cpuReads = 0, diskReads = 0;
+  const sampler = createLocalPcSampler({
+    platform: 'linux',
+    cpus: () => (++cpuReads === 1 ? cpu(100, 100) : cpu(130, 170)),
+    totalmem: () => 8 * 1024 ** 3,
+    freemem: () => 2 * 1024 ** 3,
+    statfsRead: async () => { diskReads++; return { bsize: 4096n, bavail: 262144n }; },
+    wait: async () => { at += 400; },
+    monotonic: () => at,
+    clock: () => {
+      // Memory, CPU start/end and disk stamps precede the envelope stamp.
+      if (++clockReads === 5 && cancelAtEnvelope) caller.abort();
+      return new Date(at);
+    },
+  });
+  const pending = sampler.sample({ signal: caller.signal });
+  if (cancelAtEnvelope) await assert.rejects(pending, { code: 'MEASUREMENT_CANCELLED' });
+  else {
+    const result = await pending;
+    assert.equal(result.checkedAt, new Date(1400).toISOString());
+    assert.deepEqual(Object.values(result.metrics).map(metric => metric.status), ['ok', 'ok', 'ok']);
+    assert.deepEqual([result.metrics.cpu.value, result.metrics.memory.value, result.metrics.disk.value], [30, 75, 1]);
+  }
+  assert.equal(caller.signal.aborted, cancelAtEnvelope);
+  assert.equal(clockReads, 5);
+  assert.deepEqual([cpuReads, diskReads], [2, 1]);
 });

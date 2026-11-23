@@ -447,6 +447,7 @@ test('복원 라우트는 node_modules 없는 격리 프로젝트에서도 모�
     const child = spawnSync(process.execPath,
       ['--input-type=module', '--eval', program],
       { cwd: root, encoding: 'utf8', timeout: 10000 });
+    assert.ifError(child.error);
     assert.equal(child.status, 0,
       '독립 복원 테스트 실행 실패: ' + (child.stderr || child.stdout || child.error));
   } finally {

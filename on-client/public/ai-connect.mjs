@@ -1,3 +1,5 @@
+import {createResponseLifetime} from './http-response.mjs';
+import {ownedDeadlineTimer} from './deadline-timer.mjs';
 // Alekov 학생 AI 연결 — 브라우저 모듈(제공 공통 UI).
 // AI 앱 승인은 로컬 Alekov 서버의 POST /api/ai/connect/{start,finish,status,cancel} 네 경로만 쓴다.
 // 계정 연결 확인(native 로그인)은 파일 아래쪽의 별도 transport·controller 가 POST /api/native-login/* 다섯 경로만 쓴다.
@@ -77,36 +79,107 @@ export function validApprovalUrl(value, connectionId) {
 const fail = (code) => ({ ok: false, error: { code } });
 
 /** 기본 transport: 같은 origin POST JSON, 10초 제한. 응답은 {ok:true,data} 또는 고정 코드만 남긴다. */
-export function createFetchTransport({ fetchImpl = (...args) => globalThis.fetch(...args), timeoutMs = 10000 } = {}) {
+export function createFetchTransport({ fetchImpl = (...args) => globalThis.fetch(...args), timeoutMs = 10000, maxBytes = 16384 } = {}) {
   return async function transport(kind, body, { signal } = {}) {
-    if (!Object.hasOwn(CONNECT_PATHS, kind)) return fail('ALEKOV_CONNECT_INPUT_INVALID');
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    if (!Object.hasOwn(CONNECT_PATHS, kind) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000
+      || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1048576) return fail('ALEKOV_CONNECT_INPUT_INVALID');
+    if (signal?.aborted) return fail('ALEKOV_CONNECT_CANCELLED');
+    const controller = new AbortController(), lifetime = createResponseLifetime(controller.signal);
+    const deadline = performance.now() + timeoutMs;
+    let timedOut = false, stop;
     const onAbort = () => controller.abort();
-    if (signal?.aborted) controller.abort(); else signal?.addEventListener('abort', onAbort, { once: true });
-    try {
+    const outcome = () => fail(timedOut || performance.now() >= deadline ? 'ALEKOV_CONNECT_CLIENT_TIMEOUT' : 'ALEKOV_CONNECT_CANCELLED');
+    const alive = () => {
+      if (performance.now() >= deadline) { timedOut = true; controller.abort(); }
+      return !controller.signal.aborted;
+    };
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const stopped = new Promise(resolve => { stop = () => resolve(outcome()); controller.signal.addEventListener('abort', stop, { once: true }); });
+    const work = (async () => {
       let response;
       try {
-        response = await fetchImpl(CONNECT_PATHS[kind], {
+        response = lifetime.response(await fetchImpl(CONNECT_PATHS[kind], {
           method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
           headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body),
-        });
-      } catch { return fail(timedOut ? 'ALEKOV_CONNECT_CLIENT_TIMEOUT' : signal?.aborted ? 'ALEKOV_CONNECT_CANCELLED' : 'ALEKOV_CONNECT_NETWORK'); }
-      let value = null;
-      try { if (/^application\/json/i.test(response.headers.get('content-type') ?? '')) value = await response.json(); } catch { value = null; }
-      if (timedOut) return fail('ALEKOV_CONNECT_CLIENT_TIMEOUT');
-      if (value?.ok === true && response.ok && isRecord(value.data)) return { ok: true, data: value.data };
-      const code = value?.ok === false && typeof value.error?.code === 'string' && Object.hasOwn(CONNECT_MESSAGES, value.error.code) ? value.error.code : null;
-      if (code) return fail(code);
-      // 경로가 아직 root 에 연결되지 않은 서버(404/405 등 계약 밖 응답)는 미연결이다. 가짜 연결로 대체하지 않는다.
-      if ([404, 405, 501].includes(response.status)) return fail('ALEKOV_CONNECT_NOT_MOUNTED');
-      return fail('ALEKOV_CONNECT_RESPONSE_INVALID');
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
+        }));
+      } catch { return alive() ? fail('ALEKOV_CONNECT_NETWORK') : outcome(); }
+      if (!alive()) return outcome();
+      try {
+        if (!response || response.redirected || response.type === 'opaqueredirect') return fail('ALEKOV_CONNECT_RESPONSE_INVALID');
+        if (!/^application\/json(?:;|$)/i.test(response.headers?.get?.('content-type') ?? ''))
+          return fail([404, 405, 501].includes(response.status) ? 'ALEKOV_CONNECT_NOT_MOUNTED' : 'ALEKOV_CONNECT_RESPONSE_INVALID');
+        const declared = response.headers.get('content-length');
+        if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes) || typeof response.body?.getReader !== 'function') return fail('ALEKOV_CONNECT_RESPONSE_INVALID');
+        const reader = lifetime.reader(response.body.getReader()), decoder = new TextDecoder('utf-8', {fatal:true});
+        let size = 0, text = '';
+        for (;;) {
+          const part = await reader.read();
+          if (!alive()) return outcome();
+          if (part.done) break;
+          if (!(part.value instanceof Uint8Array) || (size += part.value.byteLength) > maxBytes) return fail('ALEKOV_CONNECT_RESPONSE_INVALID');
+          text += decoder.decode(part.value, {stream:true});
+        }
+        const value = JSON.parse(text + decoder.decode());
+        if (!alive()) return outcome();
+        if (value?.ok === true && response.ok && isRecord(value.data)) return { ok:true, data:value.data };
+        const code = value?.ok === false && typeof value.error?.code === 'string' && Object.hasOwn(CONNECT_MESSAGES, value.error.code) ? value.error.code : null;
+        if (code) return fail(code);
+        return fail([404, 405, 501].includes(response.status) ? 'ALEKOV_CONNECT_NOT_MOUNTED' : 'ALEKOV_CONNECT_RESPONSE_INVALID');
+      } catch { return alive() ? fail([404, 405, 501].includes(response?.status) ? 'ALEKOV_CONNECT_NOT_MOUNTED' : 'ALEKOV_CONNECT_RESPONSE_INVALID') : outcome(); }
+      finally { lifetime.close(); }
+    })();
+    try { const result=await Promise.race([work, stopped]);return result.ok&&!alive()?outcome():result; }
+    finally {
+      clearTimeout(timer); signal?.removeEventListener('abort', onAbort);
+      controller.signal.removeEventListener('abort', stop); controller.abort(); lifetime.close();
     }
   };
+}
+
+// A scheduler may call back before returning its handle. Keep the exact owner
+// separate from the handle so reset/clear/replacement cannot orphan a timer.
+function createControllerTimer(setTimer, clearTimer, current) {
+  let owner = null;
+  function take() {
+    const old = owner;
+    owner = null;
+    if (old) old.retired = true;
+    return old;
+  }
+  function dispose(old) {
+    if (!old) return;
+    old.retired = true;
+    if (old.ready && !old.cleared) {
+      old.cleared = true;
+      clearTimer(old.handle);
+    }
+  }
+  function stop() { dispose(take()); }
+  function schedule(g, callback, ms) {
+    stop();
+    if (!current(g)) return;
+    const own = { ready: false, retired: false, cleared: false, handle: null };
+    owner = own;
+    try {
+      own.handle = setTimer(() => {
+        if (owner !== own || own.retired) return;
+        owner = null;
+        own.retired = true;
+        if (current(g)) callback();
+      }, ms);
+      own.ready = true;
+    } catch (error) {
+      if (owner === own) owner = null;
+      own.retired = true;
+      throw error;
+    }
+    if (owner !== own || own.retired || !current(g)) {
+      if (owner === own) owner = null;
+      dispose(own);
+    }
+  }
+  return { take, dispose, stop, schedule };
 }
 
 /**
@@ -115,15 +188,28 @@ export function createFetchTransport({ fetchImpl = (...args) => globalThis.fetch
  */
 export function createAiConnectController({ transport = createFetchTransport(), onChange = () => {}, clock = () => Date.now(),
   pollMs = 2000, observeGraceMs = 60000, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t) } = {}) {
-  let generation = 0, pollTimer = null, controller = null;
+  let generation = 0, controller = null;
   let state = Object.freeze({ phase: 'idle', connectionId: null, approvalUrl: null, confirmation: null, expiresAt: null, reason: null, cancelUnconfirmed: false });
+  const current = (g) => g === generation;
+  const poll = createControllerTimer(setTimer, clearTimer, current);
   // cancelUnconfirmed: 취소를 요청했지만 서버가 취소 결과를 확정하지 않은 상태. 실패한 조회·형식 오류·서버의 unknown 응답으로는
   // 지워지지 않는다. 검증된 확정 상태(cancelled·connected·error 등 unknown 이 아닌 서버 응답)나 새 흐름(start)·reset 에서만 지운다.
-  const set = (next) => { state = Object.freeze({ ...state, ...next }); onChange(state); };
-  const stopPoll = () => { if (pollTimer !== null) clearTimer(pollTimer); pollTimer = null; };
-  const abortRequest = () => { controller?.abort(); controller = null; };
-  async function call(kind, body) {
+  const set = (g, next) => {
+    if (!current(g)) return false;
+    state = Object.freeze({ ...state, ...next });
+    onChange(state);
+    return current(g);
+  };
+  const abortRequest = () => { const old = controller; controller = null; old?.abort(); };
+  function stopWork() {
+    const old = controller, timer = poll.take();
+    controller = null;
+    try { poll.dispose(timer); } finally { old?.abort(); }
+  }
+  async function call(g, kind, body) {
+    if (!current(g)) return fail('ALEKOV_CONNECT_CANCELLED');
     abortRequest();
+    if (!current(g)) return fail('ALEKOV_CONNECT_CANCELLED');
     const own = new AbortController();
     controller = own;
     try { return await transport(kind, body, { signal: own.signal }); }
@@ -131,59 +217,64 @@ export function createAiConnectController({ transport = createFetchTransport(), 
     finally { if (controller === own) controller = null; }
   }
   function applyStatus(data, g, { fromCancel = false } = {}) {
-    if (g !== generation) return;
+    if (!current(g)) return;
     const pendingCancel = fromCancel || state.cancelUnconfirmed === true;
     if (!exact(data, ['connectionId', 'state', 'expiresAt', 'reason']) || data.connectionId !== state.connectionId || !STATES.includes(data.state)
       || (data.reason !== null && !(typeof data.reason === 'string' && CODE.test(data.reason))) || (data.expiresAt !== null && !iso(data.expiresAt))) {
-      stopPoll();
+      poll.stop();
       // ok:true 라도 형식이 틀린 응답은 취소 결과를 확인한 것이 아니다.
-      return set({ phase: 'unknown', reason: 'ALEKOV_CONNECT_RESPONSE_INVALID', cancelUnconfirmed: pendingCancel });
+      return set(g, { phase: 'unknown', reason: 'ALEKOV_CONNECT_RESPONSE_INVALID', cancelUnconfirmed: pendingCancel });
     }
     // 서버가 unknown 으로 남긴 결과는 취소 완료 확인이 아니다. unknown 이 아닌 검증된 상태만 미확인 표식을 지운다.
-    set({ phase: data.state, reason: data.reason, cancelUnconfirmed: data.state === 'unknown' ? pendingCancel : false });
-    if (data.state === 'checking') schedulePoll(g); else stopPoll();
+    if (!set(g, { phase: data.state, reason: data.reason, cancelUnconfirmed: data.state === 'unknown' ? pendingCancel : false })) return;
+    if (data.state === 'checking') schedulePoll(g); else poll.stop();
   }
   function schedulePoll(g) {
-    stopPoll();
+    if (!current(g)) return;
+    poll.stop();
+    if (!current(g)) return;
     const deadline = Date.parse(state.expiresAt ?? '') + observeGraceMs;
-    if (!Number.isFinite(deadline) || clock() > deadline) return set({ phase: 'unknown', reason: 'ALEKOV_CONNECT_TIMEOUT' });
-    pollTimer = setTimer(() => { pollTimer = null; void observe(g); }, pollMs);
+    if (!Number.isFinite(deadline)) return set(g, { phase: 'unknown', reason: 'ALEKOV_CONNECT_TIMEOUT' });
+    const at = clock();
+    if (!current(g)) return;
+    if (at > deadline) return set(g, { phase: 'unknown', reason: 'ALEKOV_CONNECT_TIMEOUT' });
+    poll.schedule(g, () => { void observe(g); }, pollMs);
   }
   async function observe(g) {
-    if (g !== generation || state.phase !== 'checking') return;
-    const result = await call('status', { connectionId: state.connectionId });
-    if (g !== generation) return;
-    if (!result.ok) { stopPoll(); return set({ phase: 'unknown', reason: result.error.code }); }
+    if (!current(g) || state.phase !== 'checking') return;
+    const result = await call(g, 'status', { connectionId: state.connectionId });
+    if (!current(g)) return;
+    if (!result.ok) { poll.stop(); return set(g, { phase: 'unknown', reason: result.error.code }); }
     applyStatus(result.data, g);
   }
 
   async function start() {
     if (['starting', 'awaiting_approval', 'finishing', 'checking', 'cancelling'].includes(state.phase)) return state;
     const g = ++generation;
-    stopPoll();
-    set({ phase: 'starting', connectionId: null, approvalUrl: null, confirmation: null, expiresAt: null, reason: null, cancelUnconfirmed: false });
-    const result = await call('start', {});
-    if (g !== generation) return state;
-    if (!result.ok) { set({ phase: 'error', reason: result.error.code }); return state; }
+    poll.stop();
+    if (!set(g, { phase: 'starting', connectionId: null, approvalUrl: null, confirmation: null, expiresAt: null, reason: null, cancelUnconfirmed: false })) return state;
+    const result = await call(g, 'start', {});
+    if (!current(g)) return state;
+    if (!result.ok) { set(g, { phase: 'error', reason: result.error.code }); return state; }
     const d = result.data;
     if (!exact(d, ['connectionId', 'approvalUrl', 'confirmation', 'expiresAt', 'state']) || d.state !== 'awaiting_approval' || !UUID.test(d.connectionId ?? '')
       || !/^[0-9a-f]{4}-[0-9a-f]{4}$/.test(d.confirmation ?? '') || !iso(d.expiresAt) || !validApprovalUrl(d.approvalUrl, d.connectionId)) {
-      set({ phase: 'error', reason: 'ALEKOV_CONNECT_RESPONSE_INVALID' });
+      set(g, { phase: 'error', reason: 'ALEKOV_CONNECT_RESPONSE_INVALID' });
       return state;
     }
-    set({ phase: 'awaiting_approval', connectionId: d.connectionId, approvalUrl: d.approvalUrl, confirmation: d.confirmation, expiresAt: d.expiresAt, reason: null });
+    set(g, { phase: 'awaiting_approval', connectionId: d.connectionId, approvalUrl: d.approvalUrl, confirmation: d.confirmation, expiresAt: d.expiresAt, reason: null });
     return state;
   }
 
   async function finish() {
     if (state.phase !== 'awaiting_approval' || !state.connectionId) return state;
-    const g = ++generation;
-    set({ phase: 'finishing' });
-    const result = await call('finish', { connectionId: state.connectionId });
-    if (g !== generation) return state;
+    const connectionId = state.connectionId, g = ++generation;
+    if (!set(g, { phase: 'finishing' })) return state;
+    const result = await call(g, 'finish', { connectionId });
+    if (!current(g)) return state;
     if (!result.ok) {
       // 응답을 잃었을 수 있으므로 확인 불가. 자동으로 finish 를 다시 보내지 않는다.
-      set({ phase: 'unknown', reason: result.error.code });
+      set(g, { phase: 'unknown', reason: result.error.code });
       return state;
     }
     applyStatus(result.data, g);
@@ -193,41 +284,40 @@ export function createAiConnectController({ transport = createFetchTransport(), 
   // 학생이 누를 때만 한 번 읽는다. unknown 이후에도 서버의 실제 상태를 읽을 수 있다(재발급 아님).
   async function refresh() {
     if (!state.connectionId || ['starting', 'finishing', 'cancelling'].includes(state.phase)) return state;
-    const g = ++generation;
-    stopPoll();
-    const result = await call('status', { connectionId: state.connectionId });
-    if (g !== generation) return state;
-    if (!result.ok) { set({ phase: 'unknown', reason: result.error.code }); return state; }
+    const connectionId = state.connectionId, g = ++generation;
+    poll.stop();
+    if (!current(g)) return state;
+    const result = await call(g, 'status', { connectionId });
+    if (!current(g)) return state;
+    if (!result.ok) { set(g, { phase: 'unknown', reason: result.error.code }); return state; }
     applyStatus(result.data, g);
     return state;
   }
 
   async function cancel() {
-    const before = state.phase;
-    const g = ++generation;
-    stopPoll();
-    abortRequest();
-    if (!state.connectionId || TERMINAL.has(before)) {
+    const before = state.phase, connectionId = state.connectionId, g = ++generation;
+    stopWork();
+    if (!current(g)) return state;
+    if (!connectionId || TERMINAL.has(before)) {
       // 시작 응답 전 취소: 늦게 도착한 시작 결과를 버린다.
-      if (!TERMINAL.has(before)) set({ phase: 'cancelled', reason: 'ALEKOV_CONNECT_CANCELLED', approvalUrl: null, confirmation: null, cancelUnconfirmed: false });
+      if (!TERMINAL.has(before)) set(g, { phase: 'cancelled', reason: 'ALEKOV_CONNECT_CANCELLED', approvalUrl: null, confirmation: null, cancelUnconfirmed: false });
       return state;
     }
-    set({ phase: 'cancelling' });
-    const result = await call('cancel', { connectionId: state.connectionId });
-    if (g !== generation) return state;
+    if (!set(g, { phase: 'cancelling' })) return state;
+    const result = await call(g, 'cancel', { connectionId });
+    if (!current(g)) return state;
     // 서버가 ok:true 로 돌려준 상태만 취소 결과의 근거다. 실패(응답 유실·시간 초과·확인 불가·거절 등)는
     // 이전 단계가 승인 대기였어도 취소 완료로 추정하지 않는다. 이미 승인됐을 수 있으므로 확인 불가로 둔다.
-    if (!result.ok) { set({ phase: 'unknown', reason: result.error.code, cancelUnconfirmed: true }); return state; }
+    if (!result.ok) { set(g, { phase: 'unknown', reason: result.error.code, cancelUnconfirmed: true }); return state; }
     applyStatus(result.data, g, { fromCancel: true });
     return state;
   }
 
   /** 계정·세션 전환 등으로 화면의 진행을 버린다. 서버는 다음 호출에서 scope 전환을 직접 막는다. */
   function reset() {
-    ++generation;
-    stopPoll();
-    abortRequest();
-    set({ phase: 'idle', connectionId: null, approvalUrl: null, confirmation: null, expiresAt: null, reason: null, cancelUnconfirmed: false });
+    const g = ++generation;
+    stopWork();
+    set(g, { phase: 'idle', connectionId: null, approvalUrl: null, confirmation: null, expiresAt: null, reason: null, cancelUnconfirmed: false });
   }
 
   /** 비밀 없는 연결 도움정보. 연결 ID·승인 주소·학생 ID·로컬 경로·서버 원문은 넣지 않는다. */
@@ -369,7 +459,7 @@ export function validNativeData(data, now) {
 
 /** 벽시계와 단조 시계 중 먼저 끝나는 쪽을 따르는 한 사용자 동작의 기한. */
 export function createNativeDeadline(totalMs = NATIVE_ACTION_MS, { clock = () => Date.now(), monotonic = () => performance.now() } = {}) {
-  const wall = clock() + totalMs, mono = monotonic() + totalMs;
+  const mono = monotonic() + totalMs, wall = clock() + totalMs;
   return Object.freeze({
     left() {
       const a = wall - clock(), b = mono - monotonic();
@@ -396,68 +486,94 @@ function classifyNative(status, value) {
  */
 export function createNativeFetchTransport({ fetchImpl = (...args) => globalThis.fetch(...args), maxBytes = NATIVE_RESPONSE_MAX_BYTES } = {}) {
   return async function nativeTransport(kind, { signal, deadline } = {}) {
-    if (!Object.hasOwn(NATIVE_LOGIN_PATHS, kind) || typeof deadline?.left !== 'function') return nfail('NATIVE_LOGIN_INPUT_INVALID');
-    const first = deadline.left();
-    if (!(first > 0)) return nfail('NATIVE_LOGIN_CLIENT_TIMEOUT');
-    if (signal?.aborted) return nfail('NATIVE_LOGIN_CANCELLED');
-    const controller = new AbortController();
-    let timedOut = false, reader = null, stop = null;
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, Math.min(first, NATIVE_ACTION_MS));
-    const onAbort = () => controller.abort();
-    signal?.addEventListener('abort', onAbort, { once: true });
-    const outcome = () => nfail(timedOut || !(deadline.left() > 0) ? 'NATIVE_LOGIN_CLIENT_TIMEOUT' : 'NATIVE_LOGIN_CANCELLED');
-    // 타이머가 늦게 돌 수 있으므로 매 지연 뒤 기한을 직접 다시 본다.
-    const alive = () => {
-      if (!(deadline.left() > 0)) { timedOut = true; controller.abort(); }
-      return !controller.signal.aborted;
+    const localDeadline = performance.now() + NATIVE_ACTION_MS;
+    if (!Object.hasOwn(NATIVE_LOGIN_PATHS, kind) || typeof deadline?.left !== 'function' || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1048576) return nfail('NATIVE_LOGIN_INPUT_INVALID');
+    const controller = new AbortController(), lifetime = createResponseLifetime(controller.signal);
+    const timeout = nfail('NATIVE_LOGIN_CLIENT_TIMEOUT'), cancelled = nfail('NATIVE_LOGIN_CANCELLED');
+    let terminal = null, closed = false, reader = null, timer, resolveStopped;
+    const stopped = new Promise(resolve => { resolveStopped = resolve; });
+    const end = cause => {
+      if (!terminal) {
+        terminal = cause === timeout || cause === cancelled ? cause : nfail('NATIVE_LOGIN_RESPONSE_INVALID');
+        timer?.dispose();
+        resolveStopped(terminal);
+        controller.abort();
+      }
+      return terminal;
     };
-    const stopped = new Promise((resolve) => { stop = () => resolve(outcome()); controller.signal.addEventListener('abort', stop, { once: true }); });
-    const work = (async () => {
-      let response;
-      try {
-        response = await fetchImpl(NATIVE_LOGIN_PATHS[kind], {
-          method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
-          headers: { 'content-type': 'application/json', accept: 'application/json' }, body: '{}',
-        });
-      } catch { return alive() ? nfail('NATIVE_LOGIN_NETWORK') : outcome(); }
-      if (!alive()) return outcome();
-      if (!response || response.redirected || response.type === 'opaqueredirect') return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
-      const status = response.status;
-      if (!/^application\/json(?:;|$)/i.test(response.headers?.get?.('content-type') ?? '')) {
-        return [404, 405, 501].includes(status) ? nfail('NATIVE_LOGIN_NOT_MOUNTED') : nfail('NATIVE_LOGIN_RESPONSE_INVALID');
-      }
-      if (typeof response.body?.getReader !== 'function') return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
-      reader = response.body.getReader();
-      const chunks = [];
-      let size = 0;
-      for (;;) {
-        let part;
-        try { part = await reader.read(); } catch { return alive() ? nfail('NATIVE_LOGIN_RESPONSE_INVALID') : outcome(); }
-        if (!alive()) return outcome();
-        if (part.done) break;
-        if (!(part.value instanceof Uint8Array)) return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
-        size += part.value.byteLength;
-        if (size > maxBytes) return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
-        chunks.push(part.value);
-      }
-      const bytes = new Uint8Array(size);
-      let offset = 0;
-      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-      let value;
-      try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { return nfail('NATIVE_LOGIN_RESPONSE_INVALID'); }
-      if (!alive()) return outcome();
-      return classifyNative(status, value);
-    })().catch(() => nfail('NATIVE_LOGIN_RESPONSE_INVALID'));
+    const remaining = () => {
+      if (terminal) throw terminal;
+      if (closed || controller.signal.aborted || signal?.aborted) throw cancelled;
+      const externalLeft = deadline.left(), localLeft = localDeadline - performance.now();
+      // Supplied clocks can cancel or consume time. Keep the first terminal
+      // cause and sample the original local cap after their callback returns.
+      if (terminal) throw terminal;
+      if (closed || controller.signal.aborted || signal?.aborted) throw cancelled;
+      if (!(externalLeft > 0) || !(localLeft > 0)) throw timeout;
+      return Math.min(externalLeft, localLeft);
+    };
+    timer = ownedDeadlineTimer(remaining, end);
+    const onAbort = () => end(cancelled);
+    const outcome = () => terminal ?? cancelled;
+    // A timer can wake early or late; acceptance and every wake share the
+    // same original ceilings instead of starting another timeout interval.
+    const alive = () => {
+      try { remaining(); return true; }
+      catch (cause) { end(cause); return false; }
+    };
     try {
+      signal?.addEventListener('abort', onAbort, { once: true });
+      timer.arm(remaining());
+      if (!alive()) return outcome();
+      const work = (async () => {
+        let response;
+        try {
+          response = lifetime.response(await fetchImpl(NATIVE_LOGIN_PATHS[kind], {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
+            headers: { 'content-type': 'application/json', accept: 'application/json' }, body: '{}',
+          }));
+        } catch { return alive() ? nfail('NATIVE_LOGIN_NETWORK') : outcome(); }
+        if (!alive()) return outcome();
+        if (!response || response.redirected || response.type === 'opaqueredirect') return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
+        const status = response.status;
+        if (!/^application\/json(?:;|$)/i.test(response.headers?.get?.('content-type') ?? '')) {
+          return [404, 405, 501].includes(status) ? nfail('NATIVE_LOGIN_NOT_MOUNTED') : nfail('NATIVE_LOGIN_RESPONSE_INVALID');
+        }
+        const declared = response.headers.get('content-length');
+        if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
+        if (typeof response.body?.getReader !== 'function') return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
+        reader = lifetime.reader(response.body.getReader());
+        const chunks = [];
+        let size = 0;
+        for (;;) {
+          let part;
+          try { part = await reader.read(); } catch { return alive() ? nfail('NATIVE_LOGIN_RESPONSE_INVALID') : outcome(); }
+          if (!alive()) return outcome();
+          if (part.done) break;
+          if (!(part.value instanceof Uint8Array)) return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
+          size += part.value.byteLength;
+          if (size > maxBytes) return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
+          chunks.push(part.value);
+        }
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+        let value;
+        try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { return nfail('NATIVE_LOGIN_RESPONSE_INVALID'); }
+        if (!alive()) return outcome();
+        return classifyNative(status, value);
+      })().catch(() => nfail('NATIVE_LOGIN_RESPONSE_INVALID')).finally(() => lifetime.close());
       const result = await Promise.race([work, stopped]);
       if (result.ok && !alive()) return outcome();
       return result;
+    } catch (cause) {
+      return end(cause);
     } finally {
-      clearTimeout(timer);
+      closed = true;
+      timer.dispose();
       signal?.removeEventListener('abort', onAbort);
-      controller.signal.removeEventListener('abort', stop);
       controller.abort();
-      if (reader) reader.cancel().catch(() => {});
+      lifetime.close();
     }
   };
 }
@@ -471,109 +587,175 @@ export function createNativeFetchTransport({ fetchImpl = (...args) => globalThis
 export function createNativeLoginController({ transport = createNativeFetchTransport(), onChange = () => {}, onInvalidate = () => {},
   clock = () => Date.now(), monotonic = () => performance.now(), actionMs = NATIVE_ACTION_MS,
   setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t) } = {}) {
-  let generation = 0, controller = null, expiryTimer = null, monoExpiry = null;
+  let generation = 0, controller = null, monoExpiry = null, lossGeneration = null;
   let state = Object.freeze({ phase: 'idle', expiresAtMs: null, approvalUrl: null, confirmation: null, reason: null, cancelUnconfirmed: false, expiredFrom: null });
-  const set = (next) => { state = Object.freeze({ ...state, ...next }); onChange(state); };
+  const current = (g) => g === generation;
+  const expiry = createControllerTimer(setTimer, clearTimer, current);
+  const set = (g, next) => {
+    if (!current(g)) return false;
+    state = Object.freeze({ ...state, ...next });
+    onChange(state);
+    return current(g);
+  };
   const now = () => { const t = clock(); return Number.isSafeInteger(t) ? t : NaN; };
   const notify = (reason) => { try { onInvalidate(reason); } catch { /* 화면 쪽 실패가 상태기를 멈추지 않게 한다 */ } };
-  const stopExpiry = () => { if (expiryTimer !== null) clearTimer(expiryTimer); expiryTimer = null; };
-  const abortRequest = () => { controller?.abort(); controller = null; };
-  const live = (ctx) => ctx.g === generation;
-  const expired = () => state.expiresAtMs !== null && (!(now() < state.expiresAtMs) || (monoExpiry !== null && monotonic() >= monoExpiry));
+  const notifyLost = (g) => {
+    if (!current(g) || lossGeneration === g) return;
+    lossGeneration = g;
+    notify('lost');
+  };
+  const live = (ctx) => current(ctx.g) && !ctx.own?.signal.aborted;
+  function stopWork() {
+    const old = controller, timer = expiry.take();
+    controller = null;
+    try { old?.abort(); } finally { expiry.dispose(timer); }
+  }
+  function expired(g) {
+    const wallEnd = state.expiresAtMs, monoEnd = monoExpiry;
+    if (wallEnd === null) return false;
+    const at = now();
+    if (!current(g)) return false;
+    if (!(at < wallEnd)) return true;
+    const mono = monoEnd === null ? null : monotonic();
+    return current(g) && monoEnd !== null && mono >= monoEnd;
+  }
 
   // 기한이 지나면 화면 표시만 지운다. 네트워크는 부르지 않는다. 타이머가 일찍 돌면 남은 시간만큼 다시 건다.
   function markExpired(g) {
-    if (g !== generation) return;
-    const lostConnection = state.phase === 'connected';
-    stopExpiry();
+    if (!current(g)) return;
+    const before = state.phase, lostConnection = before === 'connected';
+    expiry.stop();
+    if (!current(g)) return;
     monoExpiry = null;
-    set({ phase: 'expired', expiredFrom: state.phase, expiresAtMs: null, approvalUrl: null, confirmation: null, reason: 'NATIVE_LOGIN_EXPIRED_LOCAL' });
-    if (lostConnection) notify('lost');
+    if (set(g, { phase: 'expired', expiredFrom: before, expiresAtMs: null, approvalUrl: null, confirmation: null, reason: 'NATIVE_LOGIN_EXPIRED_LOCAL' }) && lostConnection) notifyLost(g);
   }
   function scheduleExpiry(g) {
-    stopExpiry();
-    if (state.expiresAtMs === null) return;
-    const wait = Math.min(state.expiresAtMs - now(), monoExpiry - monotonic());
+    if (!current(g)) return;
+    expiry.stop();
+    if (!current(g) || state.expiresAtMs === null) return;
+    const wallEnd = state.expiresAtMs, monoEnd = monoExpiry, at = now();
+    if (!current(g)) return;
+    const mono = monotonic();
+    if (!current(g)) return;
+    const wait = Math.min(wallEnd - at, monoEnd - mono);
     if (!(wait > 0)) { markExpired(g); return; }
-    expiryTimer = setTimer(() => {
-      expiryTimer = null;
-      if (g !== generation) return;
-      if (expired()) markExpired(g); else scheduleExpiry(g);
+    expiry.schedule(g, () => {
+      const isExpired = expired(g);
+      if (!current(g)) return;
+      if (isExpired) markExpired(g); else scheduleExpiry(g);
     }, Math.min(Math.ceil(wait) + 20, 2147483647));
   }
-  function accept(data, g, extra = {}) {
-    monoExpiry = data.expiresAtMs === null ? null : monotonic() + (data.expiresAtMs - now());
+  function accept(data, ctx, extra = {}) {
+    if (!live(ctx)) return;
+    let nextExpiry = null;
+    if (data.expiresAtMs !== null) {
+      const mono = monotonic();
+      if (!live(ctx)) return;
+      const at = now();
+      if (!live(ctx)) return;
+      nextExpiry = mono + (data.expiresAtMs - at);
+    }
+    if (!timely(ctx)) { failTo(ctx, 'NATIVE_LOGIN_CLIENT_TIMEOUT', 'unknown'); return; }
     const phase = data.state === 'unknown' || data.state === 'starting' ? 'unknown' : data.state;
+    // The final deadline sample can consume the public proof's shorter life.
+    // Reuse that sample; another clock call would introduce a new boundary.
+    if (data.expiresAtMs !== null && (!(ctx.wallSample < data.expiresAtMs) || !(ctx.monoSample < nextExpiry))) {
+      if (failTo(ctx, 'NATIVE_LOGIN_EXPIRED_LOCAL', 'expired', { expiredFrom: phase }) && phase === 'connected') notifyLost(ctx.g);
+      return;
+    }
     const reason = data.state === 'unknown' ? 'NATIVE_LOGIN_SERVER_UNKNOWN' : data.state === 'starting' ? 'NATIVE_LOGIN_SERVER_STARTING' : null;
-    set({ phase, expiresAtMs: data.expiresAtMs, approvalUrl: data.approvalUrl, confirmation: data.confirmation, reason, cancelUnconfirmed: false, expiredFrom: null, ...extra });
-    scheduleExpiry(g);
+    // A successful status exchange can still leave a cancellation unresolved.
+    const cancelUnconfirmed = phase === 'unknown' && state.cancelUnconfirmed === true;
+    monoExpiry = nextExpiry;
+    if (set(ctx.g, { phase, expiresAtMs: data.expiresAtMs, approvalUrl: data.approvalUrl, confirmation: data.confirmation, reason, cancelUnconfirmed, expiredFrom: null, ...extra })) scheduleExpiry(ctx.g);
   }
   function failTo(ctx, code, phase, extra = {}) {
     if (!live(ctx)) return;
-    stopExpiry();
+    expiry.stop();
+    if (!live(ctx)) return;
     monoExpiry = null;
-    set({ phase, expiresAtMs: null, approvalUrl: null, confirmation: null, reason: nativeReason(code), expiredFrom: null, ...extra });
+    return set(ctx.g, { phase, expiresAtMs: null, approvalUrl: null, confirmation: null, reason: nativeReason(code), expiredFrom: null, ...extra });
   }
-  // 새 세대를 열고 이전 요청을 끊는다. 늦게 온 이전 응답은 세대가 달라 버려진다.
-  function begin(phase, extra = {}) {
-    const g = ++generation;
-    abortRequest();
-    stopExpiry();
-    const own = new AbortController();
-    controller = own;
-    const deadline = createNativeDeadline(actionMs, { clock, monotonic });
-    set({ phase, reason: null, ...extra });
-    return { g, own, deadline };
+  // 새 세대를 열고 이전 요청을 끊는다. 콜백이 시작한 더 새 세대는 건드리지 않는다.
+  function begin(phase, extra = {}, clearExpiry = false) {
+    const ctx = { g: ++generation, own: null, deadline: null, wallSample: NaN, monoSample: NaN };
+    if (clearExpiry) monoExpiry = null;
+    stopWork();
+    if (!live(ctx)) return null;
+    ctx.own = new AbortController();
+    controller = ctx.own;
+    try {
+      ctx.deadline = createNativeDeadline(actionMs, {
+        clock: () => { if (!live(ctx)) return NaN; return (ctx.wallSample = clock()); },
+        monotonic: () => { if (!live(ctx)) return NaN; return (ctx.monoSample = monotonic()); },
+      });
+      if (!live(ctx) || !set(ctx.g, { phase, reason: null, ...extra })) { end(ctx); return null; }
+      return ctx;
+    } catch (error) { end(ctx); throw error; }
   }
   function end(ctx) { if (controller === ctx.own) controller = null; ctx.own.abort(); }
+  async function complete(ctx, work) {
+    if (!ctx) return state;
+    try { await work(); } finally { end(ctx); }
+    // abort listeners may synchronously reset or replace this operation.
+    return state;
+  }
   async function call(ctx, kind) {
     if (!live(ctx)) return nfail('NATIVE_LOGIN_CANCELLED');
-    if (!(ctx.deadline.left() > 0)) return nfail('NATIVE_LOGIN_CLIENT_TIMEOUT');
+    const remaining = ctx.deadline.left();
+    if (!live(ctx)) return nfail('NATIVE_LOGIN_CANCELLED');
+    if (!(remaining > 0)) return nfail('NATIVE_LOGIN_CLIENT_TIMEOUT');
     let result;
     try { result = await transport(kind, { signal: ctx.own.signal, deadline: ctx.deadline }); } catch { result = null; }
+    if (!live(ctx)) return nfail('NATIVE_LOGIN_CANCELLED');
     if (!isRecord(result) || !(result.ok === true || (result.ok === false && isRecord(result.error)))) return nfail('NATIVE_LOGIN_RESPONSE_INVALID');
     if (result.ok === false) return nfail(nativeReason(result.error.code));
-    if (!(ctx.deadline.left() > 0)) return nfail('NATIVE_LOGIN_CLIENT_TIMEOUT');
+    if (!timely(ctx)) return nfail(live(ctx) ? 'NATIVE_LOGIN_CLIENT_TIMEOUT' : 'NATIVE_LOGIN_CANCELLED');
     return result;
   }
-  const timely = (ctx) => ctx.deadline.left() > 0;
+  const timely = (ctx) => {
+    if (!live(ctx)) return false;
+    const remaining = ctx.deadline.left();
+    return live(ctx) && remaining > 0;
+  };
 
   async function start() {
     if (!nativeCanStart(state.phase, state.expiredFrom)) return state;
+    const before = generation;
     notify('start');
-    const ctx = begin('starting', { expiresAtMs: null, approvalUrl: null, confirmation: null, cancelUnconfirmed: false, expiredFrom: null });
-    monoExpiry = null;
-    try {
+    if (!current(before)) return state;
+    const ctx = begin('starting', { expiresAtMs: null, approvalUrl: null, confirmation: null, cancelUnconfirmed: false, expiredFrom: null }, true);
+    return complete(ctx, async () => {
       const result = await call(ctx, 'start');
-      if (!live(ctx)) return state;
-      if (!result.ok) { failTo(ctx, result.error.code, NATIVE_NO_REMOTE.has(result.error.code) ? 'error' : 'unknown'); return state; }
+      if (!live(ctx)) return;
+      if (!result.ok) { failTo(ctx, result.error.code, NATIVE_NO_REMOTE.has(result.error.code) ? 'error' : 'unknown'); return; }
       const data = validNativeData(result.data, now());
-      if (data?.state !== 'awaiting_approval') { failTo(ctx, 'NATIVE_LOGIN_RESPONSE_INVALID', 'unknown'); return state; }
-      if (!timely(ctx)) { failTo(ctx, 'NATIVE_LOGIN_CLIENT_TIMEOUT', 'unknown'); return state; }
-      accept(data, ctx.g);
-      return state;
-    } finally { end(ctx); }
+      if (!live(ctx)) return;
+      if (data?.state !== 'awaiting_approval') { failTo(ctx, 'NATIVE_LOGIN_RESPONSE_INVALID', 'unknown'); return; }
+      accept(data, ctx);
+    });
   }
 
   async function redeem() {
-    if (state.phase !== 'awaiting_approval' || expired()) return state;
+    const before = generation;
+    if (state.phase !== 'awaiting_approval' || expired(before) || !current(before)) return state;
     const shown = { approvalUrl: state.approvalUrl, confirmation: state.confirmation };
     const ctx = begin('redeeming');
-    try {
+    return complete(ctx, async () => {
       const result = await call(ctx, 'redeem');
-      if (!live(ctx)) return state;
+      if (!live(ctx)) return;
       // 응답을 잃었을 수 있으므로 확인 불가. redeem 을 자동으로 다시 보내지 않는다.
-      if (!result.ok) { failTo(ctx, result.error.code, 'unknown'); return state; }
+      if (!result.ok) { failTo(ctx, result.error.code, 'unknown'); return; }
       const data = validNativeData(result.data, now());
-      if (!timely(ctx)) { failTo(ctx, 'NATIVE_LOGIN_CLIENT_TIMEOUT', 'unknown'); return state; }
-      if (data?.state === 'connected') { accept(data, ctx.g); return state; }
+      if (!live(ctx)) return;
+      if (data?.state === 'connected') { accept(data, ctx); return; }
       if (data?.state === 'awaiting_approval' && data.approvalUrl === shown.approvalUrl && data.confirmation === shown.confirmation) {
-        accept(data, ctx.g, { reason: 'NATIVE_LOGIN_PENDING' });
-        return state;
+        accept(data, ctx, { reason: 'NATIVE_LOGIN_PENDING' });
+        return;
       }
+      if (!timely(ctx)) { failTo(ctx, 'NATIVE_LOGIN_CLIENT_TIMEOUT', 'unknown'); return; }
       failTo(ctx, 'NATIVE_LOGIN_RESPONSE_INVALID', 'unknown');
-      return state;
-    } finally { end(ctx); }
+    });
   }
 
   // 「현재 로그인 확인」: 이미 connected 면 current, 아니면 status 를 한 번 읽는다.
@@ -582,53 +764,54 @@ export function createNativeLoginController({ transport = createNativeFetchTrans
     if (NATIVE_BUSY.includes(state.phase)) return state;
     const wasConnected = state.phase === 'connected';
     const ctx = begin('checking');
-    try {
+    return complete(ctx, async () => {
       let kind = wasConnected ? 'current' : 'status';
       let result = await call(ctx, kind);
-      if (!live(ctx)) return state;
+      if (!live(ctx)) return;
       let data = result.ok ? validNativeData(result.data, now()) : null;
+      if (!live(ctx)) return;
       if (result.ok && kind === 'status' && data?.state === 'connected') {
         kind = 'current';
         result = await call(ctx, 'current');
-        if (!live(ctx)) return state;
+        if (!live(ctx)) return;
         data = result.ok ? validNativeData(result.data, now()) : null;
+        if (!live(ctx)) return;
       }
       if (!result.ok) failTo(ctx, result.error.code, 'unknown');
       else if (!data || (kind === 'current' && data.state !== 'connected')) failTo(ctx, 'NATIVE_LOGIN_RESPONSE_INVALID', 'unknown');
-      else if (!timely(ctx)) failTo(ctx, 'NATIVE_LOGIN_CLIENT_TIMEOUT', 'unknown');
-      else accept(data, ctx.g, kind === 'status' && data.state === 'awaiting_approval' ? { reason: 'NATIVE_LOGIN_STATUS_ONLY' } : {});
-      if (wasConnected && state.phase !== 'connected') notify('lost');
-      return state;
-    } finally { end(ctx); }
+      else accept(data, ctx, kind === 'status' && data.state === 'awaiting_approval' ? { reason: 'NATIVE_LOGIN_STATUS_ONLY' } : {});
+      if (live(ctx) && wasConnected && state.phase !== 'connected') notifyLost(ctx.g);
+    });
   }
 
   // 사용자 취소: 새 세대로 진행 중 요청과 늦은 응답을 버리고 서버에 실제 cancel {} 를 보낸다.
   // starting 중에도 보낸다(서버가 ticket·verifier 를 보관한다). 응답 유실·시간 초과는 취소 성공이 아니다.
   async function cancel() {
     if (!nativeCanCancel(state.phase)) return state;
+    const before = generation;
     notify('cancel');
-    const ctx = begin('cancelling', { expiresAtMs: null, approvalUrl: null, confirmation: null, expiredFrom: null });
-    monoExpiry = null;
-    try {
+    if (!current(before)) return state;
+    const ctx = begin('cancelling', { expiresAtMs: null, approvalUrl: null, confirmation: null, cancelUnconfirmed: true, expiredFrom: null }, true);
+    return complete(ctx, async () => {
       const result = await call(ctx, 'cancel');
-      if (!live(ctx)) return state;
-      if (!result.ok) { failTo(ctx, result.error.code, 'unknown', { cancelUnconfirmed: true }); return state; }
+      if (!live(ctx)) return;
+      if (!result.ok) { failTo(ctx, result.error.code, 'unknown', { cancelUnconfirmed: true }); return; }
       const data = validNativeData(result.data, now());
-      if (data?.state === 'cancelled' && timely(ctx)) { accept(data, ctx.g); return state; }
-      failTo(ctx, data?.state === 'cancelled' ? 'NATIVE_LOGIN_CLIENT_TIMEOUT' : 'NATIVE_LOGIN_RESPONSE_INVALID', 'unknown', { cancelUnconfirmed: true });
-      return state;
-    } finally { end(ctx); }
+      if (!live(ctx)) return;
+      if (data?.state === 'cancelled') { accept(data, ctx); return; }
+      failTo(ctx, 'NATIVE_LOGIN_RESPONSE_INVALID', 'unknown', { cancelUnconfirmed: true });
+    });
   }
 
   /** 계정 전환·pagehide: 화면 진행과 이 화면의 요청만 끝낸다. 서버 취소를 보내거나 주장하지 않는다. */
   function reset() {
     const quiet = ['idle', 'disconnected', 'cancelled', 'error'].includes(state.phase);
-    ++generation;
-    abortRequest();
-    stopExpiry();
+    const cancelUnconfirmed = state.cancelUnconfirmed === true || state.phase === 'cancelling';
+    const g = ++generation;
     monoExpiry = null;
-    set({ phase: quiet ? 'idle' : 'unknown', expiresAtMs: null, approvalUrl: null, confirmation: null,
-      reason: quiet ? null : 'NATIVE_LOGIN_LOCAL_RESET', cancelUnconfirmed: false, expiredFrom: null });
+    stopWork();
+    set(g, { phase: quiet ? 'idle' : 'unknown', expiresAtMs: null, approvalUrl: null, confirmation: null,
+      reason: quiet ? null : 'NATIVE_LOGIN_LOCAL_RESET', cancelUnconfirmed, expiredFrom: null });
   }
 
   /** 비밀 없는 도움정보. 확인 번호·승인 링크·기한·학생 ID 는 넣지 않는다. */

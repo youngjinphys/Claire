@@ -9,7 +9,6 @@ const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const samePath=(a,b)=>process.platform==='win32'?a.toLowerCase()===b.toLowerCase():a===b;
 const stamp=stat=>[stat.dev,stat.ino,stat.size,stat.mode,stat.nlink,stat.mtimeNs,stat.ctimeNs].map(String).join(':');
 const directoryStamp=stat=>[stat.dev,stat.ino,stat.mode].map(String).join(':');
-const check=signal=>{if(signal.aborted)throw Error('scan unavailable');};
 const unavailable=checkedAt=>({status:'unverifiable',code:'LOCKFILE_UNVERIFIABLE',checkedAt,packages:[]});
 const key=query=>query.package.name+'\n'+query.version;
 const unknown=(query,checkedAt,vulnerabilities=[])=>({name:query.package.name,version:query.version,status:'unverifiable',vulnerabilities,source:OSV_QUERY_BATCH_URL,checkedAt});
@@ -37,39 +36,55 @@ function installedPath(path){
   if(parts.some(part=>!part||part==='.'||part==='..'||/[. ]$/.test(part)||/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(part)))throw Error('invalid installation path');
   return parts;
 }
-async function directories(path,signal){
+async function directories(path,check){
   const root=parse(path).root,paths=[root];let current=root;
   for(const part of path.slice(root.length).split(/[\\/]/).filter(Boolean)){current=join(current,part);paths.push(current);}
   const proof=[];
-  for(const entry of paths){check(signal);const stat=await lstat(entry,{bigint:true});check(signal);if(!stat.isDirectory()||stat.isSymbolicLink()||!samePath(await realpath(entry),entry))throw Error('invalid directory');proof.push({path:entry,stamp:directoryStamp(stat)});}
+  for(const entry of paths){
+    check();const stat=await lstat(entry,{bigint:true});check();
+    if(!stat.isDirectory()||stat.isSymbolicLink())throw Error('invalid directory');
+    const actual=await realpath(entry);check();
+    if(!samePath(actual,entry))throw Error('invalid directory');
+    proof.push({path:entry,stamp:directoryStamp(stat)});
+  }
   return proof;
 }
-async function readMetadata(root,file,maxBytes,signal){
-  const rel=relative(root,file);if(rel.startsWith('..')||isAbsolute(rel)||file===root)throw Error('invalid file boundary');
-  const parents=await directories(dirname(file),signal);check(signal);
-  const before=await lstat(file,{bigint:true});if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1n||before.size>BigInt(maxBytes)||!samePath(await realpath(file),file))throw Error('invalid metadata');
-  check(signal);const handle=await open(file,constants.O_RDONLY|(constants.O_NOFOLLOW??0));
+async function readMetadata(root,file,maxBytes,check){
+  check();const rel=relative(root,file);if(rel.startsWith('..')||isAbsolute(rel)||file===root)throw Error('invalid file boundary');
+  const parents=await directories(dirname(file),check);check();
+  const before=await lstat(file,{bigint:true});check();
+  if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1n||before.size>BigInt(maxBytes))throw Error('invalid metadata');
+  const actual=await realpath(file);check();if(!samePath(actual,file))throw Error('invalid metadata');
+  const handle=await open(file,constants.O_RDONLY|(constants.O_NOFOLLOW??0));
   try{
-    check(signal);const opened=await handle.stat({bigint:true});if(stamp(opened)!==stamp(before))throw Error('metadata changed');
+    check();const opened=await handle.stat({bigint:true});check();if(stamp(opened)!==stamp(before))throw Error('metadata changed');
     const buffer=Buffer.alloc(Number(opened.size)+1);let length=0;
-    while(length<buffer.length){check(signal);const {bytesRead}=await handle.read(buffer,length,Math.min(65536,buffer.length-length),length);if(!bytesRead)break;length+=bytesRead;}
-    const bytes=Buffer.from(buffer.subarray(0,length));check(signal);const after=await handle.stat({bigint:true}),last=await lstat(file,{bigint:true});
+    while(length<buffer.length){check();const {bytesRead}=await handle.read(buffer,length,Math.min(65536,buffer.length-length),length);check();if(!bytesRead)break;length+=bytesRead;}
+    const bytes=Buffer.from(buffer.subarray(0,length));check();
+    const after=await handle.stat({bigint:true});check();const last=await lstat(file,{bigint:true});check();
     if(bytes.length>maxBytes||BigInt(bytes.length)!==opened.size||stamp(after)!==stamp(before)||stamp(last)!==stamp(before)||last.isSymbolicLink())throw Error('metadata changed');
-    await currentDirectories(parents,signal);return {path:file,bytes,sha256:sha(bytes),stamp:stamp(before),parents};
+    await currentDirectories(parents,check);check();
+    const result={path:file,bytes,sha256:sha(bytes),stamp:stamp(before),parents};check();return result;
   }finally{await handle.close();}
 }
-async function currentDirectories(proof,signal){
-  for(const row of proof){check(signal);const stat=await lstat(row.path,{bigint:true});if(!stat.isDirectory()||stat.isSymbolicLink()||directoryStamp(stat)!==row.stamp||!samePath(await realpath(row.path),row.path))throw Error('directory changed');}
+async function currentDirectories(proof,check){
+  for(const row of proof){
+    check();const stat=await lstat(row.path,{bigint:true});check();
+    if(!stat.isDirectory()||stat.isSymbolicLink()||directoryStamp(stat)!==row.stamp)throw Error('directory changed');
+    const actual=await realpath(row.path);check();if(!samePath(actual,row.path))throw Error('directory changed');
+  }
 }
-async function currentFile(root,proof,maxBytes,signal){
-  const current=await readMetadata(root,proof.path,maxBytes,signal);
+async function currentFile(root,proof,maxBytes,check){
+  const current=await readMetadata(root,proof.path,maxBytes,check);check();
   if(current.stamp!==proof.stamp||current.sha256!==proof.sha256||current.parents.length!==proof.parents.length||current.parents.some((row,i)=>row.path!==proof.parents[i].path||row.stamp!==proof.parents[i].stamp))throw Error('metadata changed');
+  check();
 }
-function publicResult(value,query,checkedAt){
+function publicResult(value,query,checkedAt,check){
+  check();
   if(!plain(value)||value.name!==query.package.name||value.version!==query.version||value.source!==OSV_QUERY_BATCH_URL||!['known_vulnerabilities','none_found','unverifiable'].includes(value.status)
     ||!iso(value.checkedAt)||!Array.isArray(value.vulnerabilities))return unknown(query,checkedAt);
   const findings=[];const ids=new Set();
-  for(const row of value.vulnerabilities){if(!plain(row)||!findingId(row.id)||!iso(row.modified)||ids.has(row.id))return unknown(query,checkedAt);ids.add(row.id);findings.push({id:row.id,modified:row.modified});}
+  for(const row of value.vulnerabilities){check();if(!plain(row)||!findingId(row.id)||!iso(row.modified)||ids.has(row.id))return unknown(query,checkedAt);ids.add(row.id);findings.push({id:row.id,modified:row.modified});check();}
   if(value.status==='none_found'&&findings.length||value.status==='known_vulnerabilities'&&!findings.length)return unknown(query,checkedAt,findings);
   return {name:query.package.name,version:query.version,status:value.status,vulnerabilities:findings,source:OSV_QUERY_BATCH_URL,checkedAt:value.checkedAt};
 }
@@ -81,40 +96,53 @@ export function createProjectScanner({projectDirectory,approvedPublicPackages=[]
     const checkedAt=new Date().toISOString();
     if(typeof projectDirectory!=='string'||!isAbsolute(projectDirectory))return{status:'not_configured',code:'PROJECT_NOT_CONFIGURED',checkedAt,packages:[]};
     const directory=resolve(projectDirectory),controller=new AbortController(),signal=controller.signal;
+    const deadline=performance.now()+10000;
+    const check=()=>{
+      if(performance.now()>=deadline){controller.abort();throw Error('scan unavailable');}
+      if(signal.aborted)throw Error('scan unavailable');
+    };
     let selected,packages=[],timer,cancel;
     const partial=()=>selected?{status:'partial',lockfileVersion:selected.lockfileVersion,lockfileHash:selected.lockfileHash,excluded:selected.excluded,checkedAt,packages:selected.queries.map((query,i)=>unknown(query,packages[i]?.checkedAt??checkedAt,packages[i]?.vulnerabilities??[]))}:unavailable(checkedAt);
     const stopped=new Promise(resolveStop=>{cancel=()=>{controller.abort();resolveStop(partial());};timer=setTimeout(cancel,10000);externalSignal?.addEventListener('abort',cancel,{once:true});if(externalSignal?.aborted)cancel();});
     const work=async()=>{
-      check(signal);const lockProof=await readMetadata(directory,join(directory,'package-lock.json'),2097152,signal),lock=json(lockProof.bytes);
-      const selection=buildPackageQueries(lock,{approvedPublicPackages:approved});if(![2,3].includes(selection.lockfileVersion)||Object.keys(lock.packages).length>4096)throw Error('invalid lock');
-      if(!selection.queries.length){await currentFile(directory,lockProof,2097152,signal);check(signal);return{status:'not_checked',code:'NO_APPROVED_PACKAGES',lockfileVersion:selection.lockfileVersion,lockfileHash:lockProof.sha256,excluded:selection.excluded,checkedAt,packages:[]};}
+      check();const lockProof=await readMetadata(directory,join(directory,'package-lock.json'),2097152,check),lock=json(lockProof.bytes);check();
+      const selection=buildPackageQueries(lock,{approvedPublicPackages:approved});check();if(![2,3].includes(selection.lockfileVersion)||Object.keys(lock.packages).length>4096)throw Error('invalid lock');
+      if(!selection.queries.length){await currentFile(directory,lockProof,2097152,check);check();return{status:'not_checked',code:'NO_APPROVED_PACKAGES',lockfileVersion:selection.lockfileVersion,lockfileHash:lockProof.sha256,excluded:selection.excluded,checkedAt,packages:[]};}
       if(selection.queries.length>256)throw Error('too many packages');
-      selected={...selection,lockfileHash:lockProof.sha256};packages=selected.queries.map(query=>unknown(query,checkedAt));
+      check();selected={...selection,lockfileHash:lockProof.sha256};packages=selected.queries.map(query=>unknown(query,checkedAt));
       const groups=new Map(selected.queries.map(query=>[key(query),{query,paths:[],proofs:[],valid:true}]));
       for(const [path,row] of Object.entries(lock.packages)){
-        if(path==='')continue;const match=buildPackageQueries({lockfileVersion:lock.lockfileVersion,packages:{[path]:row}},{approvedPublicPackages:approved}).queries[0];
+        check();if(path==='')continue;const match=buildPackageQueries({lockfileVersion:lock.lockfileVersion,packages:{[path]:row}},{approvedPublicPackages:approved}).queries[0];
         if(match)groups.get(key(match)).paths.push(path);
       }
       for(const group of groups.values()){
         for(const path of group.paths){
-          check(signal);try{const proof=await readMetadata(directory,join(directory,...installedPath(path),'package.json'),1048576,signal),metadata=json(proof.bytes);if(!plain(metadata)||metadata.name!==group.query.package.name||metadata.version!==group.query.version||metadata.private===true)throw Error('installation mismatch');const {bytes,...record}=proof;group.proofs.push(record);}catch{check(signal);group.valid=false;}
+          check();try{const proof=await readMetadata(directory,join(directory,...installedPath(path),'package.json'),1048576,check),metadata=json(proof.bytes);check();if(!plain(metadata)||metadata.name!==group.query.package.name||metadata.version!==group.query.version||metadata.private===true)throw Error('installation mismatch');const {bytes,...record}=proof;group.proofs.push(record);}catch{check();group.valid=false;}
         }
       }
-      await currentFile(directory,lockProof,2097152,signal);
-      for(const group of groups.values())if(group.valid)try{for(const proof of group.proofs)await currentFile(directory,proof,1048576,signal);}catch{check(signal);group.valid=false;}
-      await currentFile(directory,lockProof,2097152,signal);
-      check(signal);const proven=[...groups.values()].filter(group=>group.valid&&group.proofs.length===group.paths.length&&group.paths.length>0);
+      await currentFile(directory,lockProof,2097152,check);
+      for(const group of groups.values())if(group.valid)try{for(const proof of group.proofs)await currentFile(directory,proof,1048576,check);}catch{check();group.valid=false;}
+      await currentFile(directory,lockProof,2097152,check);
+      check();const proven=[...groups.values()].filter(group=>group.valid&&group.proofs.length===group.paths.length&&group.paths.length>0);
       if(proven.length){
-        const response=await client.lookupPackages(proven.map(group=>structuredClone(group.query)),{signal});check(signal);
-        if(Array.isArray(response)&&response.length===proven.length){const resultMap=new Map(proven.map((group,i)=>[key(group.query),publicResult(response[i],group.query,checkedAt)]));packages=selected.queries.map(query=>resultMap.get(key(query))??unknown(query,checkedAt));}
+        const queries=proven.map(group=>structuredClone(group.query));check();
+        const response=await client.lookupPackages(queries,{signal});check();
+        if(Array.isArray(response)&&response.length===proven.length){
+          const indexes=new Map(selected.queries.map((query,i)=>[key(query),i]));
+          for(let i=0;i<proven.length;i++){
+            check();const result=publicResult(response[i],proven[i].query,checkedAt,check);check();
+            packages[indexes.get(key(proven[i].query))]=result;
+          }
+        }
       }
       // Preserve received findings, but revoke any clean/current assertion if the source changed.
-      await currentFile(directory,lockProof,2097152,signal);
-      for(const group of proven)for(const proof of group.proofs)await currentFile(directory,proof,1048576,signal);
-      await currentFile(directory,lockProof,2097152,signal);
-      check(signal);return {status:packages.some(row=>row.status==='unverifiable')?'partial':'complete',lockfileVersion:selected.lockfileVersion,lockfileHash:selected.lockfileHash,excluded:selected.excluded,checkedAt,packages};
+      await currentFile(directory,lockProof,2097152,check);
+      for(const group of proven)for(const proof of group.proofs)await currentFile(directory,proof,1048576,check);
+      await currentFile(directory,lockProof,2097152,check);
+      check();return {status:packages.some(row=>row.status==='unverifiable')?'partial':'complete',lockfileVersion:selected.lockfileVersion,lockfileHash:selected.lockfileHash,excluded:selected.excluded,checkedAt,packages};
     };
-    try{return await Promise.race([work().catch(()=>partial()),stopped]);}
+    try{const result=await Promise.race([work().catch(()=>partial()),stopped]);check();return result;}
+    catch{return partial();}
     finally{clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);controller.abort();}
   }});
 }

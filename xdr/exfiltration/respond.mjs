@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
-import { isIP } from 'node:net';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decide } from './decide.mjs';
 import { extractAlert } from './read-alerts.mjs';
+import { candidateExpiry, findActiveDenyCandidate } from '../candidate-validation.mjs';
+import { mergeCandidateIntervals } from '../candidate-intervals.mjs';
+import { addressIdentity } from '../address-identity.mjs';
+import { hasNormalEvidence } from '../normal-evidence.mjs';
 
 const TTL_MS = 15 * 60 * 1000;
 
@@ -13,11 +16,6 @@ function validAgent(alert) {
   const name = alert?.agent?.name;
   return typeof name === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/iu.test(name)
     ? name : null;
-}
-
-function validDestination(alert) {
-  const dest = alert?.data?.dstip;
-  return typeof dest === 'string' && isIP(dest) ? dest : null;
 }
 
 function verifiedBlock(alert, submitted) {
@@ -38,8 +36,10 @@ export function buildDenyCandidates(alerts, decisions) {
   const mapped = new Map(decisions.map(v => [v.alertId, v]));
   const benignDestinations = new Set();
   for (const alert of alerts) {
-    const dst = validDestination(alert);
-    if (dst && decide(alert).action === 'record') benignDestinations.add(dst);
+    const row = extractAlert(alert);
+    const destinationIdentity = addressIdentity(alert?.data?.dstip);
+    if (destinationIdentity && row.account && validAgent(alert)
+        && hasNormalEvidence('exfiltration', alert, row, decide(alert))) benignDestinations.add(destinationIdentity);
   }
 
   const candidates = new Map();
@@ -47,43 +47,40 @@ export function buildDenyCandidates(alerts, decisions) {
     if (!validId(alert?.id)) continue;
     const decision = verifiedBlock(alert, mapped.get(alert.id));
     if (!decision) continue;
-    const row = extractAlert(alert), dst = validDestination(alert), agent = validAgent(alert);
+    const row = extractAlert(alert), agent = validAgent(alert);
+    const sourceIdentity = addressIdentity(row.sourceAddress);
+    const destinationIdentity = addressIdentity(alert?.data?.dstip);
     const started = Date.parse(row.at);
     const bytesRaw = alert?.data?.bytes;
     const bytes = typeof bytesRaw === 'string' || typeof bytesRaw === 'number'
       ? Number(bytesRaw) : NaN;
-    if (!row.sourceAddress || !row.account || !dst || !agent
+    if (!sourceIdentity || !row.account || !destinationIdentity || !agent
         || !Number.isFinite(started) || !Number.isSafeInteger(bytes)
-        || bytes < 50_000_000 || benignDestinations.has(dst)) continue;
-    const scope = agent + '\0' + row.sourceAddress + '\0' + row.account + '\0' + dst;
-    const until = started + TTL_MS;
-    const known = candidates.get(scope);
-    if (known) {
-      if (!known.evidenceAlertIds.includes(alert.id)) known.evidenceAlertIds.push(alert.id);
-      if (Date.parse(known.startsAt) > started) known.startsAt = row.at;
-      if (Date.parse(known.expiresAt) < until) known.expiresAt = new Date(until).toISOString();
-      known.confidence = Math.max(known.confidence, decision.confidence);
-      if (!known.patterns.includes(decision.reason)) known.patterns.push(decision.reason);
-    } else {
-      candidates.set(scope, {
-        id: 'xdr.exfiltration.' + createHash('sha256').update(scope).digest('hex').slice(0, 16),
-        agentName: agent,
-        sourceAddress: row.sourceAddress,
-        account: row.account,
-        destinationAddress: dst,
-        startsAt: row.at,
-        expiresAt: new Date(until).toISOString(),
-        evidenceAlertIds: [alert.id],
-        patterns: [decision.reason],
-        confidence: decision.confidence,
-        requiresVerifiedSourceBinding: true,
-        requiresVerifiedDestinationBinding: true,
-        requiresVerifiedAccountBinding: true,
-        requiresEventCorrelation: true,
-      });
-    }
+        || bytes < 50_000_000 || benignDestinations.has(destinationIdentity)) continue;
+    const expiry = candidateExpiry(started, TTL_MS);
+    if (!expiry) continue;
+    const scope = agent + '\0' + sourceIdentity + '\0' + row.account + '\0' + destinationIdentity;
+    const observations = candidates.get(scope) ?? [];
+    observations.push({
+      id: 'xdr.exfiltration.' + createHash('sha256').update(scope).digest('hex').slice(0, 16),
+      agentName: agent,
+      sourceAddress: row.sourceAddress,
+      account: row.account,
+      destinationAddress: alert.data.dstip,
+      startsAt: row.at,
+      expiresAt: expiry.expiresAt,
+      evidenceAlertIds: [alert.id],
+      patterns: [decision.reason],
+      confidence: decision.confidence,
+      requiresVerifiedSourceBinding: true,
+      requiresVerifiedDestinationBinding: true,
+      requiresVerifiedAccountBinding: true,
+      requiresEventCorrelation: true,
+    });
+    candidates.set(scope, observations);
   }
-  return [...candidates.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return [...candidates.values()].map(observations => mergeCandidateIntervals(observations))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 // Separate additive gate: never replace an upstream deny/step_up or trust
@@ -101,26 +98,25 @@ export function checkZTNAExtra({ upstreamDecision, trustedContext, rules }) {
     return { action: 'pass', reason: 'missing_verified_transfer_context' };
   }
   const { sourceAddress, destinationAddress, account, agentName, eventId, at } = trustedContext;
-  const moment = Date.parse(at);
-  if (!isIP(sourceAddress ?? '') || !isIP(destinationAddress ?? '')
+  const sourceIdentity = addressIdentity(sourceAddress);
+  const destinationIdentity = addressIdentity(destinationAddress);
+  const moment = typeof at === 'string' ? Date.parse(at) : NaN;
+  if (!sourceIdentity || !destinationIdentity
       || !validId(eventId) || !Number.isFinite(moment)
-      || typeof account !== 'string' || typeof agentName !== 'string') {
+      || typeof account !== 'string' || !account || typeof agentName !== 'string' || !agentName) {
     return { action: 'pass', reason: 'invalid_verified_transfer_context' };
   }
 
-  const matched = rules.find(rule =>
+  const matched = findActiveDenyCandidate(rules, moment, rule =>
     rule.requiresVerifiedSourceBinding === true
     && rule.requiresVerifiedDestinationBinding === true
     && rule.requiresVerifiedAccountBinding === true
     && rule.requiresEventCorrelation === true
     && rule.agentName === agentName
-    && rule.sourceAddress === sourceAddress
-    && rule.destinationAddress === destinationAddress
+    && addressIdentity(rule.sourceAddress) === sourceIdentity
+    && addressIdentity(rule.destinationAddress) === destinationIdentity
     && rule.account === account
-    && rule.confidence >= 0.85
-    && Array.isArray(rule.evidenceAlertIds)
     && rule.evidenceAlertIds.includes(eventId)
-    && Date.parse(rule.startsAt) <= moment && moment < Date.parse(rule.expiresAt)
   );
   return matched
     ? { action: 'deny', reason: matched.patterns[0], ruleId: matched.id }

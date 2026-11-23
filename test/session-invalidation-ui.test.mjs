@@ -1,15 +1,27 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFile} from 'node:fs/promises';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createContext,Script} from 'node:vm';
+import {spawnSync} from 'node:child_process';
+import {setTimeout as setRealTimeout,clearTimeout as clearRealTimeout} from 'node:timers';
 
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function until(predicate){for(let i=0;i<100;i++){if(predicate())return;await tick();}throw Error('timed out waiting for UI state');}
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const reply=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
-const proof={schema:'aleph.device.proof.v1',approved:true,proof:'fixture-proof',expiresInSeconds:120};
-const approved={registration:'approved',verified:false,canOpenVault:false};
+const delayedReply=(pending,status,onRead=()=>{})=>{
+  let cancelled=false,started=false;
+  return new Response(new ReadableStream({
+    pull(controller){
+      if(started)return;started=true;onRead();
+      pending.then(body=>{if(cancelled)return;controller.enqueue(new TextEncoder().encode(JSON.stringify(body)));controller.close();});
+    },cancel(){cancelled=true;},
+  }),{status,headers:{'Content-Type':'application/json'}});
+};
+const proof={schema:'aleph.device.proof.v1',approved:true,proof:'P'.repeat(43),expiresInSeconds:120};
+const approved={schema:'aleph.device.status.v1',registration:'approved',verified:false,canOpenVault:false,installIsApproval:false};
+const openJsonReply=(cancel,headers={})=>new Response(new ReadableStream({cancel}),{headers:{'content-type':'application/json',...headers}});
 const ownerA='11111111-1111-4111-8111-111111111111';
 const ownerB='22222222-2222-4222-8222-222222222222';
 class Element extends EventTarget{
@@ -22,12 +34,48 @@ class Element extends EventTarget{
   focus(){if(globalThis.document)globalThis.document.activeElement=this;}
   getBoundingClientRect(){return {top:10,bottom:30};}
 }
-async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=false,delayLogout=false,delayLogin=false,delayNotesRead=false,notesFailure=null,initialId,refreshId,loginId,emptyNotes=false,persistBeforePostResponse=false,initialNotes=null,captureMutationTimers=false,cryptoOverride}={}){
-  const keys=['window','document','navigator','location','BroadcastChannel','fetch','setTimeout','clearTimeout','requestAnimationFrame','crypto'];
+function trackSubmitHandlers(form){
+  const pending=new Set(),failures=[],wrappers=new WeakMap();
+  const add=form.addEventListener,remove=form.removeEventListener;
+  const wrapped=listener=>{
+    if(listener===null||!['function','object'].includes(typeof listener))return listener;
+    if(!wrappers.has(listener))wrappers.set(listener,function(event){
+      const result=typeof listener==='function'?listener.call(this,event):listener.handleEvent.call(listener,event);
+      if(result&&typeof result.then==='function'){
+        const completion=Promise.resolve(result);pending.add(completion);
+        completion.then(()=>pending.delete(completion),error=>{pending.delete(completion);failures.push(error);});
+      }
+      // EventTarget still receives the original return value and handles throws/rejections.
+      return result;
+    });
+    return wrappers.get(listener);
+  };
+  form.addEventListener=function(type,listener,options){
+    return add.call(this,type,type==='submit'?wrapped(listener):listener,options);
+  };
+  form.removeEventListener=function(type,listener,options){
+    return remove.call(this,type,type==='submit'?wrappers.get(listener)??listener:listener,options);
+  };
+  // This owns only promises returned by this form's submit handlers, not detached reads.
+  return async()=>{
+    let timer;
+    const deadline=new Promise((_,reject)=>{timer=setRealTimeout(()=>reject(Error('create-form submit handlers did not settle before fixture cleanup')),5000);});
+    try {
+      while(pending.size)await Promise.race([Promise.allSettled([...pending]),deadline]);
+      if(failures.length)throw new AggregateError(failures,'create-form submit handler rejected');
+    } finally {clearRealTimeout(timer);}
+  };
+}
+async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=false,delayLogout=false,delayLogin=false,delayNotesRead=false,notesFailure=null,initialId,refreshId,loginId,emptyNotes=false,persistBeforePostResponse=false,initialNotes=null,captureMutationTimers=false,cryptoOverride,now,beforeMutationPublication,beforeMutationSend,afterMutationReservation}={}){
+  const keys=['window','document','navigator','location','BroadcastChannel','fetch','setTimeout','clearTimeout','requestAnimationFrame','crypto','performance'];
   const saved=Object.fromEntries(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
-  t.after(()=>{for(const [key,value] of Object.entries(saved))if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];});
-  const ids=['signed-out','signed-in','workspace','vault-title','workspace-title','login-form','logout','login-status','workspace-status','notes-lookup-status','delete-operation-status','save-operation-status','save-uncertainty-state','draft-warning','delete-uncertainty-state','session-revalidation-state','session-label','notes','create-form','create-submit','create-retry-panel','create-retry-list','email','password','new-title','new-body','device-state','device-detail','device-heading','device-enroll','device-unlock','device-refresh','device-panel','pwa-state','pwa-install','ops-state'];
+  const ids=['signed-out','signed-in','workspace','vault-title','workspace-title','login-form','logout','login-status','workspace-status','notes-lookup-status','notes-refresh','delete-operation-status','save-operation-status','save-uncertainty-state','draft-warning','delete-uncertainty-state','session-revalidation-state','session-label','notes','create-form','create-submit','create-retry-panel','create-retry-list','email','password','new-title','new-body','device-state','device-detail','device-heading','device-enroll','device-unlock','device-refresh','device-panel','pwa-state','pwa-install','ops-state'];
   const nodes=new Map(ids.map(id=>[id,new Element()]));
+  const finishSubmissions=trackSubmitHandlers(nodes.get('create-form'));
+  t.after(async()=>{
+    try {await finishSubmissions();}
+    finally {for(const [key,value] of Object.entries(saved))if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];}
+  });
   nodes.get('draft-warning').hidden=true;
   nodes.get('notes-lookup-status').hidden=true;
   nodes.get('delete-operation-status').hidden=true;
@@ -37,6 +85,13 @@ async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=
   nodes.get('delete-uncertainty-state').hidden=true;
   const state=new Map([['aleph.auth.version.v1','1'.repeat(32)+'~'+'a'.repeat(32)]]);
   const win=new EventTarget();
+  if(beforeMutationPublication)win.__raceMutationForTest=promises=>Promise.race(promises).then(result=>{
+    // Schedule unrelated work after the race settles and before its caller
+    // resumes. The response and its diagnostics have already been received.
+    queueMicrotask(beforeMutationPublication);return result;
+  });
+  if(beforeMutationSend)win.__beforeMutationSendForTest=beforeMutationSend;
+  if(afterMutationReservation)win.__afterMutationReservationForTest=afterMutationReservation;
   if(process.env.CLAIRE_TEST_NO_STORAGE!=='1')win.localStorage={getItem:key=>state.get(key)??null,setItem:(key,value)=>state.set(key,String(value)),removeItem:key=>state.delete(key)};
   win.PublicKeyCredential=class {};win.matchMedia=()=>({matches:false});win.confirm=()=>true;
   const doc={readyState:'complete',hasFocus:()=>true,querySelector:selector=>nodes.get(selector.slice(1)),getElementById:id=>nodes.get(id),createElement:tag=>new Element(tag)};
@@ -59,7 +114,7 @@ async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=
   let serverNotes=initialNotes||[{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',title:'fixture',body:'fixture'}];
   const post=deferred(),refresh=deferred(),bootstrap=deferred(),logout=deferred(),login=deferred(),notesRead=deferred();
   const queuedWrites=[],queuedCreates=[];let deferPost=false,holdPrompt=false,persisted=false,queueWrites=false,queueCreates=false;
-  const timers=[];
+  const timers=[],readSignals=[],writeStartTimes=[];
   win.SimpleWebAuthnBrowser={
     async startAuthentication(){authCalls++;if(!holdPrompt)return {};activePrompt=deferred();return activePrompt.promise;},
     WebAuthnAbortService:{cancelCeremony(){cancels++;activePrompt?.reject(Object.assign(Error('aborted'),{name:'AbortError'}));}},
@@ -81,6 +136,7 @@ async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=
     if(path==='/api/device?action=assertion-verify')return reply(proof);
     if(path==='/api/notes'&&(options.method??'GET')==='GET'){
       notesReads++;
+      readSignals.push(options.signal);
       if(notesReads===(delayNotesRead===true?2:delayNotesRead))return notesRead.promise;
       if(notesReads===2&&notesFailure==='network')throw Error('synthetic network failure');
       if(notesReads===2&&notesFailure==='server')return reply({error:'SYNTHETIC_LIST_FAILURE'},503);
@@ -90,6 +146,7 @@ async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=
     }
     if((path==='/api/notes'&&options.method==='POST')||(path.startsWith('/api/notes/')&&['PUT','DELETE'].includes(options.method))){
       postCalls++;
+      if(now)writeStartTimes.push(now());
       if(path==='/api/notes'&&options.method==='POST')lastCreateId=JSON.parse(options.body).id;
       if(persistBeforePostResponse&&path==='/api/notes'&&options.method==='POST')persisted=true;
       if(queueCreates&&path==='/api/notes'&&options.method==='POST'){
@@ -106,12 +163,23 @@ async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=
   const setTimer=captureMutationTimers?(fn,delay)=>{const timer={fn,delay,active:true};timers.push(timer);return timer;}:()=>1;
   const clearTimer=captureMutationTimers?timer=>{if(timer)timer.active=false;}:()=>{};
   const runtimeCrypto=cryptoOverride===undefined?globalThis.crypto:cryptoOverride;
+  if(now)Object.defineProperty(globalThis,'performance',{configurable:true,writable:true,value:{now}});
   for(const [key,value] of Object.entries({window:win,document:doc,location:{protocol:'https:',hostname:'fixture.invalid',port:''},BroadcastChannel:undefined,navigator,fetch:fixtureFetch,crypto:runtimeCrypto,setTimeout:setTimer,clearTimeout:clearTimer,requestAnimationFrame:()=>1}))Object.defineProperty(globalThis,key,{configurable:true,writable:true,value});
   const html=await readFile(process.env.CLAIRE_SESSION_TEST_INDEX || new URL('../public/index.html',import.meta.url),'utf8');
   const inline=html.match(/<script>\s*([\s\S]*?)<\/script>/)?.[1];assert.ok(inline);
   const device=pathToFileURL(new URL('../public/device.mjs',import.meta.url).pathname).href;
-  const script=inline.replace("import('/device.mjs')",`import(${JSON.stringify(device)})`)
+  let script=inline.replace("import('/device.mjs')",`import(${JSON.stringify(device)})`)
     .replace("import('/operations.mjs')","import('data:text/javascript,export function initOperations(){}')");
+  if(beforeMutationPublication)script=script.replace(/await Promise\.race\(\[request,\s*timeout\]\)/gu,'await window.__raceMutationForTest([request, timeout])');
+  if(beforeMutationSend){
+    assert.ok(script.includes('checkBeforeSend?.();'),'fixture must intercept the real pre-send boundary');
+    script=script.replace('checkBeforeSend?.();','if (checkBeforeSend) window.__beforeMutationSendForTest(); checkBeforeSend?.();');
+  }
+  if(afterMutationReservation){
+    const reservation='() => { dispatched = true; }';
+    assert.ok(script.includes(reservation),'fixture must intercept the creation dispatch notification');
+    script=script.replace(reservation,'() => { dispatched = true; window.__afterMutationReservationForTest(); }');
+  }
   await import(`data:text/javascript;base64,${Buffer.from(script).toString('base64')}#${Math.random()}`);
   const click=id=>nodes.get(id).dispatchEvent(new Event('click'));
   if(!delayBootstrap){
@@ -119,7 +187,7 @@ async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=
     click('device-unlock');
     await until(()=>nodes.get('workspace').hidden===false&&nodes.get('notes').children.length===serverNotes.length);
   }
-  return {nodes,win,doc,post,refresh,bootstrap,logout,login,notesRead,click,queuedWrites,queuedCreates,fireMutationTimeout(){const timer=timers.find(item=>item.active&&item.delay===30000);assert.ok(timer,'expected active mutation timer');timer.active=false;timer.fn();},get lastCreateId(){return lastCreateId;},get identities(){return identities;},get sessionCalls(){return sessionCalls;},get postCalls(){return postCalls;},get persisted(){return persisted;},get notesReads(){return notesReads;},get cancels(){return cancels;},get authCalls(){return authCalls;},set deferPost(value){deferPost=value;},set holdPrompt(value){holdPrompt=value;},set loginId(value){loginUserId=value;},set serverNotes(value){serverNotes=value;},set queueWrites(value){queueWrites=value;},set queueCreates(value){queueCreates=value;}};
+  return {nodes,win,doc,post,refresh,bootstrap,logout,login,notesRead,readSignals,writeStartTimes,click,queuedWrites,queuedCreates,fireHttpTimeout(){const timer=timers.find(item=>item.active&&item.delay===10000);assert.ok(timer,'expected active read timer');timer.active=false;timer.fn();},fireMutationTimeout(){const timer=timers.find(item=>item.active&&item.delay===30000);assert.ok(timer,'expected active mutation timer');timer.active=false;timer.fn();},get lastCreateId(){return lastCreateId;},get identities(){return identities;},get sessionCalls(){return sessionCalls;},get postCalls(){return postCalls;},get persisted(){return persisted;},get notesReads(){return notesReads;},get cancels(){return cancels;},get authCalls(){return authCalls;},set deferPost(value){deferPost=value;},set holdPrompt(value){holdPrompt=value;},set loginId(value){loginUserId=value;},set serverNotes(value){serverNotes=value;},set queueWrites(value){queueWrites=value;},set queueCreates(value){queueCreates=value;}};
 }
 for(const refreshFailure of ['http','network']){
   test(`failed ${refreshFailure} session restoration immediately locks the vault and updates identity`,async t=>{
@@ -148,6 +216,282 @@ for(const refreshFailure of ['http','network']){
   });
 }
 
+for(const phase of ['headers','body'])test(`a stalled notes ${phase} read retains the last rows, focus and draft and permits manual retry`,async t=>{
+  const x=await setup(t,{initialId:ownerA,delayNotesRead:2,captureMutationTimers:true});
+  editExisting(x,'fixture local edit','fixture local body');
+  const title=existingFields(x).title,rows=x.nodes.get('notes').children;
+  title.focus();let cancelled=0;
+  x.click('notes-refresh');await until(()=>x.notesReads===2);
+  assert.equal(x.nodes.get('notes-refresh').getAttribute('aria-disabled'),'true');
+  if(phase==='body'){x.notesRead.resolve(openJsonReply(()=>{cancelled++;return new Promise(()=>{});}));await tick();}
+  x.fireHttpTimeout();
+  await until(()=>x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  assert.equal(x.readSignals[1].aborted,true);
+  assert.equal(x.nodes.get('notes').children,rows);
+  assert.equal(existingFields(x).title,title);
+  assert.equal(x.doc.activeElement,title);
+  assert.equal(title.value,'fixture local edit');
+  assert.equal(x.nodes.get('workspace').hidden,false);
+  assert.match(x.nodes.get('workspace-status').textContent,/목록 응답 대기 시간이.*목록 새로고침/u);
+  if(phase==='headers'){x.notesRead.resolve(openJsonReply(()=>{cancelled++;}));await tick();await tick();}
+  assert.equal(cancelled,1);
+  const before=x.postCalls;x.click('notes-refresh');
+  await until(()=>x.notesReads===3&&x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  assert.equal(existingFields(x).title.value,'fixture local edit');
+  assert.equal(x.postCalls,before,'manual list recovery must not replay pending writes');
+});
+
+test('locking the vault aborts its pending list read and disposes late response bodies',async t=>{
+  const x=await setup(t,{initialId:ownerA,delayNotesRead:2,captureMutationTimers:true});
+  let cancelled=0;
+  x.click('notes-refresh');await until(()=>x.notesReads===2);
+  x.click('device-refresh');
+  assert.equal(x.readSignals[1].aborted,true);
+  await until(()=>x.nodes.get('device-state').textContent==='등록 기기 · 재인증 필요');
+  x.notesRead.resolve(openJsonReply(()=>{cancelled++;}));await tick();await tick();
+  assert.equal(cancelled,1);assert.equal(x.nodes.get('workspace').hidden,true);
+  assert.equal(x.nodes.get('notes').children.length,0);
+  assert.doesNotMatch(x.nodes.get('workspace-status').textContent,/요청이 취소/u);
+});
+
+test('an oversized notes response is discarded while the prior editable rows remain available',async t=>{
+  const x=await setup(t,{initialId:ownerA,delayNotesRead:2});let cancelled=0;
+  editExisting(x,'fixture local edit','fixture local body');
+  const rows=x.nodes.get('notes').children;
+  x.click('notes-refresh');await until(()=>x.notesReads===2);
+  x.notesRead.resolve(openJsonReply(()=>{cancelled++;},{'content-length':String(16*1024*1024+1)}));
+  await until(()=>x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  assert.equal(cancelled,1);assert.equal(x.nodes.get('notes').children,rows);
+  assert.equal(existingFields(x).title.value,'fixture local edit');
+  assert.match(x.nodes.get('workspace-status').textContent,/응답 크기/u);
+});
+
+test('a stalled protected 403 inspection has a deadline and retains its known rejection',async t=>{
+  const x=await setup(t,{initialId:ownerA,captureMutationTimers:true});x.deferPost=true;
+  x.nodes.get('new-title').value='fixture submitted title';x.nodes.get('new-body').value='fixture submitted body';
+  x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.postCalls===1);
+  let cancelled=0;
+  x.post.resolve(new Response(new ReadableStream({cancel(){cancelled++;return new Promise(()=>{});}}),{status:403,headers:{'content-type':'application/json'}}));
+  await tick();await tick();x.fireHttpTimeout();
+  await until(()=>x.nodes.get('create-submit').getAttribute('aria-disabled')!=='true');
+  await until(()=>cancelled===1);
+  assert.equal(x.nodes.get('new-title').value,'fixture submitted title');
+  assert.equal(x.nodes.get('draft-warning').hidden,true,'a known rejection must not become an unknown mutation');
+  assert.equal(x.nodes.get('create-retry-panel').hidden,true);
+  assert.equal(x.postCalls,1,'the timed-out inspection must not automatically replay a creation');
+  assert.doesNotMatch(x.nodes.get('workspace-status').textContent,/추가했습니다/u);
+});
+
+for(const notesFailure of ['network','server','invalid-json'])test(`successful list retry clears only its own ${notesFailure} failure and keeps edits`,async t=>{
+  const x=await setup(t,{initialId:ownerA,notesFailure});
+  editExisting(x,'fixture retained edit','fixture retained body');
+  x.click('notes-refresh');await until(()=>x.notesReads===2&&x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  assert.match(x.nodes.get('workspace-status').textContent,/보관|실패/u);
+  x.click('notes-refresh');await until(()=>x.notesReads===3&&x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  assert.equal(x.nodes.get('workspace-status').textContent,'');
+  assert.equal(existingFields(x).title.value,'fixture retained edit');
+  assert.equal(existingFields(x).body.value,'fixture retained body');
+});
+
+test('same-owner device revalidation clears the still-owned list failure after its fresh read succeeds',async t=>{
+  const x=await setup(t,{initialId:ownerA,notesFailure:'network'});
+  editExisting(x,'fixture retained edit','fixture retained body');
+  x.click('notes-refresh');await until(()=>x.notesReads===2&&x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  const failure=x.nodes.get('workspace-status').textContent;assert.match(failure,/실패|failure/u);
+  x.click('device-refresh');await until(()=>x.nodes.get('device-state').textContent==='등록 기기 · 재인증 필요');
+  assert.equal(x.nodes.get('workspace-status').textContent,failure,'a locked view does not claim that the list recovered');
+  x.click('device-unlock');await until(()=>x.notesReads===3&&x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  assert.equal(x.nodes.get('workspace-status').textContent,'');
+  assert.equal(existingFields(x).title.value,'fixture retained edit');
+});
+
+for(const status of [400,503])test(`a successful list retry preserves a newer creation HTTP ${status} outcome and its uncertainty`,async t=>{
+  const x=await setup(t,{initialId:ownerA,notesFailure:'network',delayNotesRead:3});x.queueCreates=true;
+  editExisting(x,'fixture retained edit','fixture retained body');
+  x.click('notes-refresh');await until(()=>x.notesReads===2&&x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  x.click('notes-refresh');await until(()=>x.notesReads===3);
+  x.nodes.get('new-title').value='fixture new draft';x.nodes.get('new-body').value='fixture new body';
+  x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.queuedCreates.length===1);
+  x.queuedCreates[0].resolve(reply({error:'FIXTURE_NEWER_OUTCOME'},status));
+  await until(()=>x.nodes.get('workspace-status').textContent==='FIXTURE_NEWER_OUTCOME');
+  x.notesRead.resolve(reply([{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',title:'fixture',body:'fixture'}]));
+  await until(()=>x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  assert.equal(x.nodes.get('workspace-status').textContent,'FIXTURE_NEWER_OUTCOME');
+  assert.equal(x.nodes.get('create-retry-panel').hidden,status===400);
+  assert.equal(x.nodes.get('draft-warning').hidden,status===400);
+  assert.equal(x.nodes.get('new-title').value,'fixture new draft');
+  assert.equal(existingFields(x).title.value,'fixture retained edit');
+});
+
+for(const action of ['create','save','delete'])for(const status of action==='create'?[400,403,408,409,503,201]:[400,403,408,503])
+test(`HTTP ${status} ${action} headers survive the outer mutation deadline while its optional body stalls`,async t=>{
+  const x=await setup(t,{initialId:ownerA,captureMutationTimers:true});x.queueWrites=true;x.queueCreates=true;
+  if(action==='create'){
+    x.nodes.get('new-title').value='fixture pending draft';x.nodes.get('new-body').value='fixture pending body';
+    x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.queuedCreates.length===1);
+  }else{
+    editExisting(x,'fixture retained edit','fixture retained body');
+    descendants(x.nodes.get('notes'),'button').find(button=>button.textContent===(action==='save'?'수정 저장':'삭제')).dispatchEvent(new Event('click'));
+    await until(()=>x.queuedWrites.length===1);
+  }
+  let cancelled=0;
+  const received=new Response(new ReadableStream({cancel(){cancelled++;return new Promise(()=>{});}}),{status,headers:{'content-type':'application/json'}});
+  const pending=action==='create'?x.queuedCreates[0]:x.queuedWrites[0];pending.resolve(received);await tick();await tick();
+  x.fireMutationTimeout();await until(()=>cancelled===1);await tick();await tick();
+  const uncertain=status===408||status>=500||(action==='create'&&(status===201||status===409));
+  if(action==='create'){
+    await until(()=>x.nodes.get('create-submit').getAttribute('aria-disabled')!=='true');
+    assert.equal(x.nodes.get('create-retry-panel').hidden,!uncertain);
+    assert.equal(x.nodes.get('draft-warning').hidden,!uncertain);
+    assert.equal(x.nodes.get('new-title').value,'fixture pending draft');
+    assert.equal(x.queuedCreates.length,1);
+  }else{
+    assert.equal(x.nodes.get(action==='save'?'save-uncertainty-state':'delete-uncertainty-state').hidden,!uncertain);
+    assert.equal(existingFields(x).title.value,'fixture retained edit');
+    assert.equal(x.queuedWrites.length,1);
+    if(!uncertain)for(const button of descendants(x.nodes.get('notes'),'button')){
+      assert.equal(button.disabled,false);assert.notEqual(button.getAttribute('aria-disabled'),'true');
+    }
+  }
+  assert.equal(received.body.locked,false);
+  assert.doesNotMatch(x.nodes.get('workspace-status').textContent,/추가했습니다|수정했습니다|삭제했습니다/u);
+});
+
+for(const action of ['create','save','delete'])for(const status of [200,400])
+test(`${action} final publication expiry preserves a timely ${status===400?'HTTP denial':'positive response as unconfirmed'}`,async t=>{
+  let clock=0;
+  const x=await setup(t,{initialId:ownerA,captureMutationTimers:true,now:()=>clock,beforeMutationPublication:()=>{clock=30001;}});
+  x.queueWrites=true;x.queueCreates=true;
+  if(action==='create'){
+    x.nodes.get('new-title').value='fixture pending draft';x.nodes.get('new-body').value='fixture pending body';
+    x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.queuedCreates.length===1);
+  }else{
+    editExisting(x,'fixture retained edit','fixture retained body');
+    descendants(x.nodes.get('notes'),'button').find(button=>button.textContent===(action==='save'?'수정 저장':'삭제')).dispatchEvent(new Event('click'));
+    await until(()=>x.queuedWrites.length===1);
+  }
+  const pending=action==='create'?x.queuedCreates[0]:x.queuedWrites[0];
+  const received=reply(status===400?{error:'FIXTURE_KNOWN_DENIAL'}:action==='create'?{id:x.lastCreateId}:{ok:true},status===200&&action==='create'?201:status);
+  pending.resolve(received);
+  await until(()=>clock===30001);await tick();await tick();
+  assert.equal(pending.signal.aborted,true);assert.equal(received.body.locked,false);
+  assert.equal(x.postCalls,1,'expiry must never automatically resend a mutation');
+  assert.doesNotMatch(x.nodes.get('workspace-status').textContent,/추가했습니다|수정했습니다|삭제했습니다/u);
+  if(action==='create'){
+    await until(()=>x.nodes.get('create-submit').getAttribute('aria-disabled')!=='true');
+    assert.equal(x.nodes.get('new-title').value,'fixture pending draft');
+    assert.equal(x.nodes.get('create-retry-panel').hidden,status===400);
+    assert.equal(x.nodes.get('draft-warning').hidden,status===400);
+  }else{
+    assert.equal(x.nodes.get(action==='save'?'save-uncertainty-state':'delete-uncertainty-state').hidden,status===400);
+    assert.equal(existingFields(x).title.value,'fixture retained edit');
+    if(status===400)for(const button of descendants(x.nodes.get('notes'),'button')){
+      assert.equal(button.disabled,false);assert.notEqual(button.getAttribute('aria-disabled'),'true');
+    }
+  }
+});
+
+for(const action of ['create','save','delete'])test(`an unsent ${action} that expires immediately before fetch never becomes an uncertain remote write`,async t=>{
+  let clock=0;
+  const x=await setup(t,{initialId:ownerA,captureMutationTimers:true,now:()=>clock,beforeMutationSend:()=>{clock=30001;}});
+  if(action==='create'){
+    x.nodes.get('new-title').value='fixture unsent draft';
+    x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));
+    await until(()=>x.nodes.get('create-submit').getAttribute('aria-disabled')!=='true');
+    assert.equal(x.nodes.get('new-title').value,'fixture unsent draft');
+    assert.equal(x.nodes.get('create-retry-panel').hidden,true);assert.equal(x.nodes.get('draft-warning').hidden,true);
+  }else{
+    editExisting(x,'fixture unsent edit','fixture unsent body');
+    const button=descendants(x.nodes.get('notes'),'button').find(button=>button.textContent===(action==='save'?'수정 저장':'삭제'));
+    button.dispatchEvent(new Event('click'));
+    await until(()=>button.getAttribute('aria-disabled')!=='true');
+    assert.equal(x.nodes.get(action==='save'?'save-uncertainty-state':'delete-uncertainty-state').hidden,true);
+    assert.equal(existingFields(x).title.value,'fixture unsent edit');
+  }
+  assert.equal(clock,30001);assert.equal(x.postCalls,0);
+  assert.doesNotMatch(x.nodes.get('workspace-status').textContent,/저장 여부가 확인되지|나중에 반영|추가했습니다|수정했습니다/u);
+});
+
+test('mutation reservation runs only after an actual timely fetch even if reservation work exhausts the deadline',async t=>{
+  let clock=0;
+  const x=await setup(t,{initialId:ownerA,captureMutationTimers:true,now:()=>clock,afterMutationReservation:()=>{clock=30001;}});
+  x.queueCreates=true;x.nodes.get('new-title').value='fixture sent draft';
+  x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));
+  await until(()=>x.queuedCreates.length===1);
+  assert.deepEqual(x.writeStartTimes,[0],'the reservation must describe a real, timely dispatch');
+  x.queuedCreates[0].resolve(reply({id:x.lastCreateId},201));
+  await until(()=>x.nodes.get('create-submit').getAttribute('aria-disabled')!=='true');
+  assert.equal(x.nodes.get('create-retry-panel').hidden,false);
+  assert.equal(x.nodes.get('draft-warning').hidden,false);
+  assert.equal(x.nodes.get('new-title').value,'fixture sent draft');assert.equal(x.postCalls,1);
+});
+
+test('a mutation header first observed after its deadline does not become a timely known denial',async t=>{
+  let clock=0;const x=await setup(t,{initialId:ownerA,captureMutationTimers:true,now:()=>clock});x.queueCreates=true;
+  x.nodes.get('new-title').value='fixture pending draft';x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));
+  await until(()=>x.queuedCreates.length===1);
+  clock=30001;const received=reply({error:'FIXTURE_LATE_DENIAL'},400);x.queuedCreates[0].resolve(received);
+  await until(()=>x.nodes.get('create-submit').getAttribute('aria-disabled')!=='true');
+  assert.equal(x.nodes.get('new-title').value,'fixture pending draft');
+  assert.equal(x.nodes.get('create-retry-panel').hidden,false);
+  assert.equal(x.nodes.get('draft-warning').hidden,false);
+  assert.equal(x.queuedCreates[0].signal.aborted,true);assert.equal(received.body.locked,false);
+  assert.equal(x.postCalls,1);
+});
+
+for(const pending of [false,true])test(`inline notes reader releases its lock after ${pending?'a nonsettling cancellation':'a successful body'}`,async t=>{
+  const x=await setup(t,{initialId:ownerA,delayNotesRead:2,captureMutationTimers:true});let cancelled=0;
+  const received=pending?openJsonReply(()=>{cancelled++;return new Promise(()=>{});}):reply([{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',title:'fixture',body:'fixture'}]);
+  x.click('notes-refresh');await until(()=>x.notesReads===2);x.notesRead.resolve(received);
+  if(pending){await until(()=>received.body.locked);x.fireHttpTimeout();}
+  await until(()=>x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  assert.equal(received.body.locked,false);if(pending)assert.equal(cancelled,1);
+});
+
+for(const status of [400,503])test(`a stalled save HTTP ${status} body releases its controls without changing the known rejection classification`,async t=>{
+  const x=await setup(t,{initialId:ownerA,captureMutationTimers:true});x.queueWrites=true;
+  editExisting(x,'fixture local edit','fixture local body');
+  const save=descendants(x.nodes.get('notes'),'button').find(item=>item.textContent==='수정 저장');
+  save.dispatchEvent(new Event('click'));await until(()=>x.queuedWrites.length===1);
+  let cancelled=0;
+  x.queuedWrites[0].resolve(new Response(new ReadableStream({cancel(){cancelled++;return new Promise(()=>{});}}),{status,headers:{'content-type':'application/json'}}));
+  await tick();await tick();x.fireHttpTimeout();
+  await until(()=>cancelled===1&&x.nodes.get('workspace-status').textContent.includes('수정에 실패했습니다.'));
+  assert.equal(x.nodes.get('save-uncertainty-state').hidden,status===400,'a known 400 rejection must not become an unknown mutation');
+  assert.equal(existingFields(x).title.value,'fixture local edit');
+  if(status===400){assert.equal(save.disabled,false);assert.notEqual(save.getAttribute('aria-disabled'),'true');}
+  assert.equal(x.queuedWrites.length,1,'error diagnostics must not resend the mutation');
+});
+
+test('a creation ID body deadline discards the stream and leaves the request unconfirmed',async t=>{
+  const x=await setup(t,{initialId:ownerA,captureMutationTimers:true});x.queueCreates=true;
+  x.nodes.get('new-title').value='fixture original';x.nodes.get('new-body').value='fixture body';
+  x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.queuedCreates.length===1);
+  let cancelled=0;
+  x.queuedCreates[0].resolve(new Response(new ReadableStream({cancel(){cancelled++;return new Promise(()=>{});}}),{status:201,headers:{'content-type':'application/json'}}));
+  await tick();await tick();x.fireHttpTimeout();
+  await until(()=>!x.nodes.get('create-retry-panel').hidden&&x.nodes.get('create-submit').getAttribute('aria-disabled')!=='true');
+  assert.equal(cancelled,1);assert.equal(x.nodes.get('new-title').value,'fixture original');
+  assert.match(x.nodes.get('workspace-status').textContent,/추가 응답을 확인하지 못했습니다/u);
+  assert.equal(x.queuedCreates.length,1);assert.equal(x.notesReads,1);
+});
+
+for(const status of [400,403])test(`an explicit creation retry keeps its known HTTP ${status} refusal when the diagnostic body reaches the outer deadline`,async t=>{
+  const x=await setup(t,{initialId:ownerA,captureMutationTimers:true});x.queueCreates=true;
+  x.nodes.get('new-title').value='fixture original';x.nodes.get('new-body').value='fixture body';
+  x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.queuedCreates.length===1);
+  x.queuedCreates[0].reject(Error('synthetic earlier unknown result'));
+  await until(()=>!x.nodes.get('create-retry-panel').hidden&&x.nodes.get('create-submit').getAttribute('aria-disabled')!=='true');
+  descendants(x.nodes.get('create-retry-list'),'button').find(button=>button.textContent==='이 요청 다시 시도').dispatchEvent(new Event('click'));
+  await until(()=>x.queuedCreates.length===2);let cancelled=0;
+  x.queuedCreates[1].resolve(new Response(new ReadableStream({cancel(){cancelled++;return new Promise(()=>{});}}),{status,headers:{'content-type':'application/json'}}));
+  await tick();await tick();x.fireMutationTimeout();
+  await until(()=>descendants(x.nodes.get('create-retry-list'),'p').some(item=>/이번 재시도는 거절됐지만/u.test(item.textContent)));
+  assert.equal(cancelled,1);assert.equal(x.nodes.get('create-retry-panel').hidden,false);
+  assert.ok(descendants(x.nodes.get('create-retry-list'),'p').some(item=>/이전 요청은 나중에 반영/u.test(item.textContent)));
+  assert.equal(x.queuedCreates.length,2);
+});
+
 test('a rejected session locks the vault before a stalled response body completes',async t=>{
   const x=await setup(t,{delayRefresh:true,initialId:ownerA});
   const body=deferred();let bodyRead=false;
@@ -155,7 +499,7 @@ test('a rejected session locks the vault before a stalled response body complete
   x.nodes.get('new-body').value='fixture body';
   x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));
   await until(()=>x.sessionCalls===2);
-  x.refresh.resolve({ok:false,status:401,json(){bodyRead=true;return body.promise;}});
+  x.refresh.resolve(delayedReply(body.promise,401,()=>{bodyRead=true;}));
   try {
     await until(()=>bodyRead);
     assert.equal(x.nodes.get('workspace').hidden,true,'a rejected session must immediately lock the vault');
@@ -172,7 +516,7 @@ test('a stalled old-session rejection locks only that session while a newer logi
   x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));
   await until(()=>x.sessionCalls===2);
   x.nodes.get('login-form').dispatchEvent(new Event('submit',{cancelable:true}));
-  x.refresh.resolve({ok:false,status:401,json(){bodyRead=true;return body.promise;}});
+  x.refresh.resolve(delayedReply(body.promise,401,()=>{bodyRead=true;}));
   try {
     await until(()=>bodyRead);
     assert.equal(x.nodes.get('workspace').hidden,true,'the rejected old vault must be locked');
@@ -313,6 +657,20 @@ test('device verification cannot reopen a vault while its rejected session is be
   } finally {x.refresh.resolve(reply({error:'UNAUTHORIZED'},401));}
 });
 
+test('the focus recovery fixture completes its final submit handler in an isolated process',()=>{
+  const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>name.toLowerCase()!=='node_test_context'));
+  const child=spawnSync(process.execPath,[
+    '--test','--test-reporter=tap',
+    '--test-name-pattern=^locking the vault preserves focus moved elsewhere during the lock$',
+    fileURLToPath(import.meta.url),
+  ],{env,encoding:'utf8',timeout:15000,maxBuffer:1024*1024});
+  assert.ifError(child.error);
+  assert.equal(child.status,0,child.stdout+child.stderr);
+  assert.match(child.stdout,/^# tests 1$/mu);
+  assert.match(child.stdout,/^# pass 1$/mu);
+  assert.match(child.stdout,/^# skipped 0$/mu);
+});
+
 test('a late protected 401 locks the old vault without cancelling a newer login',async t=>{
   const x=await setup(t,{delayLogin:true,initialId:ownerA,loginId:ownerB});
   x.deferPost=true;
@@ -426,7 +784,7 @@ test('a device rejection whose JSON is delayed cannot lock a device verified dur
   const x=await setup(t);x.deferPost=true;
   x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.postCalls===1);
   const body=deferred();let parsing=false;
-  x.post.resolve({status:403,ok:false,clone:()=>({json:()=>{parsing=true;return body.promise;}}),json:async()=>({error:'DEVICE_NOT_VERIFIED'})});
+  x.post.resolve(delayedReply(body.promise,403,()=>{parsing=true;}));
   await until(()=>parsing);
   x.click('device-refresh');await until(()=>x.nodes.get('device-state').textContent==='등록 기기 · 재인증 필요');
   x.click('device-unlock');await until(()=>x.nodes.get('workspace').hidden===false&&x.authCalls===2);
@@ -503,7 +861,7 @@ for(const action of ['create','save','delete']){
       await until(()=>x.postCalls===1);
       const delayedBody=deferred();let parsing=false;
       if(outcome==='delayed-error'){
-        x.post.resolve({ok:false,status:400,json:()=>{parsing=true;return delayedBody.promise;}});
+        x.post.resolve(delayedReply(delayedBody.promise,400,()=>{parsing=true;}));
         await until(()=>parsing);
       }
       x.click('device-refresh');await until(()=>x.nodes.get('device-state').textContent==='등록 기기 · 재인증 필요');
@@ -749,7 +1107,7 @@ test('classic page script does not expose session and held drafts as global lexi
   const nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
   const context=createContext({window:new EventTarget(),location:{protocol:'https:',hostname:'fixture.invalid',port:''},document:{cookie:'',querySelector:s=>get(s.slice(1)),getElementById:get},
-    fetch:()=>new Promise(()=>{}),Headers,Event,AbortController,setTimeout:()=>0,clearTimeout:()=>{}});
+    fetch:()=>new Promise(()=>{}),Headers,Event,AbortController,performance,TextDecoder,setTimeout:()=>0,clearTimeout:()=>{}});
   new Script(script).runInContext(context);
   assert.equal(new Script('typeof interruptedDrafts').runInContext(context),'undefined');
   assert.equal(new Script('typeof session').runInContext(context),'undefined');
@@ -969,7 +1327,7 @@ test('a creation ID conflict warns before a delayed response body is read',async
     x.nodes.get('new-title').value='fixture create';x.nodes.get('new-body').value='fixture body';
     x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));
     await until(()=>x.queuedCreates.length===1);
-    x.queuedCreates[0].resolve({ok:false,status:409,json:()=>body.promise});
+    x.queuedCreates[0].resolve(delayedReply(body.promise,409));
     await until(()=>!x.nodes.get('draft-warning').hidden);
     assert.match(x.nodes.get('draft-warning').textContent,/저장.*나중.*반영/);
   } finally {body.resolve({error:'NOTE_ID_EXISTS'});await tick();await tick();}
@@ -1007,7 +1365,7 @@ test('a first creation retains its draft when the 201 response body times out',a
     x.nodes.get('new-title').value='fixture original';x.nodes.get('new-body').value='fixture body';
     x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.queuedCreates.length===1);
     const original=JSON.parse(x.queuedCreates[0].body);
-    x.queuedCreates[0].resolve({ok:true,status:201,json:()=>body.promise});await tick();x.fireMutationTimeout();
+    x.queuedCreates[0].resolve(delayedReply(body.promise,201));await tick();x.fireMutationTimeout();
     await until(()=>!x.nodes.get('create-retry-panel').hidden);
     assert.equal(x.nodes.get('new-title').value,'fixture original');
     assert.equal(x.nodes.get('draft-warning').hidden,false);
@@ -1061,7 +1419,7 @@ test('a late first-creation response body cannot resurrect a dismissed timed-out
     x.nodes.get('new-title').value='fixture original';x.nodes.get('new-body').value='fixture body';
     x.nodes.get('create-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>x.queuedCreates.length===1);
     const id=JSON.parse(x.queuedCreates[0].body).id;
-    x.queuedCreates[0].resolve({ok:true,status:201,json:()=>body.promise});await tick();x.fireMutationTimeout();
+    x.queuedCreates[0].resolve(delayedReply(body.promise,201));await tick();x.fireMutationTimeout();
     await until(()=>!x.nodes.get('create-retry-panel').hidden&&x.nodes.get('create-submit').getAttribute('aria-disabled')===null);
     descendants(x.nodes.get('create-retry-list'),'button').find(item=>item.textContent==='이 기록 보관 중단').dispatchEvent(new Event('click'));
     assert.equal(x.nodes.get('create-retry-panel').hidden,true);
@@ -1236,7 +1594,7 @@ test('a retry with a stalled 201 body stays unconfirmed after its timeout',async
     x.queuedCreates[0].reject(Error('synthetic failure'));
     await until(()=>!x.nodes.get('create-retry-panel').hidden&&x.nodes.get('create-submit').getAttribute('aria-disabled')===null);
     descendants(x.nodes.get('create-retry-list'),'button').find(item=>item.textContent==='이 요청 다시 시도').dispatchEvent(new Event('click'));
-    await until(()=>x.queuedCreates.length===2);x.queuedCreates[1].resolve({ok:true,status:201,json:()=>body.promise});
+    await until(()=>x.queuedCreates.length===2);x.queuedCreates[1].resolve(delayedReply(body.promise,201));
     await tick();x.fireMutationTimeout();
     await until(()=>descendants(x.nodes.get('create-retry-list'),'p').some(item=>/재시도.*확인하지 못/.test(item.textContent)));
     const retry=descendants(x.nodes.get('create-retry-list'),'button').find(item=>item.textContent==='이 요청 다시 시도');
@@ -1376,6 +1734,45 @@ function editExisting(x,title,body){
   fields.title.value=title;fields.title.dispatchEvent(new Event('input'));
   fields.body.value=body;fields.body.dispatchEvent(new Event('input'));
 }
+
+function focusAwareNotes(x){
+  x.doc.body=new Element('body');
+  const contains=(parent,child)=>parent===child||parent.children.some(item=>contains(item,child));
+  const root=x.nodes.get('notes'),replace=root.replaceChildren.bind(root);
+  root.replaceChildren=(...children)=>{if(contains(root,x.doc.activeElement))x.doc.activeElement=x.doc.body;replace(...children);};
+  return contains;
+}
+
+for(const control of ['approve','discard','retained-discard'])for(const outside of [false,true])
+test(`refresh preserves ${outside?'a newer outside focus choice over': 'the stable focus of'} ${control}`,async t=>{
+  const x=await setup(t,{initialId:ownerA,delayNotesRead:3}),contains=focusAwareNotes(x);
+  editExisting(x,'fixture retained edit','fixture retained body');
+  const server=control==='retained-discard'?[]:[{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',title:'fixture server changed',body:'fixture server body'}];
+  x.serverNotes=server;x.click('notes-refresh');
+  await until(()=>x.notesReads===2&&x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  const label=control==='approve'?'서버 내용 확인 후 수정 허용':control==='discard'?'서버 내용 유지하고 수정 버리기':'보관한 수정 버리기';
+  const target=descendants(x.nodes.get('notes'),'button').find(button=>button.textContent===label);assert.ok(target);
+  x.click('notes-refresh');await until(()=>x.notesReads===3);target.focus();
+  if(outside)x.nodes.get('new-title').focus();
+  x.notesRead.resolve(reply(server));await until(()=>x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  const replacement=descendants(x.nodes.get('notes'),'button').find(button=>button.textContent===label);assert.ok(replacement);
+  assert.equal(contains(x.nodes.get('notes'),target),false);
+  assert.equal(x.doc.activeElement,outside?x.nodes.get('new-title'):replacement);
+});
+
+for(const transition of ['conflict-resolved','retained-restored','conflict-missing'])
+test(`refresh moves removed note controls to a safe nearby control when ${transition}`,async t=>{
+  const x=await setup(t,{initialId:ownerA,delayNotesRead:3});focusAwareNotes(x);
+  editExisting(x,'fixture retained edit','fixture retained body');
+  x.serverNotes=transition==='retained-restored'?[]:[{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',title:'fixture server changed',body:'fixture server body'}];
+  x.click('notes-refresh');await until(()=>x.notesReads===2&&x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  const target=descendants(x.nodes.get('notes'),'button').find(button=>button.textContent===(transition==='retained-restored'?'보관한 수정 버리기':'서버 내용 확인 후 수정 허용'));assert.ok(target);
+  x.click('notes-refresh');await until(()=>x.notesReads===3);target.focus();
+  x.notesRead.resolve(reply(transition==='conflict-missing'?[]:[{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',title:'fixture',body:'fixture'}]));
+  await until(()=>x.nodes.get('notes-refresh').getAttribute('aria-disabled')==='false');
+  const replacement=transition==='conflict-missing'?descendants(x.nodes.get('notes'),'button').find(button=>button.textContent==='보관한 수정 버리기'):existingFields(x).title;
+  assert.equal(x.doc.activeElement,replacement);assert.notEqual(replacement,target);
+});
 async function waitExisting(x,minimumReads=2){
   await until(()=>x.notesReads>=minimumReads&&x.nodes.get('notes').children.length===1);
   return existingFields(x);
@@ -1816,7 +2213,7 @@ test('an uncertain save keeps focus and blocks retries while the list is delayed
   }
 });
 
-test('a failed note list moves focus to the vault heading while retaining the edit',async t=>{
+test('a failed note list retains the current editor and focus while keeping the edit',async t=>{
   const x=await setup(t,{initialId:ownerA,notesFailure:'server'});x.queueWrites=true;
   editExisting(x,'fixture local edit','fixture local body');
   const notes=x.nodes.get('notes'),heading=x.nodes.get('vault-title');
@@ -1827,8 +2224,9 @@ test('a failed note list moves focus to the vault heading while retaining the ed
   try {
     save.dispatchEvent(new Event('click'));await until(()=>x.queuedWrites.length===1);
     x.queuedWrites[0].resolve(reply({error:'SYNTHETIC_FAILURE'},503));
-    await until(()=>x.notesReads===2&&notes.children.length===0);await tick();
-    assert.equal(x.doc.activeElement,heading,'focus must remain near the vault after the list disappears');
+    await until(()=>x.notesReads===2&&x.nodes.get('workspace-status').textContent.includes('SYNTHETIC_LIST_FAILURE'));await tick();
+    assert.equal(notes.children.length,1,'a failed read preserves the last observation');
+    assert.equal(x.doc.activeElement,save,'a failed read must not remove the focused editor');
     assert.match(x.nodes.get('workspace-status').textContent,/보관/);
     x.click('device-refresh');await until(()=>x.nodes.get('device-state').textContent==='등록 기기 · 재인증 필요');
     x.click('device-unlock');await until(()=>x.notesReads>=3&&notes.children.length>0);
@@ -2205,7 +2603,7 @@ test('a delete server error blocks later writes before its response body finishe
   const remove=descendants(x.nodes.get('notes'),'button').find(item=>item.textContent==='삭제');
   try {
     remove.dispatchEvent(new Event('click'));await until(()=>x.queuedWrites.length===1);
-    x.queuedWrites[0].resolve({ok:false,status:503,json:()=>body.promise});
+    x.queuedWrites[0].resolve(delayedReply(body.promise,503));
     await until(()=>!x.nodes.get('delete-uncertainty-state').hidden);
     const save=descendants(x.nodes.get('notes'),'button').find(item=>item.textContent==='수정 저장');
     save.dispatchEvent(new Event('click'));remove.dispatchEvent(new Event('click'));await tick();
@@ -2508,7 +2906,7 @@ test('an uncertain save warning survives list failure and a later successful lis
     descendants(x.nodes.get('notes'),'button').find(b=>b.textContent==='수정 저장').dispatchEvent(new Event('click'));
     await until(()=>x.queuedWrites.length===1);
     x.queuedWrites[0].resolve(reply({error:'SYNTHETIC_FAILURE'},503));
-    await until(()=>x.notesReads===2&&x.nodes.get('notes').children.length===0);
+    await until(()=>x.notesReads===2&&x.nodes.get('workspace-status').textContent.includes('SYNTHETIC_LIST_FAILURE'));
     assert.equal(x.nodes.get('save-uncertainty-state').hidden,false);
     x.click('device-refresh');await until(()=>x.nodes.get('device-state').textContent==='등록 기기 · 재인증 필요');
     x.click('device-unlock');await until(()=>x.notesReads>=3);await tick();
@@ -2645,7 +3043,7 @@ for(const outcome of ['rejection','server']) test(`a delayed ${outcome} save res
     editExisting(x,'fixture local edit','fixture local body');
     descendants(x.nodes.get('notes'),'button').find(item=>item.textContent==='수정 저장').dispatchEvent(new Event('click'));
     await until(()=>x.queuedWrites.length===1);
-    x.queuedWrites[0].resolve({ok:false,status:outcome==='server'?503:400,json(){bodyRead=true;return body.promise;}});
+    x.queuedWrites[0].resolve(delayedReply(body.promise,outcome==='server'?503:400,()=>{bodyRead=true;}));
     await until(()=>bodyRead);
     x.click('device-refresh');await until(()=>x.nodes.get('workspace').hidden);x.click('device-unlock');
     await until(()=>x.notesReads===2);x.notesRead.resolve(reply({error:'UNAUTHORIZED'},401));

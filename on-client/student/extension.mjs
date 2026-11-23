@@ -916,16 +916,17 @@ export function hostPanel(state, mode) {
       const bytes = new Blob([JSON.stringify(evidence, null, 2)], { type: 'application/json' });
       if (bytes.size > 16 * 1024) throw Error('HOST_EVIDENCE_TOO_LARGE');
       const url = URL.createObjectURL(bytes);
+      let link;
       try {
-        const link = document.createElement('a');
+        link = document.createElement('a');
         link.href = url;
         link.download = 'claire-host-aggregates-' + evidence.provenance.generatedAt.slice(0, 10) + '.json';
         document.body.append(link);
         link.click();
-        link.remove();
         progress.textContent = '비식별 집계 JSON 저장을 요청했습니다. 브라우저 다운로드 결과를 확인하세요. 원본 주소·DNS·SDP 사건은 제외됩니다.';
       } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        try { link?.remove(); } catch {}
+        setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 5000);
       }
     } catch {
       progress.textContent = '집계 파일 저장 확인 불가 · 보고서와 브라우저 파일 저장 권한을 확인하세요. 자동 재시도하지 않습니다.';

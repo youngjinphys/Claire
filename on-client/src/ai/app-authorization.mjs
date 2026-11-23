@@ -1,3 +1,4 @@
+import {createResponseLifetime} from '../../public/http-response.mjs';
 import { createHash } from 'node:crypto';
 
 const APP_PATH = '/api/apps/aleph-on/v1';
@@ -51,14 +52,15 @@ export function createOnAppAuthorizationVerifier({baseUrl,token,allowLoopbackHtt
       || !exact(expectedScope,['subjectId','projectId','appId','audience']) || !subject(expectedScope.subjectId) || !opaque(expectedScope.projectId)
       || expectedScope.appId !== 'aleph-on' || expectedScope.audience !== 'on-client') throw own('ON_AI_PROVISIONING_PENDING');
     const scope = Object.freeze({...expectedScope});
-    const controller = new AbortController();
+    const controller = new AbortController(), lifetime = createResponseLifetime(controller.signal);
     let timer, cancel;
+    const deadline=performance.now()+timeoutMs;
     const stopped = new Promise((_,reject)=>{
       cancel = () => {controller.abort();reject(own('WB_CLCO_CANCELLED'));};
       timer = setTimeout(()=>{controller.abort();reject(own('WB_CLCO_TIMEOUT'));},timeoutMs);
       externalSignal?.addEventListener('abort',cancel,{once:true});
     });
-    const check = () => {if(controller.signal.aborted)throw own('WB_CLCO_CANCELLED');};
+    const check = () => {if(performance.now()>=deadline)throw own('WB_CLCO_TIMEOUT');if(controller.signal.aborted)throw own('WB_CLCO_CANCELLED');};
     const work = async()=>{
       // This mapping comes from the current server identity/issuance source, never a browser payload.
       const context = structuredClone(expectedContext ?? (resolveExpectedContext ? await resolveExpectedContext(scope,{signal:controller.signal,purpose}) : null));
@@ -67,23 +69,21 @@ export function createOnAppAuthorizationVerifier({baseUrl,token,allowLoopbackHtt
         || Object.keys(context).filter(key=>!['identityVersion','grantVersion'].includes(key)).some(key=>!opaque(context[key]))
         || !positive(context.identityVersion) || Object.hasOwn(context,'grantVersion') && !positive(context.grantVersion)
         || context.modelPolicyVersion !== undefined && context.policyVersion !== undefined && context.modelPolicyVersion !== context.policyVersion) throw own('ON_AI_PROVISIONING_PENDING');
-      const response = await fetchImpl(authorizationUrl+'?purpose='+purpose,{method:'GET',headers:{authorization:`Bearer ${token}`,accept:'application/json'},
-        signal:controller.signal,redirect:'manual',cache:'no-store',credentials:'omit'});
+      const response = lifetime.response(await fetchImpl(authorizationUrl+'?purpose='+purpose,{method:'GET',headers:{authorization:`Bearer ${token}`,accept:'application/json'},
+        signal:controller.signal,redirect:'manual',cache:'no-store',credentials:'omit'}));
       check();
-      if (response.status >= 300 && response.status < 400) throw own('WB_CLCO_REDIRECT_BLOCKED');
+      if (response.redirected || response.status >= 300 && response.status < 400) throw own('WB_CLCO_REDIRECT_BLOCKED');
       if (response.status !== 200) throw own(response.status === 401 ? 'WB_CLCO_AUTH_REQUIRED' : response.status === 403 ? 'WB_CLCO_ACCESS_BLOCKED' : 'ON_AI_PROVISIONING_PENDING');
       if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(response.headers.get('content-type') ?? '')) throw own('WB_CLCO_INVALID_CONTENT_TYPE');
       const length = response.headers.get('content-length');
       if (length !== null && (!/^\d+$/.test(length) || Number(length) > maxResponseBytes)) throw own('WB_CLCO_RESPONSE_TOO_LARGE');
       if (!response.body) throw own('WB_CLCO_INVALID_RESPONSE');
-      const reader = response.body.getReader(), chunks=[];
+      const reader = lifetime.reader(response.body.getReader()), chunks=[];
       let bytes=0;
-      const abortRead = () => {void reader.cancel().catch(()=>{});};
-      controller.signal.addEventListener('abort',abortRead,{once:true});
       try {
         while (true) {check();const next=await reader.read();check();if(next.done)break;bytes+=next.value.byteLength;
           if(bytes>maxResponseBytes)throw own('WB_CLCO_RESPONSE_TOO_LARGE');chunks.push(Buffer.from(next.value));}
-      } finally {controller.signal.removeEventListener('abort',abortRead);await reader.cancel().catch(()=>{});reader.releaseLock();}
+      } finally {lifetime.close();}
       let raw;
       try {raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));} catch {throw own('WB_CLCO_INVALID_RESPONSE');}
       check();
@@ -100,13 +100,14 @@ export function createOnAppAuthorizationVerifier({baseUrl,token,allowLoopbackHtt
         || new Set(raw.allowedModels).size!==raw.allowedModels.length || raw.modelPolicyVersion !== raw.policyVersion) throw own('ON_AI_PROVISIONING_PENDING');
       const proof = Object.freeze({...raw,capabilities:Object.freeze([...raw.capabilities]),allowedModels:Object.freeze([...raw.allowedModels]),mode:'verified',
         appKeyScope:scope});
+      check();
       verified.set(proof,{baseUrl:base,fingerprint,signal:externalSignal,purpose});
       return proof;
     };
-    try {return await Promise.race([work(),stopped]);}
+    try {const result=await Promise.race([work(),stopped]);check();return result;}
     catch(error){
       const known=new Set(['ON_AI_PROVISIONING_PENDING','WB_CLCO_CANCELLED','WB_CLCO_TIMEOUT','WB_CLCO_REDIRECT_BLOCKED','WB_CLCO_AUTH_REQUIRED','WB_CLCO_ACCESS_BLOCKED','WB_CLCO_INVALID_CONTENT_TYPE','WB_CLCO_RESPONSE_TOO_LARGE','WB_CLCO_INVALID_RESPONSE']);
       throw own(known.has(error?.code)?error.code:externalSignal?.aborted?'WB_CLCO_CANCELLED':'WB_CLCO_NETWORK_ERROR');
-    } finally {clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);controller.abort();}
+    } finally {clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);controller.abort();lifetime.close();}
   };
 }

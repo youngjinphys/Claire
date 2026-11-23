@@ -7,6 +7,8 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve,join} from 'node:path';
 import {once} from 'node:events';
+import {OPS_TRACE_BINDING,OPS_TRACE_HEADER,OPS_TRACE_STATE,operationsRequestTraceSource,
+  isOperationsRequestTrace,isKnownCancelledInterception} from './browser-request-trace.mjs';
 
 const root=resolve(import.meta.dirname,'..');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -14,6 +16,24 @@ async function until(predicate,label,timeout=15000){
   const deadline=Date.now()+timeout;
   while(Date.now()<deadline){if(await predicate())return;await sleep(50);}
   throw Error('Chart browser QA timeout: '+label);
+}
+function recoverySnapshotReady(state){
+  return state?.statusText==='기기 검증 화면 로드 실패'&&state.operationsUsable===true
+    &&state.operationsActive===0&&state.operationsState?.includes('실측 관측 완료')===true;
+}
+async function waitForRecoverySnapshot(readState,wait,label){
+  let state=null;
+  try{
+    await wait(async()=>{state=await readState();return recoverySnapshotReady(state);},label);
+  }catch(error){
+    console.error('Chart browser recovery readiness:',JSON.stringify({
+      active:state?.operationsActive??null,started:state?.operationsStarted??null,
+      disabled:state?.operationsDisabled??null,ariaDisabled:state?.operationsAriaDisabled??null,
+      visible:state?.operationsVisible??null,
+    }));
+    throw error;
+  }
+  return state;
 }
 const fixture=(records,summary)=>({
   schema:'aleph.operations.snapshot.v1',target:null,deployCommit:null,
@@ -42,6 +62,7 @@ const mime=path=>path.endsWith('.mjs')||path.endsWith('.js')?'text/javascript':
 async function main(){
   let current=initial;
   let pendingResponse=null;
+  let deviceModuleFixture=null,releaseDeviceModule=null;
   const unexpected=[];
   const server=http.createServer(async(req,res)=>{
     const path=new URL(req.url,'http://127.0.0.1').pathname;
@@ -56,12 +77,19 @@ async function main(){
     if(path==='/sw.js'&&req.method==='GET'){
       res.writeHead(200,{'Content-Type':'text/javascript'});res.end('// inert test service worker');return;
     }
+    if(path==='/device.mjs'&&req.method==='GET'&&deviceModuleFixture){
+      const controlled=deviceModuleFixture;controlled.requests++;
+      if(controlled.pending)await controlled.pending;
+      if(res.destroyed)return;
+      res.writeHead(200,{'Content-Type':'text/javascript'});res.end(controlled.source);return;
+    }
     const asset=assets.get(path);
     if(req.method!=='GET'||!asset){unexpected.push(path);res.writeHead(404);res.end();return;}
     try{const data=await readFile(resolve(root,asset));res.writeHead(200,{'Content-Type':mime(asset)});res.end(data);}
     catch{unexpected.push('fixture_asset_missing');res.writeHead(404);res.end();}
   });
-  let chrome,socket,dir;const pending=new Map(),errors=[];let nextId=0,blocked=0;
+  let chrome,socket,dir;const pending=new Map(),errors=[],interceptionFailures=[],interceptions=new Set(),networkFailures=new Map(),requestTraces=new Map();let nextId=0,blocked=0;
+  let armCancellation=false,heldCancellation=null,controlledCancellations=0,pageLifecycleChecks=0,moduleRecoveryChecks=0;
   try{
     await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});
     const origin='http://127.0.0.1:'+server.address().port;
@@ -87,8 +115,18 @@ async function main(){
         pending.set(id,result=>{clearTimeout(timer);resolve(result)});
         socket.send(JSON.stringify({id,method,params}));
       });
-      if(data.error)throw Error('CDP '+method+': '+data.error.message);
+      if(data.error)throw Object.assign(Error('CDP '+method+': '+data.error.message),{cdpCode:data.error.code});
       return data.result;
+    }
+    function resumeIntercepted(details){
+      const {local,requestId,...diagnostics}=details;
+      const method=local?'Fetch.continueRequest':'Fetch.failRequest';
+      const completion=cmd(method,local?{requestId}:{requestId,errorReason:'BlockedByClient'})
+        .catch(error=>interceptionFailures.push({method,requestId,...diagnostics,
+          cdpCode:error.cdpCode??null,error:String(error.message).slice(0,500)}))
+        .finally(()=>interceptions.delete(completion));
+      interceptions.add(completion);
+      return completion;
     }
     socket.onmessage=event=>{
       const msg=JSON.parse(event.data);
@@ -102,12 +140,31 @@ async function main(){
           && entry.url===origin+'/api/auth/session' && entry.text.includes('401');
         if(!expectedAnonymousRejection)errors.push(entry.source+' '+entry.level+': '+entry.text);
       }
+      if(msg.method==='Network.loadingFailed'){
+        const {requestId,canceled,errorText}=msg.params;
+        networkFailures.set(requestId,{canceled:canceled===true,errorText:String(errorText).slice(0,200)});
+      }
+      if(msg.method==='Runtime.bindingCalled'&&msg.params.name===OPS_TRACE_BINDING){
+        try{
+          const trace=JSON.parse(msg.params.payload);
+          if(!isOperationsRequestTrace(trace,origin)||requestTraces.has(trace.id)||requestTraces.size>=256)throw Error('invalid trace');
+          requestTraces.set(trace.id,trace);
+        }catch{errors.push('invalid operations request trace');}
+      }
       if(msg.method==='Fetch.requestPaused'){
-        const {requestId,request}=msg.params;
-        let local=false;try{local=new URL(request.url).origin===origin;}catch{}
+        const {requestId,request,networkId,resourceType,responseErrorReason,responseStatusCode}=msg.params;
+        let local=false,url='invalid URL';
+        try{const parsed=new URL(request.url);local=parsed.origin===origin;
+          url=(/^https?:$/u.test(parsed.protocol)?parsed.origin+parsed.pathname:parsed.protocol).slice(0,300);
+        }catch{}
         if(!local)blocked++;
-        void cmd(local?'Fetch.continueRequest':'Fetch.failRequest',
-          local?{requestId}:{requestId,errorReason:'BlockedByClient'}).catch(()=>errors.push('request interception failed'));
+        const qaRequestId=Object.entries(request.headers??{}).find(([name])=>name.toLowerCase()===OPS_TRACE_HEADER)?.[1]??null;
+        const cancellationProbe=Object.entries(request.headers??{}).find(([name])=>name.toLowerCase()==='x-claire-qa-cancel')?.[1]==='1';
+        const details={local,requestId,networkId:networkId??null,url,resourceType,qaRequestId,
+          responseErrorReason:responseErrorReason??null,responseStatusCode:responseStatusCode??null};
+        if(armCancellation&&cancellationProbe&&local&&url===origin+'/api/ops'&&typeof qaRequestId==='string'){
+          armCancellation=false;heldCancellation=details;
+        }else resumeIntercepted(details);
       }
       if(pending.has(msg.id)){pending.get(msg.id)(msg);pending.delete(msg.id);}
     };
@@ -122,6 +179,8 @@ async function main(){
       await cmd('Input.dispatchKeyEvent',{type:'keyUp',...params});
     }
     await cmd('Page.enable');await cmd('Runtime.enable');await cmd('Network.enable');await cmd('Log.enable');
+    await cmd('Runtime.addBinding',{name:OPS_TRACE_BINDING});
+    await cmd('Page.addScriptToEvaluateOnNewDocument',{source:operationsRequestTraceSource(origin)});
     await cmd('Network.setBypassServiceWorker',{bypass:true});
     await cmd('Fetch.enable',{patterns:[{urlPattern:'*'}]});
     await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
@@ -131,6 +190,24 @@ async function main(){
       await cmd('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
       await cmd('Page.navigate',{url:origin+'/'});
       await observed("document.readyState==='complete' && document.querySelectorAll('#outcomes-chart .bar-column').length===4 && document.querySelector('#ops-state').textContent.includes('실측 관측 완료')",'fixture snapshot');
+      if(width===320){
+        // Hold exactly one tagged native request, then cancel its original
+        // signal. This proves the trace without weakening unrelated failures.
+        armCancellation=true;
+        await evaluate(`(()=>{window.__qaOpsCancel=new AbortController();
+          window.__qaOpsCancelResult=fetch('/api/ops',{signal:window.__qaOpsCancel.signal,headers:{'x-claire-qa-cancel':'1'}})
+            .then(()=>false,error=>error.name==='AbortError');return true;})()`);
+        await until(()=>heldCancellation!==null,'controlled request intercepted');
+        const held=heldCancellation;heldCancellation=null;
+        await evaluate('window.__qaOpsCancel.abort(); true');
+        await until(()=>requestTraces.has(held.qaRequestId),'native pre-header abort observed');
+        const trace=requestTraces.get(held.qaRequestId);
+        assert.equal(trace.abortedBeforeHeaders,true);assert.equal(trace.headersReceived,false);
+        assert.equal(trace.errorName,'AbortError');
+        assert.equal(await evaluate('window.__qaOpsCancelResult'),true);
+        await resumeIntercepted(held);
+        controlledCancellations++;
+      }
       assert.equal(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"),true,'document overflow');
       assert.deepEqual(await evaluate("[...document.querySelectorAll('#outcomes-chart .bar-column')].map(x=>x.getAttribute('aria-label').match(/\\d+/)[0])"),['0','0','0','22']);
       for(let i=0;i<4;i++){
@@ -235,10 +312,141 @@ async function main(){
       current=initial;
       await evaluate("document.getElementById('ops-refresh').click()");
       await observed("document.querySelector('#ops-state').textContent.includes('실측 관측 완료') && document.querySelector('#metric-observed').textContent==='0'",'successful retry');
+      await observed(`window.${OPS_TRACE_STATE}.active===0`,'native request trace cleanup');
+      assert.equal(await evaluate(`window.${OPS_TRACE_STATE}.failures`),0,'trace callback failures');
+      if(width===320){
+        // Real DOM event ordering with synthetic BFCache transition events.
+        // Device locking publishes a session change during pagehide as well.
+        const lifecycle=await evaluate(`(()=>{
+          const read=()=>({started:window.${OPS_TRACE_STATE}.started,active:window.${OPS_TRACE_STATE}.active,
+            target:document.querySelector('#ops-target').textContent,observed:document.querySelector('#metric-observed').textContent});
+          const before=read();window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}));
+          window.dispatchEvent(new Event('aleph:session'));document.querySelector('#ops-refresh').click();
+          return {before,hidden:read()};
+        })()`);
+        assert.deepEqual(lifecycle.hidden,lifecycle.before,'hidden page neither sends a new request nor replaces the last observation');
+        assert.equal(lifecycle.hidden.active,0);
+        await evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})); true");
+        await observed(`window.${OPS_TRACE_STATE}.started>${lifecycle.before.started}
+          && window.${OPS_TRACE_STATE}.active===0
+          && document.querySelector('#ops-state').textContent.includes('실측 관측 완료')
+          && document.querySelector('#metric-observed').textContent==='0'`,'page restoration recovers observations');
+        assert.equal(await evaluate(`window.${OPS_TRACE_STATE}.failures`),0);
+        pageLifecycleChecks++;
+      }
     }
+    const recoveryState=(activateOperations=false)=>evaluate(`(()=>{
+      const visible=node=>{
+        if(!node)return false;
+        for(let current=node;current;current=current.parentElement){
+          const style=getComputedStyle(current);
+          if(current.hidden||current.inert||current.getAttribute('aria-hidden')==='true'
+            ||style.display==='none'||['hidden','collapse'].includes(style.visibility)||Number(style.opacity)===0)return false;
+        }
+        return [...node.getClientRects()].some(rect=>rect.width>0&&rect.height>0);
+      };
+      const byId=id=>document.getElementById(id),status=byId('device-state'),detail=byId('device-detail');
+      const loginControls=[byId('email'),byId('password'),document.querySelector('#login-form button[type="submit"]')];
+      const refresh=byId('ops-refresh'),workspace=byId('workspace');
+      const operationsVisible=visible(refresh),operationsDisabled=refresh.disabled,
+        operationsAriaDisabled=refresh.getAttribute('aria-disabled'),trace=window.${OPS_TRACE_STATE};
+      const state={
+        recoveryVisible:[byId('device-panel'),status,detail].every(visible),
+        statusRole:status.getAttribute('role'),statusLive:status.getAttribute('aria-live'),
+        statusText:status.textContent,detailText:detail.textContent,
+        disabledActions:['device-enroll','device-unlock','device-refresh'].map(id=>byId(id).disabled),
+        vaultLocked:workspace.hidden&&workspace.getClientRects().length===0,
+        loginUsable:visible(byId('signed-out'))&&loginControls.every(node=>visible(node)&&!node.disabled&&!node.readOnly&&node.getAttribute('aria-disabled')!=='true'),
+        operationsUsable:operationsVisible&&!operationsDisabled&&operationsAriaDisabled!=='true',
+        operationsVisible,operationsDisabled,operationsAriaDisabled,
+        operationsState:byId('ops-state').textContent,operationsActive:trace.active,operationsStarted:trace.started,
+        module:window.__qaDeviceModule??null,elapsed:performance.now()
+      };
+      // Check and activate in the same browser evaluation. Return the captured
+      // pre-click count so a later completed request must prove this action ran.
+      if(${activateOperations}&&(${recoverySnapshotReady.toString()})(state))refresh.click();
+      return state;
+    })()`);
+    const assertRecovery=state=>{
+      assert.equal(state.recoveryVisible,true,'module recovery is rendered through every ancestor');
+      assert.equal(state.statusRole,'status');assert.equal(state.statusLive,'polite');
+      assert.equal(state.statusText,'기기 검증 화면 로드 실패');
+      assert.match(state.detailText,/브라우저 새로고침으로 다시 시도/);
+      assert.deepEqual(state.disabledActions,[true,true,true],'unavailable device actions remain disabled');
+      assert.equal(state.vaultLocked,true,'module failure never opens the vault');
+      assert.equal(state.loginUsable,true,'independent login controls remain visible and enabled');
+      assert.equal(state.operationsUsable,true,'independent operations control remains usable');
+    };
+    for(const mode of ['evaluation-failure','deadline']){
+      // Finish the prior document's native reads before replacing its context.
+      await observed(`window.${OPS_TRACE_STATE}.active===0`,'idle operations before module fixture navigation');
+      current=initial;
+      let release;
+      const controlled={requests:0,pending:mode==='deadline'?new Promise(resolve=>{release=resolve;}):null,
+        source:`window.__qaDeviceModule={evaluated:1,initializations:0};
+          ${mode==='evaluation-failure'?"throw Error('QA_DEVICE_MODULE_EVALUATION_FAILED');":''}
+          export function initDeviceAccess(){window.__qaDeviceModule.initializations++;return {};}`};
+      deviceModuleFixture=controlled;releaseDeviceModule=release;
+      try{
+        await cmd('Page.navigate',{url:origin+'/'});
+        await until(()=>controlled.requests===1,'controlled device module requested');
+        const beforeRelease=await waitForRecoverySnapshot(recoveryState,until,'visible device module '+mode+' recovery');
+        assertRecovery(beforeRelease);
+        if(mode==='deadline'){
+          assert.ok(beforeRelease.elapsed>=10000,'the real 10 second loader deadline elapsed');
+          assert.equal(beforeRelease.module,null,'held module has not evaluated before recovery');
+        }else assert.deepEqual(beforeRelease.module,{evaluated:1,initializations:0},'evaluation rejection was caught without mounting');
+
+        // Exercise native keyboard navigation and empty-field validation;
+        // no account or authentication mutation is involved in this fixture.
+        await evaluate("document.getElementById('email').focus()");
+        assert.equal(await evaluate("document.activeElement.id"),'email');
+        for(const selector of ['#password','#login-form button[type="submit"]']){
+          const tab={key:'Tab',code:'Tab',windowsVirtualKeyCode:9,nativeVirtualKeyCode:9};
+          await cmd('Input.dispatchKeyEvent',{type:'keyDown',...tab});
+          await cmd('Input.dispatchKeyEvent',{type:'keyUp',...tab});
+          assert.equal(await evaluate(`document.activeElement===document.querySelector(${JSON.stringify(selector)})`),true,'login keyboard navigation');
+        }
+        await activate(false);
+        assert.equal(await evaluate("document.activeElement.id==='email' && document.getElementById('email').validity.valueMissing && document.getElementById('password').validity.valueMissing"),true,'native login validation remains available');
+        current=refreshed;
+        const activated=await waitForRecoverySnapshot(()=>recoveryState(true),until,'usable operations refresh after device module failure');
+        const priorStarted=activated.operationsStarted;
+        await observed(`window.${OPS_TRACE_STATE}.started>${priorStarted} && window.${OPS_TRACE_STATE}.active===0
+          && document.querySelector('#ops-state').textContent.includes('실측 관측 완료')
+          && document.querySelector('#metric-observed').textContent==='3'`,'operations refresh after device module failure');
+        if(release){
+          release();releaseDeviceModule=null;
+        }
+        await observed("document.readyState==='complete' && window.__qaDeviceModule?.evaluated===1",'device fixture load and top-level evaluation');
+        // Let the import completion and its microtasks run before checking
+        // that an already-expired loader did not call the late module's init.
+        await evaluate('(async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);return true;})()');
+        const settled=await waitForRecoverySnapshot(recoveryState,until,'settled device module '+mode+' recovery');
+        assertRecovery(settled);
+        assert.deepEqual(settled.module,{evaluated:1,initializations:0},'failed or late modules never initialize');
+        assert.equal(await evaluate(`window.${OPS_TRACE_STATE}.failures`),0,'module recovery trace callback failures');
+        assert.equal(controlled.requests,1,'one controlled module response per document');
+        moduleRecoveryChecks++;
+      }finally{
+        release?.();releaseDeviceModule=null;deviceModuleFixture=null;
+      }
+    }
+    while(interceptions.size)await Promise.all([...interceptions]);
+    const knownCancellations=interceptionFailures.filter(failure=>isKnownCancelledInterception(failure,requestTraces.get(failure.qaRequestId),origin));
+    const unexpectedInterceptions=interceptionFailures.filter(failure=>!isKnownCancelledInterception(failure,requestTraces.get(failure.qaRequestId),origin));
+    assert.deepEqual(unexpectedInterceptions.map(failure=>({...failure,networkFailure:networkFailures.get(failure.networkId)??null,
+      requestTrace:requestTraces.get(failure.qaRequestId)??null})),[],
+    'Only an exactly correlated native pre-header cancellation may explain an expired interception ID.');
     assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);assert.equal(blocked,0,'unexpected external request blocked');
+    assert.equal(controlledCancellations,1,'controlled native cancellation exercised');
+    assert.equal(pageLifecycleChecks,1,'browser pagehide and restored pageshow exercised');
+    assert.equal(moduleRecoveryChecks,2,'module evaluation rejection and real loader deadline exercised');
     console.log(`PASS chart browser: ${pointerChecks} synthetic mouse/touch positions, ${keyboardChecks} chart activations, 16 help toggles, 60 focus frames, 320/1440px, invalid response, previous export and retry.`);
+    console.log(`PASS request lifecycle: ${controlledCancellations} controlled native pre-header abort, ${knownCancellations.length} exactly correlated cancelled interceptions, ${pageLifecycleChecks} pagehide/restore check, 0 unexpected interception errors.`);
+    console.log(`PASS device module recovery: ${moduleRecoveryChecks} visible accessible fallbacks, disabled device actions, locked vault, usable login/operations, actual 10 second deadline and late evaluation without initialization.`);
   }finally{
+    releaseDeviceModule?.();
     socket?.close();
     if(chrome){chrome.kill();if(chrome.exitCode===null)await Promise.race([once(chrome,'exit').catch(()=>{}),sleep(3000)]);}
     server.closeIdleConnections?.();await new Promise(resolve=>server.close(resolve));

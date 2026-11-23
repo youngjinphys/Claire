@@ -6,6 +6,7 @@ import {resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {types} from 'node:util';
+import {ownedDeadlineTimer} from '../public/deadline-timer.mjs';
 import {createActionService} from './actions/service.mjs';
 import {createSdpActionConfiguration} from './actions/sdp-action-engine.mjs';
 import {readActionStartupConfiguration} from './actions/action-startup-config.mjs';
@@ -30,6 +31,8 @@ const files=new Map([['/','public/index.html'],['/index.html','public/index.html
   // Bounded alternate module URLs let an explicit retry avoid a stalled fetch.
   ...Array.from({length:7},(_,index)=>[`/student/extension-retry-${index+2}.mjs`,'student/extension.mjs']),
   ['/ai-connect.mjs','public/ai-connect.mjs'],
+  ['/http-response.mjs','public/http-response.mjs'],
+  ['/deadline-timer.mjs','public/deadline-timer.mjs'],
   ['/dashboard.html','public/dashboard.html'],
   ['/dashboard.css','public/dashboard.css'],
   ['/dashboard.mjs','public/dashboard.mjs'],
@@ -248,11 +251,11 @@ export function createOnServer(serverOptions={}) {
   let lastLocalPc = null;
   let lastLocalPcAt = 0;
   function readLocalPc() {
-    if (lastLocalPc && Date.now() - lastLocalPcAt < 1000) return Promise.resolve(lastLocalPc);
+    if (lastLocalPc && performance.now() - lastLocalPcAt < 1000) return Promise.resolve(lastLocalPc);
     if (pendingLocalPc) return pendingLocalPc;
     pendingLocalPc = sampleLocalPc().then(data => {
       lastLocalPc = data;
-      lastLocalPcAt = Date.now();
+      lastLocalPcAt = performance.now();
       return data;
     }).finally(() => { pendingLocalPc = null; });
     return pendingLocalPc;
@@ -297,8 +300,9 @@ export function createOnServer(serverOptions={}) {
   const connectionReads=new Set();
   async function readConnectionScope() {
     const controller=new AbortController();connectionReads.add(controller);
+    const deadline=performance.now()+readTimeoutMs;
     let timer,stop;
-    const assertAlive=()=>{if(controller.signal.aborted)throw engineError('ENGINE_TIMEOUT','');};
+    const assertAlive=()=>{if(performance.now()>=deadline)controller.abort();if(controller.signal.aborted)throw engineError('ENGINE_TIMEOUT','');};
     const stopped=new Promise((_,reject)=>{
       stop=()=>reject(engineError('ENGINE_TIMEOUT',''));
       controller.signal.addEventListener('abort',stop,{once:true});
@@ -348,30 +352,57 @@ export function createOnServer(serverOptions={}) {
     const disconnect=()=>lifetime.abort();
     res.once('close',disconnect);req.once('aborted',disconnect);
     const requestTimer=setTimeout(()=>{requestTimedOut=true;lifetime.abort();},requestTimeoutMs);
-    function assertAlive(){if(supportDeadline&&(Date.now()>=supportDeadline.wall||performance.now()>=supportDeadline.monotonic)){requestTimedOut=true;lifetime.abort();}if(requestTimedOut)throw engineError('REQUEST_TIMEOUT','');if(lifetime.signal.aborted||res.destroyed)throw engineError('REQUEST_CANCELLED','');}
-    async function bounded(work){
-      assertAlive();let cancel;
+    function assertAlive(){if(performance.now()-requestStartedAt.monotonic>=requestTimeoutMs||supportDeadline&&(Date.now()>=supportDeadline.wall||performance.now()>=supportDeadline.monotonic)){requestTimedOut=true;lifetime.abort();}if(requestTimedOut)throw engineError('REQUEST_TIMEOUT','');if(lifetime.signal.aborted||res.destroyed)throw engineError('REQUEST_CANCELLED','');}
+    function beginSupportDeadline(deadline){
+      supportDeadline=deadline;
+      const remaining=()=>{
+        assertAlive();
+        const left=Math.min(supportDeadline.wall-Date.now(),supportDeadline.monotonic-performance.now());
+        if(!(left>0)){requestTimedOut=true;lifetime.abort();throw engineError('REQUEST_TIMEOUT','');}
+        if(lifetime.signal.aborted||res.destroyed)throw engineError(requestTimedOut?'REQUEST_TIMEOUT':'REQUEST_CANCELLED','');
+        return left;
+      };
+      supportTimer=ownedDeadlineTimer(remaining,()=>lifetime.abort());
+      supportTimer.arm(remaining());
+      // Child APIs take integer durations; the parent keeps its exact ceiling.
+      return ()=>Math.max(1,Math.ceil(remaining()));
+    }
+    async function bounded(work,discard){
+      assertAlive();let cancel,retired=false,hasValue=false,acquired;
+      const release=()=>{
+        if(!hasValue)return;
+        const value=acquired;hasValue=false;acquired=undefined;
+        // Disposal cannot replace the failure that already ended the request.
+        try{discard(value);}catch{}
+      };
       const stopped=new Promise((_,reject)=>{
         cancel=()=>reject(engineError(requestTimedOut?'REQUEST_TIMEOUT':'REQUEST_CANCELLED',''));
         lifetime.signal.addEventListener('abort',cancel,{once:true});
       });
-      try {const value=await Promise.race([Promise.resolve().then(()=>{assertAlive();return work(lifetime.signal);}),stopped]);assertAlive();return value;}
-      finally {lifetime.signal.removeEventListener('abort',cancel);}
+      let pending=Promise.resolve().then(()=>{assertAlive();return work(lifetime.signal);});
+      if(discard)pending=pending.then(value=>{
+        // Own the acquisition before either the race or its final guard can
+        // discard it. The same observed contender also closes late arrivals.
+        acquired=value;hasValue=true;if(retired)release();return value;
+      });
+      try {const value=await Promise.race([pending,stopped]);assertAlive();hasValue=false;acquired=undefined;return value;}
+      finally {retired=true;lifetime.signal.removeEventListener('abort',cancel);release();}
     }
     async function call(name,...args){
       assertAlive();
-      let timer,cancel;const controller=new AbortController();
+      let timer,cancel;const controller=new AbortController(),deadline=performance.now()+readTimeoutMs;
+      const checkRead=()=>{assertAlive();if(performance.now()>=deadline){controller.abort();throw engineError('ENGINE_TIMEOUT','');}};
       const stopped=new Promise((_,reject)=>{
         cancel=()=>{controller.abort();reject(engineError(requestTimedOut?'REQUEST_TIMEOUT':'REQUEST_CANCELLED',''));};
         lifetime.signal.addEventListener('abort',cancel,{once:true});
         timer=setTimeout(()=>{controller.abort();reject(engineError('ENGINE_TIMEOUT',''));},readTimeoutMs);
       });
-      try{const value=await Promise.race([engineMethod(engine,name)(...args,{signal:controller.signal}),stopped]);assertAlive();return value;}
+      try{checkRead();const value=await Promise.race([engineMethod(engine,name)(...args,{signal:controller.signal}),stopped]);checkRead();return value;}
       finally{clearTimeout(timer);lifetime.signal.removeEventListener('abort',cancel);controller.abort();}
     }
     const requestId=randomUUID();
     let actionRequest=false;
-    const send=(status,body)=>{if(res.destroyed||res.writableEnded)return;res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','x-on-request-id':requestId});res.end(JSON.stringify({...body,meta:meta()}));};
+    const send=(status,body)=>{if(res.destroyed||res.writableEnded)return;const payload=JSON.stringify({...body,meta:meta()});if(body?.ok===true)assertAlive();res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','x-on-request-id':requestId});res.end(payload);};
     const {captureSource,assertCurrent,readMapping,finishMapping}=sourceReader({call,bounded,assertAlive});
     const authOptions=(binding)=>({expectedScope:Object.freeze({subjectId:binding.canonicalStudentId,projectId:binding.projectId,appId:'aleph-on',audience:'on-client'}),
       expectedContext:Object.freeze({alephUserId:binding.alephUserId,siteId:binding.siteId,identityVersion:binding.identityVersion}),signal:lifetime.signal});
@@ -397,9 +428,11 @@ export function createOnServer(serverOptions={}) {
       }
       if(req.method==='GET'&&files.has(url.pathname)){
         const file=files.get(url.pathname);
-        const data=await readFile(resolve(assetsRoot,file));
+        const data=await bounded(signal=>readFile(resolve(assetsRoot,file),{signal}));
         // Type follows the asset. /favicon.ico is the webp app icon, so the URL suffix is not the type.
         const type=file.endsWith('.webp')?'image/webp':file.endsWith('.css')?'text/css':file.endsWith('.js')||file.endsWith('.mjs')?'text/javascript':'text/html';
+        // Startup attribution to this listening process; this is not authentication.
+        if(url.pathname==='/')res.setHeader('x-claire-process-id',String(process.pid));
         res.writeHead(200,{'content-type':type==='image/webp'?type:`${type}; charset=utf-8`,'cache-control':'no-store','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",'x-content-type-options':'nosniff'});res.end(data);return;
       }
       if(req.method==='POST'&&connectionRoutes.has(url.pathname)){
@@ -495,19 +528,17 @@ export function createOnServer(serverOptions={}) {
           send(503,{ok:false,error:{code:'WB_CLCO_INVALID_LIMIT',message:aiErrorMessages.WB_CLCO_INVALID_LIMIT,retryable:false}});return;
         }
         const routeLimit=Math.min(aiTimeoutMs,requestTimeoutMs);
-        supportDeadline={wall:requestStartedAt.wall+routeLimit,monotonic:requestStartedAt.monotonic+routeLimit};
-        const remaining=()=>{assertAlive();return Math.max(1,Math.floor(Math.min(supportDeadline.wall-Date.now(),supportDeadline.monotonic-performance.now())));};
-        supportTimer=setTimeout(()=>{requestTimedOut=true;lifetime.abort();},remaining());
+        const remaining=beginSupportDeadline({wall:requestStartedAt.wall+routeLimit,monotonic:requestStartedAt.monotonic+routeLimit});
         let nativeOperation=null,sourceOperation=null;
-        const sourceCall=async work=>{try{return await bounded(work);}catch(error){assertAlive();if(['REQUEST_TIMEOUT','REQUEST_CANCELLED'].includes(error?.code))throw error;throw engineError('ON_AI_PROVISIONING_PENDING','');}};
+        const sourceCall=async(work,discard)=>{try{return await bounded(work,discard);}catch(error){if(['REQUEST_TIMEOUT','REQUEST_CANCELLED'].includes(error?.code))throw error;assertAlive();throw engineError('ON_AI_PROVISIONING_PENDING','');}};
         try{
           if(Number(req.headers['content-length']??0)>8192)throw engineError('REQUEST_TOO_LARGE','',413);
           const input=await bounded(()=>jsonBody(req,['eventId']));
           if(!isOwnedSdpHostEngine(sdpHostEngine))throw engineError('ON_AI_PROVISIONING_PENDING','');
-          nativeOperation=await sourceCall(signal=>openNativeHostOperation(nativeHost,{signal,timeoutMs:remaining()}));
+          nativeOperation=await sourceCall(signal=>openNativeHostOperation(nativeHost,{signal,timeoutMs:remaining()}),closeNativeHostOperation);
           const readHost=async signal=>{if(signal.aborted)throw engineError('REQUEST_CANCELLED','');const current=await sourceCall(()=>readNativeHostOperation(nativeHost,nativeOperation));assertAlive();if(signal.aborted)throw engineError('REQUEST_CANCELLED','');return current;};
           const identity=await readHost(lifetime.signal);
-          sourceOperation=await sourceCall(signal=>openSdpIncidentOperation(sdpHostEngine,input,{signal,timeoutMs:remaining()}));
+          sourceOperation=await sourceCall(signal=>openSdpIncidentOperation(sdpHostEngine,input,{signal,timeoutMs:remaining()}),closeSdpIncidentOperation);
           const initial=assertSdpIncidentOperation(sdpHostEngine,sourceOperation),event=initial.event;
           const sameIdentity=source=>{if(Object.keys(identity).some(key=>source.binding.ai[key]!==identity[key]))throw engineError('ON_AI_PROVISIONING_PENDING','');};
           sameIdentity(initial);
@@ -577,19 +608,17 @@ export function createOnServer(serverOptions={}) {
         }
         // One deadline covers the body, original native operation, vault, models and every recheck.
         const routeLimit=Math.min(aiTimeoutMs,requestTimeoutMs);
-        supportDeadline={wall:requestStartedAt.wall+routeLimit,monotonic:requestStartedAt.monotonic+routeLimit};
-        const remaining=()=>{assertAlive();return Math.max(1,Math.floor(Math.min(supportDeadline.wall-Date.now(),supportDeadline.monotonic-performance.now())));};
-        supportTimer=setTimeout(()=>{requestTimedOut=true;lifetime.abort();},remaining());
+        const remaining=beginSupportDeadline({wall:requestStartedAt.wall+routeLimit,monotonic:requestStartedAt.monotonic+routeLimit});
         let nativeOperation=null;
         try{
           if(Number(req.headers['content-length']??0)>8192)throw engineError('REQUEST_TOO_LARGE','',413);
           await bounded(()=>jsonBody(req,[]));
-          try{nativeOperation=await bounded(signal=>openNativeHostOperation(nativeHost,{signal,timeoutMs:remaining()}));}
-          catch(error){assertAlive();if(['REQUEST_TIMEOUT','REQUEST_CANCELLED'].includes(error?.code))throw error;throw engineError('ON_AI_PROVISIONING_PENDING','');}
+          try{nativeOperation=await bounded(signal=>openNativeHostOperation(nativeHost,{signal,timeoutMs:remaining()}),closeNativeHostOperation);}
+          catch(error){if(['REQUEST_TIMEOUT','REQUEST_CANCELLED'].includes(error?.code))throw error;assertAlive();throw engineError('ON_AI_PROVISIONING_PENDING','');}
           const readHost=async(signal=lifetime.signal)=>{
             assertAlive();if(signal.aborted)throw engineError('REQUEST_CANCELLED','');
             try{const value=await bounded(()=>readNativeHostOperation(nativeHost,nativeOperation));assertAlive();if(signal.aborted)throw engineError('REQUEST_CANCELLED','');return value;}
-            catch(error){assertAlive();if(['REQUEST_TIMEOUT','REQUEST_CANCELLED'].includes(error?.code))throw error;throw engineError('ON_AI_PROVISIONING_PENDING','');}
+            catch(error){if(['REQUEST_TIMEOUT','REQUEST_CANCELLED'].includes(error?.code))throw error;assertAlive();throw engineError('ON_AI_PROVISIONING_PENDING','');}
           };
           const identity=await readHost();
           const currentHost=async({signal})=>{const current=await readHost(signal);if(Object.keys(identity).some(key=>current[key]!==identity[key]))throw engineError('ON_AI_PROVISIONING_PENDING','');};
@@ -649,12 +678,11 @@ export function createOnServer(serverOptions={}) {
           send(503,{ok:false,error:{code:'WB_CLCO_INVALID_LIMIT',message:aiErrorMessages.WB_CLCO_INVALID_LIMIT,retryable:false}});return;
         }
         // One route deadline includes body, host identity, vault, pre/post auth and transport.
-        supportDeadline={wall:Date.now()+aiTimeoutMs,monotonic:performance.now()+aiTimeoutMs};
-        supportTimer=setTimeout(()=>{requestTimedOut=true;lifetime.abort();},aiTimeoutMs);
+        beginSupportDeadline({wall:Date.now()+aiTimeoutMs,monotonic:performance.now()+aiTimeoutMs});
         if(Number(req.headers['content-length']??0)>8192)throw engineError('REQUEST_TOO_LARGE','',413);
         const input=await bounded(()=>jsonBody(req,['problemKind'],(_key,value)=>isLearnerSupportProblemKind(value)));
         let nativeOperation=null;
-        if(nativeHost){try{nativeOperation=await bounded(signal=>openNativeHostOperation(nativeHost,{signal,timeoutMs:aiTimeoutMs}));}catch{throw engineError('ON_AI_PROVISIONING_PENDING','');}}
+        if(nativeHost){try{nativeOperation=await bounded(signal=>openNativeHostOperation(nativeHost,{signal,timeoutMs:aiTimeoutMs}),closeNativeHostOperation);}catch(error){if(['REQUEST_TIMEOUT','REQUEST_CANCELLED'].includes(error?.code))throw error;assertAlive();throw engineError('ON_AI_PROVISIONING_PENDING','');}}
         try{
         const readHost=async(signal=lifetime.signal)=>{
           if(nativeHost){if(signal?.aborted)throw engineError('REQUEST_CANCELLED','');try{const value=await bounded(()=>readNativeHostOperation(nativeHost,nativeOperation));assertAlive();return value;}catch(error){if(['REQUEST_TIMEOUT','REQUEST_CANCELLED'].includes(error?.code))throw error;throw engineError('ON_AI_PROVISIONING_PENDING','');}}
@@ -731,7 +759,7 @@ export function createOnServer(serverOptions={}) {
       const code=Object.hasOwn(safeErrors,error?.code)?error.code:'SERVICE_UNAVAILABLE';
       const [status,message]=safeErrors[code];
       send(status,{ok:false,error:{code,message,retryable:nativeAiCheck?AI_RETRYABLE.has(code):status>=500}});
-    }finally{clearTimeout(requestTimer);clearTimeout(supportTimer);res.removeListener('close',disconnect);req.removeListener('aborted',disconnect);lifetime.abort();}
+    }finally{clearTimeout(requestTimer);supportTimer?.dispose();res.removeListener('close',disconnect);req.removeListener('aborted',disconnect);lifetime.abort();}
   });
   server.requestTimeout=15000;server.headersTimeout=10000;
   server.once('close',()=>{connections.close();nativeHost?.close();for(const controller of connectionReads)controller.abort();});

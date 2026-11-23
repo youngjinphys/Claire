@@ -20,7 +20,9 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          # PR regression tests use the merge result; manifest validation also
+          # needs the source head and its own parent, including multi-commit PRs.
+          fetch-depth: 0
           persist-credentials: false
       - name: Install pinned Node runtime
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -43,11 +45,10 @@ jobs:
         run: |
           npm run build
           node --input-type=module -e 'import {readFileSync} from "node:fs"; const config=JSON.parse(readFileSync("aleph.config.json")); const identity=JSON.parse(readFileSync("public/aleph.json")); if(identity.repoUrl!==config.repoUrl||identity.publicAppUrl!==config.publicAppUrl||identity.commit!==process.env.VERCEL_GIT_COMMIT_SHA)process.exit(1);'
-      - name: Verify current commit manifest matches parent diff
-        if: github.event_name == 'push'
-        run: |
-          git diff --name-only HEAD^ HEAD > "$RUNNER_TEMP/actual-changed-files.txt"
-          node --input-type=module -e 'import {readFileSync} from "node:fs"; const list=JSON.parse(readFileSync("package/commit-files.json","utf8")).files; const actual=readFileSync(process.env.RUNNER_TEMP+"/actual-changed-files.txt","utf8").trim().split(/\r?\n/u).sort(); if(JSON.stringify(list)!==JSON.stringify(actual)){console.error("COMMIT_FILES_MISMATCH");process.exitCode=1;}'
+      - name: Verify source package/commit-files.json against its own parent
+        env:
+          SOURCE_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/verify-commit-manifest.mjs "$SOURCE_COMMIT"
       - name: Claire syntax checks
         run: npm --prefix on-client run check
       - name: Claire loopback HTTP integration tests
@@ -88,11 +89,13 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
+      - name: Windows Git fixture and manifest isolation
+        run: node --test test/commit-manifest.test.mjs test/git-context-isolation.test.mjs
       - name: Windows Claire source and HTTP tests
         run: |
           npm --prefix on-client run check
           npm --prefix on-client test
-      - name: Normal PowerShell launcher and local PC API
+      - name: Documented PowerShell launcher and local PC API
         shell: pwsh
         run: |
           Push-Location on-client
@@ -101,7 +104,7 @@ jobs:
             # Never pipe the output of a launcher that creates a persistent background
             # Node child: inherited pipe handles can keep PowerShell waiting for EOF.
             $launcher = Start-Process -FilePath powershell.exe -ArgumentList @(
-              '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+              '-NoProfile', '-File',
               '.\tools\start-alekov.ps1', '-Port', '55189', '-Background'
             ) -WorkingDirectory (Get-Location).Path -PassThru -WindowStyle Hidden
             if (-not $launcher.WaitForExit(20000) -or $launcher.ExitCode -ne 0) {
@@ -133,7 +136,7 @@ jobs:
                 throw "Invalid unavailable state: $metric"
               }
             }
-            Write-Host "PASS Windows PowerShell launcher and read-only local OS metrics (CI runner, not student PC)"
+            Write-Host "PASS Windows PowerShell launcher without an explicit policy override and read-only local OS metrics (CI runner, not student PC)"
           } finally {
             if ($launchedPid) { Stop-Process -Id $launchedPid -Force -ErrorAction SilentlyContinue }
             Pop-Location

@@ -1,4 +1,5 @@
 import { URL } from 'node:url';
+import { probeResponse, readBoundedJson } from './probe-response-lifetime.mjs';
 
 // Stage 12 submission-only probes. The grader permits HTTPS GET/HEAD and a
 // narrow Node module allowlist. Do not import recovery, homelab, test runners
@@ -16,39 +17,6 @@ const SERVER_REQUEST_ID = /^[A-Za-z0-9:._-]{1,160}$/u;
 const attempt = (attackId, expected, observed) => ({ attackId, expected, observed });
 const statusLabel = response => response ? 'HTTP ' + response.status : NOT_RUN;
 const noStore = response => NO_STORE.test(response?.headers?.get('cache-control') || '');
-
-async function boundedJson(response) {
-  if (!response || !JSON_TYPE.test(response.headers?.get('content-type') || '')) return null;
-  const declared = response.headers.get('content-length');
-  if (declared !== null
-      && (!/^\d+$/u.test(declared) || Number(declared) > MAX_JSON_BYTES)) return null;
-  const reader = response.body?.getReader?.();
-  if (!reader) return null;
-  const parts = [];
-  let length = 0;
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      length += next.value.byteLength;
-      if (length > MAX_JSON_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      parts.push(next.value);
-    }
-    const bytes = new Uint8Array(length);
-    let offset = 0;
-    for (const part of parts) {
-      bytes.set(part, offset);
-      offset += part.byteLength;
-    }
-    const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
 
 function unauthenticated(response, body) {
   return response?.status === 401
@@ -69,7 +37,10 @@ function trustedPublicApp(config, app) {
   return url;
 }
 
-export async function runStage12ReadOnlyChecks(config, app, fetchImpl = globalThis.fetch) {
+export async function runStage12ReadOnlyChecks(config, app, fetchImpl = globalThis.fetch, { probeTimeoutMs = 8000 } = {}) {
+  if (!Number.isSafeInteger(probeTimeoutMs) || probeTimeoutMs < 1 || probeTimeoutMs > 8000) {
+    throw new Error('INVALID_PROBE_TIMEOUT');
+  }
   const origin = trustedPublicApp(config, app);
   const targets = [
     ['identity', '/aleph.json', 'GET', 'application/json'],
@@ -93,29 +64,27 @@ export async function runStage12ReadOnlyChecks(config, app, fetchImpl = globalTh
     if (url.origin !== origin.origin || !['GET', 'HEAD'].includes(method)) {
       throw new Error('제출 점검의 외부 주소 또는 쓰기 메서드가 거부되었습니다.');
     }
-    try {
-      // Pass the exact absolute HTTPS URL as a string. The restricted judge's
-      // HTTP recorder may not recognize a URL object as a sent request.
-      const response = await fetchImpl(url.href, {
-        method, redirect: 'error', headers: { Accept: accept },
-        signal: AbortSignal.timeout(8000),
-      });
-      return [id, response];
-    } catch {
-      return [id, null];
-    }
-  }));
-  const responses = Object.fromEntries(entries);
-  const data = Object.fromEntries(await Promise.all(
-    ['identity', 'static', 'ops', 'manifest', 'device', 'notes', 'item', 'notice', 'restore', 'authmethod']
-      .map(async id => {
-        const response = responses[id];
-        // Never read protected resources if an unexpected request succeeds.
+    const result = await probeResponse({
+      // String URLs are required by the restricted judge's request recorder.
+      url: url.href, fetchImpl, timeoutMs: probeTimeoutMs,
+      init: { method, redirect: 'error', credentials: 'omit', headers: { Accept: accept } },
+      consume: async (response, ownership) => {
+        // HTML/HEAD probes need only headers. Never acquire a reader for an
+        // unexpected successful response from a protected resource.
         const safe = ['identity', 'static', 'ops', 'manifest'].includes(id)
-          ? response?.status === 200 : response?.status >= 400;
-        return [id, safe ? await boundedJson(response) : null];
-      }),
-  ));
+          ? response.status === 200
+          : !['page', 'headers'].includes(id) && response.status >= 400;
+        if (!safe) return null;
+        const body = await readBoundedJson(response, ownership, {
+          contentType: JSON_TYPE, maxBytes: MAX_JSON_BYTES,
+        });
+        return body && typeof body === 'object' && !Array.isArray(body) ? body : null;
+      },
+    });
+    return [id, result];
+  }));
+  const responses = Object.fromEntries(entries.map(([id, result]) => [id, result.response]));
+  const data = Object.fromEntries(entries.map(([id, result]) => [id, result.value]));
 
   const deployed = responses.identity?.status === 200
     && noStore(responses.identity)

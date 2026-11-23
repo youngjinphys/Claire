@@ -1,3 +1,4 @@
+import {validActionDurations} from './policy-limits.mjs';
 import {openSync,closeSync,readSync,fstatSync,lstatSync,realpathSync} from 'node:fs';
 import {isAbsolute,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -18,7 +19,6 @@ const SQLITE_HEADER=Buffer.from('SQLite format 3\0','latin1');
 const fail=()=>{throw Object.assign(Error('INVALID_ACTION_STARTUP_CONFIGURATION'),{code:'INVALID_ACTION_STARTUP_CONFIGURATION'});};
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.getPrototypeOf(v)===Object.prototype;
 const identifier=v=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,199}$/.test(v);
-const positive=v=>Number.isSafeInteger(v)&&v>0;
 const samePath=(a,b)=>process.platform==='win32'?a.toLowerCase()===b.toLowerCase():a===b;
 const identity=s=>[s.dev,s.ino,s.birthtimeNs,s.size,s.mtimeNs,s.ctimeNs,s.nlink].map(String).join(':');
 
@@ -61,7 +61,7 @@ function validPolicy(policy){
     &&policy.appId==='aleph-on'&&policy.audience==='on-client'&&identifier(policy.accessPolicyId)
     &&Array.isArray(policy.allowedActions)&&policy.allowedActions.length>0&&policy.allowedActions.every(a=>SDP_ACTIONS.includes(a))
     &&new Set(policy.allowedActions).size===policy.allowedActions.length
-    &&positive(policy.confirmationTtlMs)&&(!Object.hasOwn(policy,'timeoutMs')||positive(policy.timeoutMs));
+    &&validActionDurations(policy);
 }
 
 /** Host-only reader. Returns {sdpActionStartup:{databasePath,policy}, proof}. Never opens the DB with SQLite. */

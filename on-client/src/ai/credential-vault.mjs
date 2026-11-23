@@ -54,6 +54,7 @@ export function createAppCredentialVault({vaultRoot, resolveCurrentContext, base
     alive();
     if (!validContext(value)) fail('ALEKOV_VAULT_CONTEXT_UNVERIFIED');
     if (canonical(value) !== canonical(expected)) fail('ALEKOV_VAULT_CONTEXT_CHANGED');
+    alive();
   }
 
   async function execute(action, input, {signal} = {}) {
@@ -67,14 +68,16 @@ export function createAppCredentialVault({vaultRoot, resolveCurrentContext, base
     } else if (!exact(input,['expectedContext','credentialFingerprint']) || !/^[a-f0-9]{64}$/.test(input.credentialFingerprint ?? '')) fail('ALEKOV_VAULT_INPUT_INVALID');
     const snapshot = structuredClone(input);
     const deadline = Date.now() + timeoutMs;
+    const monotonicDeadline = performance.now() + timeoutMs;
     let child, timer, onAbort, settled = false;
     const alive = () => {
       if (signal?.aborted) fail('ALEKOV_VAULT_CANCELLED');
-      if (Date.now() >= deadline) fail('ALEKOV_VAULT_TIMEOUT');
+      if (Date.now() >= deadline || performance.now() >= monotonicDeadline) fail('ALEKOV_VAULT_TIMEOUT');
     };
     return new Promise((resolve,reject) => {
       const finish = (error,result) => {
         if (settled) return;
+        if (!error) { try { alive(); } catch (expired) { error = expired; } }
         settled = true; clearTimeout(timer); signal?.removeEventListener('abort',onAbort);
         child?.stdin.destroy(); if (child && child.exitCode === null) child.kill();
         if (error) reject(error); else resolve(result);
@@ -91,6 +94,7 @@ export function createAppCredentialVault({vaultRoot, resolveCurrentContext, base
           connectionId:snapshot.connectionId ?? null,credential:snapshot.credential ?? null,credentialFingerprint:snapshot.credentialFingerprint ?? null};
         const message = JSON.stringify(request)+'\n';
         if (Buffer.byteLength(message) > MAX_MESSAGE) fail('ALEKOV_VAULT_INPUT_INVALID');
+        alive();
         child = spawn(POWERSHELL,['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',HELPER],{
           windowsHide:true,shell:false,stdio:['pipe','pipe','pipe'],cwd:root,
           env:{SystemRoot:'C:\\Windows',WINDIR:'C:\\Windows'}
@@ -119,6 +123,7 @@ export function createAppCredentialVault({vaultRoot, resolveCurrentContext, base
               void (async () => {
                 await current(expected,alive); alive(); if (settled) return;
                 if (action === 'save') validateCredential(snapshot.credential,expected,baseUrl);
+                alive();
                 stage = 'committing'; child.stdin.end(JSON.stringify({commit:nonce})+'\n');
               })().catch(error => finish(error));
             } else if (stage === 'committing' && exact(reply,['ok','result']) && reply.ok === true) {
@@ -133,12 +138,12 @@ export function createAppCredentialVault({vaultRoot, resolveCurrentContext, base
                 } else if (!exact(reply.result,['removed','contextFingerprint','credentialFingerprint']) || typeof reply.result.removed !== 'boolean'
                            || reply.result.contextFingerprint !== fingerprint(expected) || reply.result.credentialFingerprint !== snapshot.credentialFingerprint)
                   fail('ALEKOV_VAULT_PROTOCOL_INVALID');
-                result = reply.result; stage = 'finished';
+                alive();result = reply.result; stage = 'finished';
               } catch (error) { finish(error); }
             } else { abort('ALEKOV_VAULT_PROTOCOL_INVALID'); return; }
           }
         });
-        child.stdin.write(message);
+        alive();child.stdin.write(message);
       })().catch(error => finish(error));
     });
   }

@@ -3,6 +3,7 @@ import { statfs } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
+import { ownedDeadlineTimer } from '../public/deadline-timer.mjs';
 
 const DEFAULT_PROJECT = fileURLToPath(new URL('../', import.meta.url));
 const GIB = 1024 ** 3;
@@ -57,31 +58,47 @@ export function createLocalPcSampler({
   let pendingDisk = null;
   const cancelled = () => Object.assign(new Error('MEASUREMENT_CANCELLED'), { code: 'MEASUREMENT_CANCELLED' });
   function checkSignal(signal) { if (signal?.aborted) throw cancelled(); }
-  async function deadline(work, signal, code) {
+  const timeoutError = code => Object.assign(new Error(code), { code });
+  function checkDeadline(started, signal, code) {
     checkSignal(signal);
+    if (performance.now() - started >= sensorTimeoutMs) throw timeoutError(code);
+  }
+  async function deadline(work, signal, code, started = performance.now()) {
+    checkDeadline(started, signal, code);
     let timer, onAbort;
     const limit = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(Object.assign(new Error(code), { code })), sensorTimeoutMs);
-      onAbort = () => reject(cancelled());
+      const remaining = () => {
+        checkSignal(signal);
+        const left = sensorTimeoutMs - (performance.now() - started);
+        checkSignal(signal);
+        if (!Number.isFinite(left) || left <= 0) throw timeoutError(code);
+        return left;
+      };
+      timer = ownedDeadlineTimer(remaining, reject);
+      onAbort = () => { timer.dispose(); reject(cancelled()); };
       signal?.addEventListener('abort', onAbort, { once: true });
+      timer.arm(remaining());
     });
-    try { return await Promise.race([work, limit]); }
-    finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); }
+    try { const value = await Promise.race([work, limit]); checkDeadline(started, signal, code); return value; }
+    finally { timer?.dispose(); signal?.removeEventListener('abort', onAbort); }
   }
 
   async function cpu(signal) {
     const source = 'os.cpus';
     let started;
+    const sensorStarted = performance.now();
     try {
       started = stamp(clock);
       const startedMono = monotonic();
       const before = cpus();
-      await deadline(Promise.resolve().then(() => wait(intervalMs, signal)), signal, 'CPU_READ_TIMEOUT');
+      checkDeadline(sensorStarted, signal, 'CPU_READ_TIMEOUT');
+      await deadline(Promise.resolve().then(() => wait(intervalMs, signal)), signal, 'CPU_READ_TIMEOUT', sensorStarted);
       checkSignal(signal);
       const after = cpus();
       const elapsed = monotonic() - startedMono;
       const measuredAt = stamp(clock);
       const value = calculateCpuUsage(before, after, platform);
+      checkDeadline(sensorStarted, signal, 'CPU_READ_TIMEOUT');
       const wallElapsed = Date.parse(measuredAt) - Date.parse(started);
       if (!Number.isFinite(elapsed) || elapsed < 100 || elapsed > 5000
         || wallElapsed < 100 || wallElapsed > 6000 || Math.abs(wallElapsed - elapsed) > 1000) {
@@ -123,21 +140,23 @@ export function createLocalPcSampler({
       pendingDisk = operation;
       const clearPending = () => { if (pendingDisk === operation) pendingDisk = null; };
       operation.then(clearPending, clearPending);
-      const info = await deadline(operation, signal, 'DISK_READ_TIMEOUT');
+      const sensorStarted = performance.now();
+      const info = await deadline(operation, signal, 'DISK_READ_TIMEOUT', sensorStarted);
+      const finalize = metric => { checkDeadline(sensorStarted, signal, 'DISK_READ_TIMEOUT'); return metric; };
       checkSignal(signal);
       if (typeof info?.bsize !== 'bigint' || typeof info?.bavail !== 'bigint') {
-        return unavailable(source, 'GiB', stamp(clock), 'DISK_INVALID');
+        return finalize(unavailable(source, 'GiB', stamp(clock), 'DISK_INVALID'));
       }
       const size = info.bsize, available = info.bavail;
       const measuredAt = stamp(clock);
-      if (size <= 0n || available < 0n) return unavailable(source, 'GiB', measuredAt, 'DISK_INVALID');
+      if (size <= 0n || available < 0n) return finalize(unavailable(source, 'GiB', measuredAt, 'DISK_INVALID'));
       const bytes = available * size;
       // Convert the integer GiB part before the fractional remainder to avoid unsafe byte-to-Number precision.
       const whole = bytes / BigInt(GIB), remainder = bytes % BigInt(GIB);
       const value = Number(whole) + Number(remainder) / GIB;
-      return whole <= BigInt(Number.MAX_SAFE_INTEGER) && Number.isFinite(value) && value >= 0
+      return finalize(whole <= BigInt(Number.MAX_SAFE_INTEGER) && Number.isFinite(value) && value >= 0
         ? { status: 'ok', value: round(value), unit: 'GiB', source, measuredAt, scope: 'project-filesystem', note: '앱 폴더 파일시스템의 OS 보고 여유 공간. 사용자 할당량/네트워크 드라이브 예외는 별도 확인 필요' }
-        : unavailable(source, 'GiB', measuredAt, 'DISK_INVALID');
+        : unavailable(source, 'GiB', measuredAt, 'DISK_INVALID'));
     } catch (error) {
       checkSignal(signal);
       const reason = error?.code === 'DISK_READ_TIMEOUT' ? 'DISK_READ_TIMEOUT'
@@ -154,10 +173,13 @@ export function createLocalPcSampler({
       const memoryValue = memory();
       const [cpuValue, diskValue] = await Promise.all([cpu(signal), disk(signal)]);
       checkSignal(signal);
+      const checkedAt = stamp(clock);
+      // The supplied clock can cancel after the sensor work has completed.
+      checkSignal(signal);
       return {
         schema: SCHEMA,
         scope: 'local-machine',
-        checkedAt: stamp(clock),
+        checkedAt,
         metrics: { cpu: cpuValue, memory: memoryValue, disk: diskValue },
       };
     },
