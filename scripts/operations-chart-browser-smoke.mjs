@@ -27,6 +27,7 @@ const refreshed=fixture([
   {id:'anonymous_notes',outcome:'failed',httpStatus:403,method:'GET',path:'/api/notes'},
   {id:'anonymous_restore',outcome:'inconclusive',httpStatus:503,method:'GET',path:'/api/restore/notes/fixture'},
 ],{verified:1,failed:1,inconclusive:1,unrun:0,httpCount:3});
+const incomplete={...refreshed,target:'https://incomplete-fixture.vercel.app',policy:null};
 const assets=new Map([
   ['/','public/index.html'],['/operations.mjs','public/operations.mjs'],
   ['/operations.css','public/operations.css'],['/observatory-theme.css','public/observatory-theme.css'],
@@ -40,11 +41,13 @@ const mime=path=>path.endsWith('.mjs')||path.endsWith('.js')?'text/javascript':
 
 async function main(){
   let current=initial;
+  let pendingResponse=null;
   const unexpected=[];
   const server=http.createServer(async(req,res)=>{
     const path=new URL(req.url,'http://127.0.0.1').pathname;
     res.setHeader('Cache-Control','no-store');
     if(path==='/api/ops'&&req.method==='GET'){
+      if(pendingResponse)await pendingResponse;
       res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(current));return;
     }
     if(path==='/api/auth/session'&&req.method==='POST'){
@@ -90,6 +93,15 @@ async function main(){
     socket.onmessage=event=>{
       const msg=JSON.parse(event.data);
       if(msg.method==='Runtime.exceptionThrown')errors.push('page exception');
+      if(msg.method==='Runtime.consoleAPICalled'&&['warning','error','assert'].includes(msg.params.type)){
+        errors.push('console '+msg.params.type);
+      }
+      if(msg.method==='Log.entryAdded'&&['warning','error'].includes(msg.params.entry.level)){
+        const entry=msg.params.entry;
+        const expectedAnonymousRejection=entry.source==='network'
+          && entry.url===origin+'/api/auth/session' && entry.text.includes('401');
+        if(!expectedAnonymousRejection)errors.push(entry.source+' '+entry.level+': '+entry.text);
+      }
       if(msg.method==='Fetch.requestPaused'){
         const {requestId,request}=msg.params;
         let local=false;try{local=new URL(request.url).origin===origin;}catch{}
@@ -102,7 +114,14 @@ async function main(){
     const evaluate=async expression=>{const data=await cmd('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});
       if(data.exceptionDetails)throw Error('Chart browser evaluation failed');return data.result?.value;};
     const observed=(expr,label)=>until(async()=>Boolean(await evaluate(expr)),label);
-    await cmd('Page.enable');await cmd('Runtime.enable');await cmd('Network.enable');
+    async function activate(useSpace){
+      const key=useSpace?' ':'Enter',code=useSpace?'Space':'Enter',vk=useSpace?32:13;
+      const text=useSpace?' ':'\r';
+      const params={key,code,windowsVirtualKeyCode:vk,nativeVirtualKeyCode:vk};
+      await cmd('Input.dispatchKeyEvent',{type:'keyDown',...params,text,unmodifiedText:text});
+      await cmd('Input.dispatchKeyEvent',{type:'keyUp',...params});
+    }
+    await cmd('Page.enable');await cmd('Runtime.enable');await cmd('Network.enable');await cmd('Log.enable');
     await cmd('Network.setBypassServiceWorker',{bypass:true});
     await cmd('Fetch.enable',{patterns:[{urlPattern:'*'}]});
     await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
@@ -114,6 +133,18 @@ async function main(){
       await observed("document.readyState==='complete' && document.querySelectorAll('#outcomes-chart .bar-column').length===4 && document.querySelector('#ops-state').textContent.includes('실측 관측 완료')",'fixture snapshot');
       assert.equal(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"),true,'document overflow');
       assert.deepEqual(await evaluate("[...document.querySelectorAll('#outcomes-chart .bar-column')].map(x=>x.getAttribute('aria-label').match(/\\d+/)[0])"),['0','0','0','22']);
+      for(let i=0;i<4;i++){
+        await evaluate(`document.querySelectorAll('.metric-help summary')[${i}].focus()`);
+        await activate(i%2);
+        assert.equal(await evaluate(`(()=>{
+          const details=document.querySelectorAll('.metric-help')[${i}];
+          const card=details.closest('.metric').getBoundingClientRect();
+          const text=details.querySelector('p').getBoundingClientRect();
+          return details.open&&text.left>=card.left&&text.right<=card.right&&text.bottom<=card.bottom;
+        })()`),true,'opened help fits within its metric');
+        await activate(i%2);
+        assert.equal(await evaluate("!document.activeElement.parentElement.open"),true,'keyboard closes help and retains focus');
+      }
       async function position(x,y){
         return evaluate(`(()=>{const f=document.getElementById('filter-state');f.value='all';f.dispatchEvent(new Event('change'));const s=document.getElementById('outcomes-chart');s.scrollIntoView({block:'center',behavior:'instant'});const p=new DOMPoint(${x},${y}).matrixTransform(s.getScreenCTM());return {x:p.x,y:p.y};})()`);
       }
@@ -146,20 +177,67 @@ async function main(){
       await cmd('Emulation.setTouchEmulationEnabled',{enabled:false});
       for(let i=0;i<4;i++){
         await evaluate(`(()=>{const f=document.getElementById('filter-state');f.value='all';f.dispatchEvent(new Event('change'));document.querySelectorAll('#outcomes-chart .bar-column')[${i}].focus();})()`);
-        const key=i%2?' ':'Enter',code=i%2?'Space':'Enter',vk=i%2?32:13;
-        await cmd('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode:vk,nativeVirtualKeyCode:vk});
-        await cmd('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:vk,nativeVirtualKeyCode:vk});
+        await activate(i%2);
         assert.equal(await evaluate("document.getElementById('filter-state').value"),names[i]);keyboardChecks++;
+        const frames=await evaluate(`(async()=>{
+          const samples=[];
+          for(let i=0;i<6;i++){
+            await new Promise(requestAnimationFrame);
+            const active=document.activeElement, rect=active.getBoundingClientRect();
+            samples.push(active.id==='evidence-title'&&rect.top>=0&&rect.bottom<=innerHeight);
+          }
+          return samples;
+        })()`);
+        assert.ok(frames.every(Boolean),'each frame exposes the new keyboard focus');
       }
+      await evaluate("document.querySelector('#filter-state').value='failed';document.querySelector('#filter-state').dispatchEvent(new Event('change'))");
+      assert.match(await evaluate("document.querySelector('#evidence-body').textContent"),/조건에 맞는 항목이 없습니다/);
+      assert.equal(await evaluate("document.querySelector('.table-wrap').tabIndex"),0);
       // A response updates the same controls; exercise a formerly-zero bar again.
       await evaluate("window.__chartQaFirst=document.querySelector('#outcomes-chart .bar-column');window.__chartQaFirst.focus()");
       current=refreshed;await evaluate("document.getElementById('ops-refresh').click()");
       await observed("document.querySelector('#outcomes-chart .bar-column').getAttribute('aria-label').includes('1건')",'refreshed snapshot');
       assert.equal(await evaluate("document.activeElement===window.__chartQaFirst && document.querySelector('#outcomes-chart .bar-column')===window.__chartQaFirst"),true,'focus retained');
       await click(109,100,'verified',false);
+      current=incomplete;
+      let releaseResponse;
+      pendingResponse=new Promise(resolve=>{releaseResponse=resolve;});
+      try{
+        await evaluate("document.getElementById('ops-refresh').focus();document.getElementById('ops-refresh').click()");
+        const pendingFrames=await evaluate(`(async()=>{
+          const samples=[];
+          for(let i=0;i<6;i++){
+            await new Promise(requestAnimationFrame);
+            samples.push(document.activeElement.id==='ops-refresh'&&document.activeElement.getAttribute('aria-disabled')==='true');
+          }
+          return samples;
+        })()`);
+        assert.ok(pendingFrames.every(Boolean),'refresh retains keyboard focus while pending');
+      }finally{
+        pendingResponse=null;
+        releaseResponse();
+      }
+      await observed("document.querySelector('#ops-state').textContent.includes('조회 실패')",'rejected refresh');
+      assert.equal(await evaluate("document.querySelector('#ops-target').textContent"),'미확인','invalid response did not change rendered data');
+      assert.equal(await evaluate("document.querySelector('#metric-observed').textContent"),'3');
+      assert.equal(await evaluate(`(async()=>{
+        let blob;
+        const make=URL.createObjectURL, click=HTMLAnchorElement.prototype.click;
+        try{
+          URL.createObjectURL=(value)=>{blob=value;return make(value);};
+          HTMLAnchorElement.prototype.click=()=>{};
+          document.querySelector('#ops-export').click();
+          return JSON.parse(await blob.text()).target;
+        }finally{
+          URL.createObjectURL=make; HTMLAnchorElement.prototype.click=click;
+        }
+      })()`),null,'export still uses the last valid snapshot');
+      current=initial;
+      await evaluate("document.getElementById('ops-refresh').click()");
+      await observed("document.querySelector('#ops-state').textContent.includes('실측 관측 완료') && document.querySelector('#metric-observed').textContent==='0'",'successful retry');
     }
     assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);assert.equal(blocked,0,'unexpected external request blocked');
-    console.log(`PASS chart browser: ${pointerChecks} synthetic mouse/touch positions, ${keyboardChecks} keyboard activations, 320/1440px, refresh and focus.`);
+    console.log(`PASS chart browser: ${pointerChecks} synthetic mouse/touch positions, ${keyboardChecks} chart activations, 16 help toggles, 60 focus frames, 320/1440px, invalid response, previous export and retry.`);
   }finally{
     socket?.close();
     if(chrome){chrome.kill();if(chrome.exitCode===null)await Promise.race([once(chrome,'exit').catch(()=>{}),sleep(3000)]);}

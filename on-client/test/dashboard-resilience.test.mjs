@@ -134,8 +134,11 @@ test('identity result appears without waiting for a slow independent events resp
   const b = await browser(t, { delayedEvents: true });
   assert.match(b.get('sdp-policy-detail').textContent, /기준 충족/);
   assert.match(b.get('events-note').textContent, /조회 중/);
+  assert.equal(b.get('refresh-security').getAttribute('aria-disabled'), 'true');
+  b.get('refresh-security').click();
+  assert.equal(b.calls.filter(path => path === '/api/events').length, 1, 'an unavailable refresh cannot duplicate an in-flight read');
   b.deferred[0](json(events())); await flush();
-  assert.equal(b.get('refresh-security').disabled, false);
+  assert.equal(b.get('refresh-security').getAttribute('aria-disabled'), 'false');
 });
 
 test('changing event filter and freshness ticks cannot erase the in-flight state', async t => {
@@ -172,7 +175,7 @@ test('one host-panel render failure cannot disable the independent PC measuremen
   assert.doesNotMatch(b.get('integrated-host-root').textContent, /PRIVATE_HOST_RENDER_DETAIL/);
   b.get('sample-once').click(); await flush();
   assert.equal(b.get('cpu-value').textContent, '30.0');
-  assert.equal(b.get('sample-once').disabled, false);
+  assert.equal(b.get('sample-once').getAttribute('aria-disabled'), 'false');
 });
 
 test('initial host render failure exposes accessible retry and returns focus to the recovered panel', async t => {
@@ -194,7 +197,7 @@ test('a failed student module leaves independent controls working and permits an
   const status = root.querySelector('[role="status"]');
   assert.ok(status, 'a failed module must display an error status');
   assert.match(status.textContent, /불러오|표시 확인 불가/);
-  assert.equal(b.get('sample-once').disabled, false);
+  assert.equal(b.get('sample-once').getAttribute('aria-disabled'), 'false');
   b.get('sample-once').click(); await flush();
   assert.ok(b.calls.includes('/api/local-pc'));
   assert.ok(b.calls.includes('/api/me')); assert.ok(b.calls.includes('/api/events'));
@@ -326,7 +329,7 @@ test('hidden tab pauses repaint timers and restoration never polls or resumes sa
   b.document.hidden = false; b.document.handlers.get('visibilitychange')?.(); await flush();
   assert.equal([...b.timers.values()].filter(timer => timer.type === 'interval').length, 1);
   assert.equal(b.calls.length, calls);
-  assert.equal(b.get('start').disabled, false);
+  assert.equal(b.get('start').getAttribute('aria-disabled'), 'false');
 });
 
 test('malformed JSON and invalid UTF-8 are response-format failures, not network outages', async () => {
@@ -366,6 +369,6 @@ test('all unavailable PC sensors stop sampling and never announce successful mea
   assert.match(b.get('page-notice').textContent, /측정 실패.*유효한 실측값 없음/);
   assert.equal(b.get('live-state').textContent, '측정 실패 · 다시 측정 필요');
   assert.equal(b.get('cpu-value').textContent, '확인 불가');
-  assert.equal(b.get('start').disabled, false);
+  assert.equal(b.get('start').getAttribute('aria-disabled'), 'false');
   assert.equal([...b.timers.values()].some(timer => timer.type === 'timeout'), false);
 });

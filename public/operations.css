@@ -17,7 +17,7 @@ button:disabled { opacity:.48; cursor:not-allowed }
 a { color:inherit; text-decoration:none }
 a:hover { color:var(--mint) }
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible {
-  outline:2px solid var(--mint); outline-offset:3px
+  outline:2px solid var(--mint); outline-offset:3px; scroll-margin:12px
 }
 [hidden] { display:none!important }
 .skip { position:absolute; top:-100px; left:10px; padding:10px 16px; background:var(--mint); color:#061d1c; z-index:50 }
@@ -36,13 +36,11 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,te
 .rail { border-right:1px solid var(--line); padding:9px 26px 0 0; align-self:start; position:sticky; top:24px }
 .rail-title { color:var(--quiet); font:12px var(--font); font-weight:650; letter-spacing:0; margin:0 0 18px }
 .rail-link { display:flex; justify-content:space-between; align-items:center; padding:12px 0; font-size:13px; font-weight:600; color:var(--muted); border-bottom:1px solid #26333c }
-.rail-link.active { color:var(--mint) }
 .rail-link small { font:11px var(--mono); color:var(--quiet) }
 .rail-foot { padding-top:27px; font-size:12px; color:var(--quiet); line-height:1.7 }
 .rail-foot p { margin:0 0 16px }
 .rail-foot strong { font-weight:600; color:var(--muted) }
 .maincol { min-width:0 }
-.section-kicker { font:12px var(--font); font-weight:650; letter-spacing:0; color:var(--mint); margin:0 }
 .hero { display:flex; align-items:flex-end; justify-content:space-between; gap:22px; padding:0 0 30px; border-bottom:1px solid var(--line) }
 .hero > div:first-child { flex:1 1 16rem; min-width:0; }
 .hero h1 { font-size:clamp(28px,3vw,40px); font-weight:700; line-height:1.25; letter-spacing:-.02em; margin:10px 0 12px }
@@ -56,10 +54,10 @@ button.primary, button.secondary, button.danger, .export-button {
 }
 button.primary { background:var(--mint); border-color:var(--mint); color:#06201e }
 button.primary:hover { background:#c2e9e1 }
+#ops-refresh[aria-disabled="true"] { opacity:.65; cursor:wait }
 button.secondary:hover,.export-button:hover { border-color:var(--mint); background:var(--surface2) }
 button.danger { border-color:#68484b; color:#efb5b5 }
 button.danger:hover { background:#4c292d }
-.loading { opacity:.6 }
 .micro { font:11px var(--mono); color:var(--quiet) }
 .evidence-note { margin:18px 0 0; font:12px var(--mono); color:var(--quiet); display:flex; flex-wrap:wrap; gap:6px 18px }
 .evidence-note strong { color:var(--muted); font-weight:500 }
@@ -70,10 +68,6 @@ button.danger:hover { background:#4c292d }
 .metric-value { font:500 clamp(25px,2.7vw,35px)/1.05 var(--mono); letter-spacing:-.055em; font-variant-numeric:tabular-nums }
 .metric-value span { font-size:14px; color:var(--quiet); letter-spacing:0; font-weight:400 }
 .metric-desc { color:var(--quiet); font-size:11px; margin-top:13px; line-height:1.5 }
-.hint { position:relative; display:inline-grid; place-items:center; width:24px; height:24px; border:1px solid var(--line-light); border-radius:50%; font:11px var(--mono); background:none; color:var(--muted); padding:0 }
-.hint:focus-visible::after,.hint:hover::after { content:attr(data-tip); position:absolute; right:0; bottom:calc(100% + 12px); z-index:20;
-  background:#27353e; color:var(--ink); width:min(245px, calc(100vw - 24px)); padding:12px; border:1px solid var(--line-light);
-  box-shadow:0 9px 28px #0008; font:12px/1.6 var(--font); text-align:left; white-space:normal }
 .section-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:36px 0 13px }
 .section-title { font-size:17px; font-weight:690; margin:0; letter-spacing:-.025em }
 .section-note { font:11px var(--mono); color:var(--quiet) }
@@ -117,10 +111,13 @@ button.danger:hover { background:#4c292d }
 .status-failed { color:var(--red) }
 .status-inconclusive { color:var(--amber) }
 .status-unrun { color:var(--quiet) }
-.table-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:17px 21px; border-top:1px solid var(--line); border-bottom:1px solid var(--line) }
+.table-bar { display:flex; flex-wrap:wrap; align-items:end; gap:10px; padding:17px 21px; border-top:1px solid var(--line); border-bottom:1px solid var(--line) }
 .table-bar select { width:auto; min-width:133px; padding:9px 27px 9px 11px }
-.table-bar .count { margin-left:auto; font:11px var(--mono); color:var(--quiet) }
+.table-bar .count { align-self:center; margin-left:auto; font:11px var(--mono); color:var(--quiet) }
 .table-wrap { width:100%; overflow-x:auto; max-height:650px; overflow-y:auto; scrollbar-color:#445760 var(--surface) }
+.table-wrap:focus-visible { outline-offset:-3px }
+#evidence { scroll-margin-top:12px }
+.table-empty { text-align:left; color:var(--muted); padding:22px 15px }
 table { border-collapse:collapse; width:100%; font-size:12px; min-width:940px }
 th { background:#18232d; padding:13px 15px; color:var(--quiet); font:11px var(--mono); text-align:left; position:sticky; top:0; z-index:2; white-space:nowrap; border-bottom:1px solid var(--line) }
 td { padding:13px 15px; border-bottom:1px solid #26353e; vertical-align:top; line-height:1.55; color:var(--muted) }
@@ -187,14 +184,12 @@ textarea { min-height:95px; resize:vertical }
   .mainnav { margin-left:0; width:100% }
   .mainnav a { padding:0 10px; font-size:13px }
   #ops-state { text-align:left }
-  .hint:focus-visible::after,.hint:hover::after {
-    position:fixed; left:12px; right:12px; bottom:12px; top:auto; width:auto; z-index:30
-  }
   .layout { display:block; padding:27px 16px 62px }
   .rail { display:none }
   .hero { align-items:flex-start; flex-direction:column }
   .hero-actions { align-items:flex-start; flex-direction:row; flex-wrap:wrap }
   .hero h1 { font-size:38px }
+  #telemetry .section-row { align-items:flex-start; flex-direction:column; gap:6px }
   .dash-metrics { gap:9px }
   .metric { padding:14px }
   .metric-value { font-size:26px }
@@ -203,7 +198,9 @@ textarea { min-height:95px; resize:vertical }
   .note-actions { grid-template-columns:1fr 1fr }
   .strip { align-items:flex-start; flex-direction:column }
   .footer { display:block; line-height:2 }
-  .table-bar .count { margin-left:0 }
+  .table-bar { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)) }
+  .table-bar select { width:100%; min-width:0 }
+  .table-bar .count { grid-column:1/-1; margin-left:0 }
 }
 @media(prefers-reduced-motion:reduce) {
   html { scroll-behavior:auto }

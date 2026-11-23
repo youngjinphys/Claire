@@ -1,9 +1,29 @@
 {
   "schema": "claire.commit-files.v1",
   "files": [
-    "on-client/public/dashboard-model.mjs",
-    "on-client/test/dashboard-transport-disposal.test.mjs",
-    "package/commit-files.json"
+    "README.md",
+    "on-client/public/app.js",
+    "on-client/public/dashboard.css",
+    "on-client/public/dashboard.html",
+    "on-client/public/dashboard.mjs",
+    "on-client/public/index.html",
+    "on-client/public/style.css",
+    "on-client/test/app-layout.test.mjs",
+    "on-client/test/dashboard-lifecycle.test.mjs",
+    "on-client/test/dashboard-resilience.test.mjs",
+    "on-client/tools/dashboard-browser-smoke.mjs",
+    "package/commit-files.json",
+    "public/device.mjs",
+    "public/index.html",
+    "public/observatory-theme.css",
+    "public/operations.css",
+    "public/operations.mjs",
+    "scripts/operations-chart-browser-smoke.mjs",
+    "test/device-ui-race.test.mjs",
+    "test/observatory-theme.test.mjs",
+    "test/operations-ui-race.test.mjs",
+    "test/responsive-layout.test.mjs",
+    "test/session-invalidation-ui.test.mjs"
   ],
-  "releaseNote": "Close rejected/late HTTP response bodies after timeouts, cancellation, invalid MIME, and oversized responses. Keep one-server architecture, read-only OS collector, and Stage12 submission evidence unchanged. Add synthetic transport disposal regressions."
+  "releaseNote": "Refine the local Claire app and operations portal for mobile and keyboard use. Keep the last valid evidence during refresh failures and make authentication and observation retries follow their visible states."
 }

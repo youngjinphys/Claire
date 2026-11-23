@@ -33,21 +33,19 @@
         <button type="button" role="tab" id="tab-apps" data-testid="nav-apps" data-view="apps" aria-controls="view-apps" aria-selected="false" tabindex="-1">업무 앱</button>
         <button type="button" role="tab" id="tab-records" data-testid="nav-records" data-view="records" aria-controls="view-records" aria-selected="false" tabindex="-1">보안 기록</button>
       </div>
-      <p class="sidebar-note">메뉴는 상하좌우 방향키로 이동할 수 있습니다.</p>
+      <details class="notice">
+        <summary>제공 화면·학생 구현 안내</summary>
+        <p><strong>제공 공통 UI</strong>와 <strong>학생 구현 표시</strong>(student/extension.mjs)는 구분되어 있습니다. 제공 코드는 학생 성취로 계산되지 않으며, 예제(demo)·연결 없음 상태는 실제 연결 성공이 아닙니다.</p>
+      </details>
     </nav>
 
     <main id="main" tabindex="-1">
       <div id="error-message" class="error-banner" data-testid="error-message" role="alert" hidden></div>
 
-      <p class="notice">
-        <strong>제공 공통 UI</strong>와 <strong>학생 구현 표시</strong>(student/extension.mjs)는 구분되어 있습니다.
-        제공 코드는 학생 성취로 계산되지 않으며, 예제(demo)·연결 없음 상태는 실제 연결 성공이 아닙니다.
-      </p>
-
       <section id="view-protection" class="view" role="tabpanel" aria-labelledby="tab-protection">
         <h1>보호 현황</h1>
 
-        <div class="grid-2">
+        <div class="grid-2 protection-summary">
           <section class="card provided" aria-labelledby="identity-title">
             <h2 id="identity-title">현재 로그인 <span class="tag">제공</span></h2>
             <dl class="identity">
@@ -57,13 +55,6 @@
             </dl>
           </section>
 
-          <section class="card student" aria-labelledby="student-identity-title">
-            <h2 id="student-identity-title">학생 구현 표시 <span class="tag tag-student">student/extension.mjs · renderIdentity</span></h2>
-            <div id="student-identity" class="student-slot" aria-live="polite"></div>
-          </section>
-        </div>
-
-        <div class="grid-2">
           <section class="card provided" aria-labelledby="devices-title">
             <h2 id="devices-title">내 기기 <span class="tag">제공</span></h2>
             <div id="devices" aria-live="polite"></div>
@@ -73,6 +64,11 @@
             <div id="sessions" aria-live="polite"></div>
           </section>
         </div>
+
+        <section class="card student" aria-labelledby="student-identity-title">
+          <h2 id="student-identity-title">학생 구현 표시 <span class="tag tag-student">student/extension.mjs · renderIdentity</span></h2>
+          <div id="student-identity" class="student-slot" aria-live="polite"></div>
+        </section>
 
         <section class="card student" aria-labelledby="student-status-title">
           <h2 id="student-status-title">학생 상태·알림 표시 <span class="tag tag-student">student/extension.mjs · renderStatus</span></h2>

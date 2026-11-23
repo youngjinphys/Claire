@@ -16,15 +16,18 @@ function setup(t,handler){
     if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];
   }});
   const nodes=new Map();
-  for(const id of ['device-state','device-detail','device-enroll','device-unlock','device-refresh','device-panel','pwa-state','pwa-install']){
-    const el=new EventTarget();Object.assign(el,{hidden:false,disabled:false,textContent:''});nodes.set(id,el);
+  const doc={body:{},hasFocus:()=>true,readyState:'complete'};
+  doc.activeElement=doc.body;
+  for(const id of ['device-state','device-detail','device-enroll','device-unlock','device-refresh','device-panel','device-heading','workspace-title','pwa-state','pwa-install']){
+    const el=new EventTarget();Object.assign(el,{hidden:false,disabled:false,textContent:'',focus(){doc.activeElement=el;}});nodes.set(id,el);
   }
   const win=new EventTarget();
   win.PublicKeyCredential=class {};
   win.SimpleWebAuthnBrowser={startRegistration:async()=>({}),startAuthentication:async()=>({})};
   win.matchMedia=()=>({matches:false});
   Object.defineProperty(globalThis,'window',{configurable:true,value:win});
-  Object.defineProperty(globalThis,'document',{configurable:true,value:{getElementById:id=>nodes.get(id),readyState:'complete'}});
+  doc.getElementById=id=>nodes.get(id);
+  Object.defineProperty(globalThis,'document',{configurable:true,value:doc});
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
   const calls=[];
   Object.defineProperty(globalThis,'fetch',{configurable:true,value:async url=>{
@@ -33,9 +36,53 @@ function setup(t,handler){
   }});
   let token='synthetic-session-a';const opened=[];let locked=0;
   const access=initDeviceAccess({getAccessToken:()=>token,onAuthorized:(...args)=>opened.push(args),onLocked:()=>locked++});
-  return {nodes,win,calls,opened,access,get locked(){return locked;},setToken:value=>{token=value;}};
+  return {nodes,doc,win,calls,opened,access,get locked(){return locked;},setToken:value=>{token=value;}};
 }
 const click=node=>node.dispatchEvent(new Event('click'));
+
+test('device actions wait for server status before offering registration or authentication',async t=>{
+  const pending=deferred();
+  const x=setup(t,()=>pending.promise);
+  await until(()=>x.calls.includes('status'));
+  assert.equal(x.nodes.get('device-enroll').hidden,true);
+  assert.equal(x.nodes.get('device-unlock').hidden,true);
+  assert.equal(x.nodes.get('device-refresh').hidden,false);
+  pending.resolve(ok(approved));
+  await until(()=>!x.nodes.get('device-unlock').hidden);
+  assert.equal(x.nodes.get('device-enroll').hidden,true);
+});
+
+test('canceled authentication preserves its reason during rediscovery and restores keyboard retry focus',async t=>{
+  const pending=deferred();let statuses=0;
+  const x=setup(t,action=>action==='status'&&++statuses===2?pending.promise:ok(action==='status'?approved:{}));
+  x.win.SimpleWebAuthnBrowser.startAuthentication=async()=>{throw Object.assign(Error('canceled'),{name:'NotAllowedError'});};
+  await until(()=>!x.nodes.get('device-unlock').hidden);
+  x.nodes.get('device-unlock').focus();click(x.nodes.get('device-unlock'));
+  await until(()=>statuses===2);
+  assert.equal(x.doc.activeElement,x.nodes.get('device-heading'));
+  assert.match(x.nodes.get('device-detail').textContent,/인증이 취소되었습니다/u);
+  assert.equal(x.opened.length,0);
+  pending.resolve(ok(approved));
+  await until(()=>x.doc.activeElement===x.nodes.get('device-unlock'));
+  assert.match(x.nodes.get('device-detail').textContent,/인증이 취소되었습니다/u);
+  assert.equal(x.nodes.get('device-enroll').hidden,true);
+});
+
+test('successful keyboard authentication focuses the opened editor without taking focus from other controls',async t=>{
+  const pending=deferred();let assertions=0;
+  const x=setup(t,action=>action==='assertion-verify'&&++assertions===2?pending.promise:ok(action==='status'?approved:action==='assertion-verify'?proof:{}));
+  await until(()=>!x.nodes.get('device-unlock').hidden);
+  x.nodes.get('device-unlock').focus();click(x.nodes.get('device-unlock'));
+  await until(()=>x.opened.length===1);
+  assert.equal(x.doc.activeElement,x.nodes.get('workspace-title'));
+  x.win.dispatchEvent(new Event('aleph:identity'));
+  await until(()=>!x.nodes.get('device-unlock').hidden);
+  x.nodes.get('device-unlock').focus();click(x.nodes.get('device-unlock'));
+  await until(()=>assertions===2);
+  x.nodes.get('device-refresh').focus();pending.resolve(ok(proof));
+  await until(()=>x.opened.length===2);
+  assert.equal(x.doc.activeElement,x.nodes.get('device-refresh'));
+});
 
 test('late verification success after an identity change cannot authorize the new session',async t=>{
   const pending=deferred();

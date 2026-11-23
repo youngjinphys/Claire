@@ -26,7 +26,7 @@ async function setup(t,{refreshFailure='http',delayRefresh=false,delayBootstrap=
   const keys=['window','document','navigator','location','BroadcastChannel','fetch','setTimeout','clearTimeout','requestAnimationFrame','crypto'];
   const saved=Object.fromEntries(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
   t.after(()=>{for(const [key,value] of Object.entries(saved))if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];});
-  const ids=['signed-out','signed-in','workspace','vault-title','login-form','logout','login-status','workspace-status','notes-lookup-status','delete-operation-status','save-operation-status','save-uncertainty-state','draft-warning','delete-uncertainty-state','session-revalidation-state','session-label','notes','create-form','create-submit','create-retry-panel','create-retry-list','email','password','new-title','new-body','device-state','device-detail','device-enroll','device-unlock','device-refresh','device-panel','pwa-state','pwa-install','ops-state'];
+  const ids=['signed-out','signed-in','workspace','vault-title','workspace-title','login-form','logout','login-status','workspace-status','notes-lookup-status','delete-operation-status','save-operation-status','save-uncertainty-state','draft-warning','delete-uncertainty-state','session-revalidation-state','session-label','notes','create-form','create-submit','create-retry-panel','create-retry-list','email','password','new-title','new-body','device-state','device-detail','device-heading','device-enroll','device-unlock','device-refresh','device-panel','pwa-state','pwa-install','ops-state'];
   const nodes=new Map(ids.map(id=>[id,new Element()]));
   nodes.get('draft-warning').hidden=true;
   nodes.get('notes-lookup-status').hidden=true;
@@ -442,6 +442,30 @@ test('logout immediately removes the visible vault while the server request is p
   assert.equal(x.nodes.get('signed-in').hidden,true);
   assert.equal(x.nodes.get('signed-out').hidden,false);
   x.logout.resolve(reply({ok:true}));await tick();
+});
+
+test('logout returns keyboard focus to the visible login form before its server response',async t=>{
+  const x=await setup(t,{delayLogout:true});
+  x.nodes.get('logout').focus();x.click('logout');
+  assert.equal(x.doc.activeElement,x.nodes.get('email'));
+  assert.equal(x.nodes.get('signed-out').hidden,false);
+  x.logout.resolve(reply({ok:true}));await tick();
+  assert.equal(x.doc.activeElement,x.nodes.get('email'));
+});
+
+test('login focuses the device heading while preserving a newer focus choice',async t=>{
+  for(const movedFocus of [false,true])await t.test(movedFocus?'newer focus':'login focus',async t=>{
+    const x=await setup(t,{delayLogin:true});
+    x.click('logout');await until(()=>x.nodes.get('signed-out').hidden===false);
+    const password=x.nodes.get('password'),heading=x.nodes.get('device-heading');
+    x.nodes.get('login-form').contains=element=>element===password;
+    password.focus();
+    x.nodes.get('login-form').dispatchEvent(new Event('submit',{cancelable:true}));
+    if(movedFocus)x.nodes.get('ops-state').focus();
+    x.login.resolve(reply({accessToken:'fixture-new',user:{email:'new@example.invalid'}}));
+    await until(()=>x.nodes.get('signed-in').hidden===false);
+    assert.equal(x.doc.activeElement,movedFocus?x.nodes.get('ops-state'):heading);
+  });
 });
 
 test('logout immediately cancels an active authenticator while the server request is pending',async t=>{

@@ -16,27 +16,24 @@ body {
 .mainnav a:hover,.mainnav a:focus-visible { background:rgba(159,212,200,.08) }
 .rail { border-right-color:rgba(160,190,205,.16) }
 .rail-link { border-bottom-color:rgba(160,190,205,.12) }
-.hero {
-  position:relative; isolation:isolate; overflow:hidden; align-items:center;
-  min-height:255px; margin-bottom:8px; padding:28px 32px; border:1px solid rgba(171,200,214,.22);
-  border-radius:8px; background:var(--surface);
-}
-.hero > :not(.hero-orbit) {position:relative;z-index:2}
-.hero-orbit {
-  position:absolute;pointer-events:none;z-index:0;top:-56px;right:-40px;
-  width:160px;height:160px;opacity:.2;border-radius:50%;
-  border:1px solid rgba(168,200,214,.28); background:transparent;
-}
-.hero-orbit::before,.hero-orbit::after {
-  content:"";position:absolute;inset:18%;border:1px solid rgba(182,210,220,.16);border-radius:50%;
-}
-.hero-orbit span { display:none }
-.section-kicker {color:#b7d7cf}
+.hero { align-items:flex-start; margin-bottom:8px; padding:4px 0 24px }
+.hero h1 { font-size:32px; margin:0 0 12px }
 .metric,.panel {
   border:1px solid rgba(170,200,214,.2);border-radius:8px;background:var(--surface);
 }
-.metric { position:relative;overflow:hidden;min-height:147px }
+.metric { position:relative;min-height:147px }
+.metric-head { padding-right:34px; min-height:28px; margin-bottom:20px }
 .metric-label {color:#c5d5df}
+#metric-stages,#metric-attacks {font:inherit;color:inherit;letter-spacing:inherit}
+.metric-help summary {
+  position:absolute;top:16px;right:16px;display:grid;place-items:center;
+  width:28px;height:28px;list-style:none;border:1px solid var(--line-light);
+  border-radius:50%;font:12px var(--mono);color:var(--muted);cursor:pointer;
+}
+.metric-help summary::-webkit-details-marker {display:none}
+.metric-help summary:hover,.metric-help[open] summary {color:var(--ink);border-color:var(--mint)}
+.metric-help summary:focus-visible {outline:2px solid var(--mint);outline-offset:3px;scroll-margin:12px}
+.metric-help p {margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);font:12px/1.7 var(--font);color:var(--muted)}
 .system-item,.record {border-color:rgba(148,180,196,.16)}
 .panel-head {padding-top:23px}
 .strip,.install-panel,.device-panel {
@@ -49,18 +46,11 @@ button.secondary:hover,.export-button:hover {background:rgba(159,212,200,.1)}
 table th {background:#132636;color:#b7c9d4}
 tbody tr:hover {background:rgba(159,212,200,.06)}
 .table-wrap {scrollbar-color:#3d6270 var(--surface)}
-@media(max-width:1160px) {.hero-orbit {right:-48px;opacity:.16}}
 @media(max-width:900px) {
-  .hero { align-items:flex-start; flex-direction:column; min-height:auto }
-  .hero-orbit { right:-72px; top:-64px; width:220px; height:220px; opacity:.22 }
+  .hero { align-items:flex-start; flex-direction:column }
 }
 @media(max-width:730px) {
-  body {background-attachment:scroll}
-  .hero {min-height:auto;padding:25px 20px;border-radius:8px;align-items:flex-start}
-  .hero-orbit {right:-108px;top:-76px;width:240px;height:240px;opacity:.24}
+  .hero h1 {font-size:30px}
   .metric {min-height:120px}
-}
-@media(prefers-reduced-motion:reduce) {
-  .metric,.metric:hover {transition:none;transform:none}
-  .hero-orbit::after, .hero-orbit span {animation:none}
+  .metric-help summary {top:12px;right:12px}
 }

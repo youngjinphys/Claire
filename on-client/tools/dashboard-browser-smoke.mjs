@@ -81,8 +81,9 @@ async function main() {
     await observed("document.readyState === 'complete' && document.querySelectorAll('[data-host-card]').length === 4 && document.querySelectorAll('.metric-card').length === 3", 'four host cards and three resource cards');
     assert.equal(await evaluate("document.getElementById('cpu-value').textContent"), '확인 불가');
     await observed("document.getElementById('events-origin').textContent.includes('예제 DEMO')", 'DEMO evidence');
-    await evaluate("document.getElementById('sample-once').click()");
-    await observed("document.getElementById('cpu-time').textContent !== '미측정' && !document.getElementById('sample-once').disabled", 'PC measurement', 20000);
+    await evaluate("document.getElementById('sample-once').focus();document.getElementById('sample-once').click()");
+    await observed("document.getElementById('cpu-time').textContent !== '미측정' && document.getElementById('sample-once').getAttribute('aria-disabled') === 'false'", 'PC measurement', 20000);
+    assert.equal(await evaluate('document.activeElement.id'), 'sample-once', 'one-shot completion must retain keyboard focus');
     assert.equal(await evaluate("document.getElementById('disk-unit').textContent"), 'GiB');
     assert.match(await evaluate("document.querySelector('[data-host-card=sdp]').textContent"), /DEMO/);
     // Explicitly selected synthetic file tests the real student file reader,
@@ -119,13 +120,15 @@ async function main() {
       window.fetch = (path, options) => path === '/api/events'
         ? new Promise(resolve => { window.__qaReleaseEvents = () => resolve(window.__qaFetch(path, options)); })
         : window.__qaFetch(path, options);
+      document.getElementById('refresh-security').focus();
       document.getElementById('refresh-security').click();
     })()`);
     await observed("document.getElementById('sdp-policy-detail').textContent.includes('예제 DEMO') && !document.getElementById('sdp-policy-detail').textContent.includes('조회 중') && document.getElementById('records-panel').getAttribute('aria-busy') === 'true'", 'independent SDP completion');
     await evaluate("document.getElementById('event-filter').value='xdr';document.getElementById('event-filter').dispatchEvent(new Event('change'))");
     assert.match(await evaluate("document.getElementById('events-note').textContent"), /조회 중/);
     await evaluate("window.__qaReleaseEvents();window.fetch=window.__qaFetch;delete window.__qaReleaseEvents;delete window.__qaFetch");
-    await observed("!document.getElementById('refresh-security').disabled", 'SDP refresh completed');
+    await observed("document.getElementById('refresh-security').getAttribute('aria-disabled') === 'false'", 'SDP refresh completed');
+    assert.equal(await evaluate('document.activeElement.id'), 'refresh-security', 'security refresh must retain keyboard focus');
 
     // Simulate a disconnected adapter response while keeping the selected local
     // report and keyboard disclosure intact. Restore normal same-origin fetch after it.
@@ -137,18 +140,18 @@ async function main() {
         : window.__qaFetch(path, options);
       document.getElementById('refresh-security').click();
     })()`);
-    await observed("!document.getElementById('refresh-security').disabled && document.querySelector('[data-host-card=sdp]').textContent.includes('SDP 미연결')", 'SDP disconnected independently from report');
+    await observed("document.getElementById('refresh-security').getAttribute('aria-disabled') === 'false' && document.querySelector('[data-host-card=sdp]').textContent.includes('SDP 미연결')", 'SDP disconnected independently from report');
     assert.equal(await evaluate("document.querySelector('#host-report-content details').open"), true);
     assert.equal(await evaluate("document.activeElement === document.querySelector('#host-report-content details summary')"), true);
     assert.match(await evaluate("document.querySelector('[data-host-card=network]').textContent"), /1개 인터페이스/);
     await evaluate("window.fetch=window.__qaFetch;delete window.__qaFetch;document.getElementById('refresh-security').click()");
-    await observed("!document.getElementById('refresh-security').disabled && document.querySelector('[data-host-card=sdp]').textContent.includes('DEMO')", 'manual SDP restoration');
+    await observed("document.getElementById('refresh-security').getAttribute('aria-disabled') === 'false' && document.querySelector('[data-host-card=sdp]').textContent.includes('DEMO')", 'manual SDP restoration');
 
     await evaluate("document.getElementById('start').click()");
-    await observed("!document.getElementById('stop').disabled", 'start control');
+    await observed("document.getElementById('stop').getAttribute('aria-disabled') === 'false'", 'start control');
     await observed("Number.parseInt(document.getElementById('sample-count').textContent,10) >= 2", 'sample history', 20000);
     await evaluate("document.getElementById('stop').click()");
-    await observed("!document.getElementById('start').disabled && document.getElementById('stop').disabled", 'stop control');
+    await observed("document.getElementById('start').getAttribute('aria-disabled') === 'false' && document.getElementById('stop').getAttribute('aria-disabled') === 'true'", 'stop control');
     // A blocked local download is reported, without a JS exception or data loss.
     await evaluate(`(() => {
       const original = URL.createObjectURL;
@@ -203,6 +206,23 @@ async function main() {
     assert.equal(narrow.viewport, 320);
     assert.equal(narrow.cards, 4);
     assert.ok(narrow.width <= narrow.viewport + 4, '320px overflow: ' + JSON.stringify(narrow));
+    for (const width of [320, 390, 768, 1440]) {
+      await cmd('Emulation.setDeviceMetricsOverride', { width, height:900, deviceScaleFactor:1, mobile:false });
+      await sleep(200);
+      const axis = await evaluate(`(() => {
+        const plot = document.getElementById('resource-chart');
+        const label = plot.querySelector('text');
+        const bounds = plot.getBoundingClientRect();
+        const lines = [...plot.querySelectorAll('line')].map(line => {
+          const point = new DOMPoint(Number(line.getAttribute('x1')), Number(line.getAttribute('y1')));
+          return point.matrixTransform(line.getScreenCTM()).y;
+        });
+        return { labelSize: Number.parseFloat(getComputedStyle(label).fontSize) * label.getScreenCTM().a,
+          plotHeight: Math.max(...lines) - Math.min(...lines), height: bounds.height };
+      })()`);
+      assert.ok(axis.labelSize >= 11, `${width}px axis lettering is too small: ${JSON.stringify(axis)}`);
+      assert.ok(axis.plotHeight >= axis.height - 40, `${width}px plot must use its chart height: ${JSON.stringify(axis)}`);
+    }
 
     // Native Tab focus scrolling must keep up with rapid keyboard navigation.
     // Check the next painted frame, not a timeout long enough to hide smooth-scroll lag.
@@ -309,14 +329,19 @@ async function main() {
             width: r.width, height: r.height,
           }; }) };
       })()`);
-      const expectedOrientation = 'vertical';
+      const expectedOrientation = width <= 1023 ? 'horizontal' : 'vertical';
       assert.equal(nav.orientation, expectedOrientation, `${width}px tablist orientation must match its visual layout`);
       assert.equal(nav.viewport, width);
       assert.equal(nav.tabs.length, 3);
       assert.ok(nav.scrollWidth <= width + 1, `${width}px document overflow`);
       for (const tab of nav.tabs) assert.ok(tab.width > 0 && tab.height > 0 && tab.left >= 0 && tab.right <= width + 1, `${width}px tab must be visible`);
-      assert.equal(new Set(nav.tabs.map(tab => tab.left)).size, 1, `${width}px tabs must share one column`);
-      assert.ok(nav.tabs[0].bottom <= nav.tabs[1].top && nav.tabs[1].bottom <= nav.tabs[2].top, `${width}px tabs must not overlap`);
+      if (expectedOrientation === 'vertical') {
+        assert.equal(new Set(nav.tabs.map(tab => tab.left)).size, 1, `${width}px tabs must share one column`);
+        assert.ok(nav.tabs[0].bottom <= nav.tabs[1].top && nav.tabs[1].bottom <= nav.tabs[2].top, `${width}px tabs must not overlap`);
+      } else {
+        assert.equal(new Set(nav.tabs.map(tab => tab.top)).size, 1, `${width}px tabs must share one row`);
+        assert.ok(nav.tabs[0].right <= nav.tabs[1].left && nav.tabs[1].right <= nav.tabs[2].left, `${width}px tabs must not overlap`);
+      }
       if (height === 320) assert.ok(nav.mainTop < height - 50, 'landscape main content should start within the viewport');
       const axTree = await cmd('Accessibility.getFullAXTree');
       const axNav = axTree.nodes.find(node => node.role?.value === 'tablist');
@@ -324,15 +349,51 @@ async function main() {
       assert.equal(axNav?.properties?.find(property => property.name === 'orientation')?.value?.value,
         expectedOrientation, `${width}px accessibility tree orientation`);
       await evaluate("document.getElementById('tab-protection').click();document.getElementById('tab-protection').focus()");
-      for (const [key, expected] of [['ArrowRight','tab-apps'], ['ArrowDown','tab-records'], ['ArrowLeft','tab-apps'], ['ArrowUp','tab-protection']]) {
+      const [forward, back] = expectedOrientation === 'horizontal' ? ['ArrowRight', 'ArrowLeft'] : ['ArrowDown', 'ArrowUp'];
+      for (const [key, expected] of [[forward,'tab-apps'], [forward,'tab-records'], [back,'tab-apps'], [back,'tab-protection']]) {
         await cmd('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code: key });
         await cmd('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key });
         assert.equal(await evaluate('document.activeElement?.id'), expected, `${width}px ${key} focus`);
         assert.equal(await evaluate("document.activeElement?.getAttribute('aria-selected')"), 'true', `${width}px ${key} selection`);
       }
     }
+    // Keep access requests single-flight without removing the focused button.
+    // A delayed verdict must preserve a user's subsequent focus choice.
+    await evaluate(`(() => {
+      window.__qaFetch = window.fetch;
+      window.__qaAccessCalls = 0;
+      window.fetch = (path, options) => path === '/api/access'
+        ? new Promise(resolve => {
+          window.__qaAccessCalls++;
+          window.__qaReleaseAccess = () => resolve(window.__qaFetch(path, options));
+        }) : window.__qaFetch(path, options);
+      document.getElementById('tab-apps').click();
+      const button = document.querySelector('#apps .app-button');
+      button.focus(); button.click(); button.click();
+    })()`);
+    await observed("document.getElementById('access-result').dataset.decision === 'pending'", 'access pending');
+    assert.equal(await evaluate('window.__qaAccessCalls'), 1, 'pending access must not send duplicate requests');
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#apps .app-button')"), true, 'pending access retains its keyboard target');
+    await evaluate("document.getElementById('refresh').focus();window.__qaReleaseAccess()");
+    await observed("document.getElementById('access-result').dataset.decision === 'allow'", 'demo access allowed');
+    assert.equal(await evaluate('document.activeElement.id'), 'refresh', 'delayed access must not steal focus');
+    await evaluate("window.fetch=window.__qaFetch;delete window.__qaFetch;delete window.__qaReleaseAccess;delete window.__qaAccessCalls");
+    // One common connection failure names all affected resources once.
+    await evaluate(`(() => {
+      window.__qaFetch = window.fetch;
+      window.fetch = (path, options) => ['/api/me','/api/apps','/api/events','/api/devices','/api/sessions'].includes(path)
+        ? Promise.resolve(new Response(JSON.stringify({ok:false,error:{code:'ENGINE_NOT_CONNECTED',message:'예제 연결 실패'},meta:{mode:'disconnected',checkedAt:new Date().toISOString()}}),{status:503,headers:{'content-type':'application/json'}}))
+        : window.__qaFetch(path, options);
+      document.getElementById('refresh').click();
+    })()`);
+    await observed("!document.getElementById('refresh').disabled && document.getElementById('mode-badge').dataset.mode === 'disconnected'", 'common connection failure');
+    assert.equal(await evaluate("document.querySelectorAll('#error-message li').length"), 1, 'identical failures should share one explanation');
+    const errorSummary = await evaluate("document.getElementById('error-message').textContent");
+    for (const label of ['로그인 정보', '업무 앱', '보안 기록', '기기', '세션']) assert.ok(errorSummary.includes(label), 'failure summary retains ' + label);
+    await evaluate("window.fetch=window.__qaFetch;delete window.__qaFetch;document.getElementById('refresh').click()");
+    await observed("!document.getElementById('refresh').disabled && document.getElementById('error-message').hidden", 'manual connection retry clears common failure');
     assert.deepEqual(errors, [], 'no browser JS exceptions');
-    console.log('PASS browser: independent SDP reads, pending filter state, keyboard focus/disclosure preservation, local JSON saved, download failure recovery, 1440/390/320 layouts, responsive tab orientation and arrow keys, original-page navigation, zero JS exceptions.');
+    console.log('PASS browser: independent SDP reads, pending filter state, keyboard focus/disclosure preservation, local JSON saved, download failure recovery, 1440/390/320 layouts, responsive tab orientation and arrow keys, single-flight access, focus-preserving verdict, grouped failures and manual retry, original-page navigation, zero JS exceptions.');
     console.log('Screenshots (synthetic SDP only; OS figures are from the CI runner): ' + captures);
   } finally {
     if (socket?.readyState === WebSocket.OPEN) socket.close();

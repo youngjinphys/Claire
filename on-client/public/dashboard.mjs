@@ -225,9 +225,11 @@ async function fetchJson(path, controller) {
 }
 
 function updateControls() {
-  $('start').disabled = observing || busy;
-  $('stop').disabled = !observing && !busy;
-  $('sample-once').disabled = observing || busy;
+  // Keep the initiating control focusable while its operation changes state.
+  // Click handlers enforce these states for pointer and keyboard activation.
+  $('start').setAttribute('aria-disabled', String(observing || busy));
+  $('stop').setAttribute('aria-disabled', String(!observing && !busy));
+  $('sample-once').setAttribute('aria-disabled', String(observing || busy));
   document.body.dataset.running = String(observing);
   // An HTTP success does not imply that even one sensor returned a reading.
   // Header state must agree with the individual cards and their freshness.
@@ -311,14 +313,18 @@ function svg(tag, attrs = {}, label = null) {
 function renderChart() {
   const plot = $('resource-chart');
   if (!plot) return;
-  const left = 36, top = 16, right = 901, bottom = 232;
+  const width = plot.clientWidth || 920;
+  const height = 224;
+  // Match SVG coordinates to CSS pixels so labels keep their size on mobile.
+  plot.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+  const left = 40, top = 16, right = width - 12, bottom = height - 16;
   const now = Date.now();
   history = history.filter(point => point.time >= now - HISTORY_WINDOW_MS && point.time <= now + 1000);
   const elements = [];
   for (const percent of [0, 25, 50, 75, 100]) {
     const y = bottom - percent / 100 * (bottom - top);
     elements.push(svg('line', { x1: left, y1: y, x2: right, y2: y, stroke: 'rgba(164,195,223,.16)', 'stroke-dasharray': percent ? '3 6' : 'none' }));
-    elements.push(svg('text', { x: 2, y: y + 4, fill: '#8195ae', 'font-size': 12 }, percent + '%'));
+    elements.push(svg('text', { x: left - 8, y: y + 4, fill: '#a5b4c9', 'font-size': 12, 'text-anchor': 'end' }, percent + '%'));
   }
   const chartSeries = [
     { key: 'cpu', color: '#85efd7' },
@@ -511,7 +517,7 @@ async function refreshSecurity() {
   const controller = new AbortController();
   activeEventRequest = controller;
   securityPending = { identity: true, events: true };
-  $('refresh-security').disabled = true;
+  $('refresh-security').setAttribute('aria-disabled', 'true');
   showSecurity(); redrawEvents();
   const read = async path => {
     const requestedAt = Date.now();
@@ -544,7 +550,7 @@ async function refreshSecurity() {
   } finally {
     if (token === eventGeneration) {
       activeEventRequest = null;
-      $('refresh-security').disabled = false;
+      $('refresh-security').setAttribute('aria-disabled', 'false');
     }
   }
 }
@@ -651,13 +657,18 @@ $('start').addEventListener('click', () => {
   set('page-notice', '실제 PC 자원 측정 중 · 최초 CPU 사용률을 얻기 위해 두 OS 표본을 관측합니다.');
   void measureOnce();
 });
-$('stop').addEventListener('click', () => stopObserving());
+$('stop').addEventListener('click', () => {
+  if (observing || busy) stopObserving();
+});
 $('sample-once').addEventListener('click', () => {
   if (!observing && !busy) { generation += 1; void measureOnce(); }
 });
-$('refresh-security').addEventListener('click', () => { void refreshSecurity(); });
+$('refresh-security').addEventListener('click', () => {
+  if (!securityPending.identity && !securityPending.events) void refreshSecurity();
+});
 $('event-filter').addEventListener('change', redrawEvents);
 $('export-measurements').addEventListener('click', downloadMeasurements);
+window.addEventListener('resize', renderChart);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     if (observing || busy) stopObserving('브라우저 탭이 숨겨져 관측을 중지했습니다. 재개하려면 관측 시작을 누르세요.');
@@ -680,7 +691,7 @@ window.addEventListener('pagehide', () => {
   activeEventRequest?.abort();
   activeEventRequest = null;
   securityPending = { identity: false, events: false };
-  $('refresh-security').disabled = false;
+  $('refresh-security').setAttribute('aria-disabled', 'false');
   $('records-panel').setAttribute('aria-busy', 'false');
   if (scheduled) clearTimeout(scheduled);
   stopFreshnessTimer();

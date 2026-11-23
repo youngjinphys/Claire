@@ -48,12 +48,10 @@
       <main id="dashboard">
         <div class="heading-row">
           <div>
-            <p class="section-index">시스템 개요</p>
             <h1>Claire 통합 관제</h1>
             <p class="lede">네트워크 · 방화벽 · Windows 기록 · SDP를 한 화면에서 확인하고, 아래에서 CPU·메모리·디스크 추이와 보안 기록을 살펴봅니다.</p>
             <p class="runtime-note">측정 대상: Node 서버 실행 환경. WSL·컨테이너·가상 머신에서는 물리 PC 전체와 다를 수 있습니다.</p>
           </div>
-
         </div>
 
         <section class="panel integrated-host" id="host-panel" aria-labelledby="host-overview-title">
@@ -81,13 +79,12 @@
         <section class="resource-panel" id="resource-panel" aria-labelledby="resource-title">
           <div class="resource-heading">
             <div>
-              <p class="section-index">이 PC의 자원</p>
               <h2 id="resource-title">CPU · 메모리 · 디스크</h2>
               <p>로컬 Node 서버가 실행되는 환경의 OS 실측 · 위의 선택 JSON 보고서와는 수집 시각·출처가 다를 수 있습니다.</p>
             </div>
           <div class="toolbar" aria-label="관측 제어">
             <button id="sample-once" class="button ghost" type="button">한 번 측정</button>
-            <button id="stop" class="button ghost" type="button" disabled>관측 중지</button>
+            <button id="stop" class="button ghost" type="button" aria-disabled="true">관측 중지</button>
             <button id="start" class="button primary" type="button">관측 시작</button>
           </div>
           </div>
@@ -95,21 +92,21 @@
 
         <section class="metrics-grid resource-metrics" aria-label="PC 자원 실측 카드 3개">
           <article class="metric-card" id="cpu-card" data-state="unavailable">
-            <div class="metric-top"><h2>CPU 사용률</h2><span class="metric-icon" aria-hidden="true">01</span></div>
+            <div class="metric-top"><h2>CPU 사용률</h2></div>
             <div class="metric-reading"><strong id="cpu-value">확인 불가</strong><span id="cpu-unit">%</span></div>
             <p class="metric-detail" id="cpu-detail">두 시점의 OS 누적 시간 차이</p>
             <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="cpu-time">미측정</span></div>
             <p class="metric-reason" id="cpu-reason">관측 시작 전</p>
           </article>
           <article class="metric-card" id="memory-card" data-state="unavailable">
-            <div class="metric-top"><h2>메모리 사용률</h2><span class="metric-icon" aria-hidden="true">02</span></div>
+            <div class="metric-top"><h2>메모리 사용률</h2></div>
             <div class="metric-reading"><strong id="memory-value">확인 불가</strong><span id="memory-unit">%</span></div>
             <p class="metric-detail" id="memory-detail">os.freemem 기준 · OS별 캐시 처리 상이</p>
             <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="memory-time">미측정</span></div>
             <p class="metric-reason" id="memory-reason">관측 시작 전</p>
           </article>
           <article class="metric-card" id="disk-card" data-state="unavailable">
-            <div class="metric-top"><h2>디스크 여유 공간</h2><span class="metric-icon" aria-hidden="true">03</span></div>
+            <div class="metric-top"><h2>디스크 여유 공간</h2></div>
             <div class="metric-reading"><strong id="disk-value">확인 불가</strong><span id="disk-unit">GiB</span></div>
             <p class="metric-detail" id="disk-detail">앱 폴더가 위치한 파일시스템 기준</p>
             <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="disk-time">미측정</span></div>
@@ -121,14 +118,13 @@
           <section class="panel chart-panel" aria-labelledby="trend-title">
             <div class="panel-heading">
               <div>
-                <p class="section-index">자원 이력</p>
                 <h2 id="trend-title">CPU · 메모리 사용률 추이</h2>
                 <p>실측 표본만 표시 · 최근 10분 · 목표 간격 5초 · 실패 시 수동 재개</p>
               </div>
               <div class="legend" aria-label="차트 계열"><span class="legend-cpu">CPU</span><span class="legend-memory">메모리</span></div>
             </div>
             <div class="chart-frame">
-              <svg id="resource-chart" viewBox="0 0 920 260" role="img" aria-label="최근 10분 CPU 실선·메모리 점선 사용률 차트. 수치·시각은 아래 측정 기록에서 확인." preserveAspectRatio="xMidYMid meet"></svg>
+              <svg id="resource-chart" viewBox="0 0 920 224" role="img" aria-label="최근 10분 CPU 실선·메모리 점선 사용률 차트. 수치·시각은 아래 측정 기록에서 확인." preserveAspectRatio="xMidYMid meet"></svg>
               <div id="chart-empty" class="chart-empty">관측값이 없습니다. 추이를 비교하려면 유효한 표본이 두 개 이상 필요합니다.</div>
             </div>
             <div class="chart-footer"><span>10분 전</span><span>관측값 단위: % · 세로축 0–100</span><span>현재</span></div>
@@ -136,8 +132,7 @@
 
           <aside class="panel insight-panel" aria-labelledby="insight-title">
             <div class="panel-heading">
-              <div><p class="section-index">관측 메모</p><h2 id="insight-title">변화 분석</h2></div>
-              <span class="small-label">수치 기반</span>
+              <div><h2 id="insight-title">변화 분석</h2></div>
             </div>
             <p class="analysis-value" id="trend-headline">표본 대기</p>
             <p class="analysis-copy" id="trend-copy">첫 번째 측정값부터 메모리에 축적됩니다. 두 개 이상의 유효한 관측값이 있어야 변화 폭을 계산할 수 있습니다.</p>
@@ -156,7 +151,6 @@
         <section class="panel host-report-panel" id="host-report-section" aria-labelledby="host-report-title">
           <div class="panel-heading">
             <div>
-              <p class="section-index">데이터 출처</p>
               <h2 id="host-report-title">네트워크 · 방화벽 · Windows 기록 근거</h2>
               <p>선택한 OS 보고서의 세부사항과 이동 집계 비교. 새 관측은 터미널에서 수집기를 직접 실행해야 합니다.</p>
             </div>
@@ -168,7 +162,7 @@
 
         <section class="panel records-panel measurement-log" aria-labelledby="measurement-title">
           <div class="panel-heading">
-            <div><p class="section-index">측정 기록</p><h2 id="measurement-title">추이의 근거 · 측정 기록</h2><p>센서별 시각·단위·실패 이유를 그대로 확인합니다.</p></div>
+            <div><h2 id="measurement-title">측정 기록</h2><p>센서별 시각·단위·실패 이유를 그대로 확인합니다.</p></div>
             <button type="button" class="button ghost" id="export-measurements" disabled>측정 기록 JSON 저장</button>
           </div>
           <p id="measurement-note" class="records-note">관측 기록 없음 · 계정/보안 로그는 내보내지 않습니다.</p>
@@ -186,7 +180,7 @@
 
         <section class="panel records-panel" id="records-panel" aria-labelledby="records-title">
           <div class="panel-heading">
-            <div><p class="section-index">보안 기록</p><h2 id="records-title">최근 접속 · XDR 기록</h2><p>기존 Claire의 본인 범위 조회 재사용 · 최대 40건</p></div>
+            <div><h2 id="records-title">최근 접속 · XDR 기록</h2><p>기존 Claire의 본인 범위 조회 재사용 · 최대 40건</p></div>
             <div class="record-tools">
               <span class="record-origin" id="events-origin">원천 확인 중</span>
               <label for="event-filter">종류</label>

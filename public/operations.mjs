@@ -44,15 +44,50 @@ const modeLabel = mode => mode === 'normal' ? '정상' : '금지';
 const outcomeLabel = status => ({
   verified:'HTTP 일치',failed:'응답 불일치',inconclusive:'판정 보류',unrun:'미실행'
 })[status] || '미실행';
+const outcomes = ['verified','failed','inconclusive','unrun'];
+const optionalText = value => value == null || typeof value === 'string';
+
+function validateSnapshot(body) {
+  if (body?.schema !== 'aleph.operations.snapshot.v1'
+      || !Array.isArray(body.records) || !Array.isArray(body.policy?.rules)
+      || !body.policy.rules.every(rule => typeof rule === 'string')
+      || typeof body.detection?.condition !== 'string' || !body.revocation || !body.recovery
+      || !body.summary || body.verdict?.attackTypesRequired !== 41
+      || body.verdict?.stagesRequired !== 12
+      || !Number.isSafeInteger(body.verdict.stagesVerified)
+      || !Number.isSafeInteger(body.verdict.attackTypesVerified)
+      || !optionalText(body.target) || !optionalText(body.deployCommit)
+      || !optionalText(body.recovery.restoredVersion)) {
+    throw Error('INVALID_EVIDENCE_CONTRACT');
+  }
+  const counts = {verified:0,failed:0,inconclusive:0,unrun:0,httpCount:0};
+  const ids = new Set();
+  for (const record of body.records) {
+    if (typeof record?.id !== 'string' || ids.has(record.id)
+        || !outcomes.includes(record.outcome) || typeof record.method !== 'string'
+        || typeof record.path !== 'string'
+        || !optionalText(record.requestId) || !optionalText(record.checkedAt)
+        || !optionalText(record.errorCode)
+        || (record.httpStatus != null && !Number.isInteger(record.httpStatus))) {
+      throw Error('INVALID_EVIDENCE_CONTRACT');
+    }
+    ids.add(record.id);
+    counts[record.outcome]++;
+    if (Number.isInteger(record.httpStatus)) counts.httpCount++;
+  }
+  if (!Object.entries(counts).every(([key,value]) => value === body.summary[key])) {
+    throw Error('SERVER_RECORD_COUNT_MISMATCH');
+  }
+}
+
 function dataCell(tr, cls, value) { tr.append($('td',cls,value)); }
 function createChart(onFilter) {
   const svg=byId('outcomes-chart');
   svg.replaceChildren();
-  const outcomes=['verified','failed','inconclusive','unrun'];
   const labels=['HTTP 일치','불일치','보류','미실행'];
   const colors=['#9fd4c8','#e09898','#e2ad72','#8ea0ad'];
   svg.setAttribute('viewBox','0 0 580 240');
-  svg.setAttribute('role','img');
+  svg.setAttribute('role','group');
   const NS='http://www.w3.org/2000/svg';
   const element=(tag,attrs={},content)=>{const el=doc.createElementNS(NS,tag);
     for(const [k,v] of Object.entries(attrs))el.setAttribute(k,String(v));
@@ -74,9 +109,13 @@ function createChart(onFilter) {
     g.append(hit,rect,value);
     g.append(element('text',{class:'chart-label',x:x+36,y:216,fill:'#9daeb6','text-anchor':'middle','font-size':'12'},labels[i]));
     g.append(title);
-    const pick=()=>onFilter(outcome);
-    g.addEventListener('click',pick);
-    g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();pick();}});
+    g.addEventListener('click',()=>onFilter(outcome,false));
+    g.addEventListener('keydown',e=>{
+      if(e.key==='Enter'||e.key===' '){
+        e.preventDefault();
+        onFilter(outcome,true);
+      }
+    });
     svg.append(g);
     return {g,rect,value,title};
   });
@@ -102,6 +141,7 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
   const stage=byId('filter-stage'),kind=byId('filter-kind'),outcome=byId('filter-state');
   const table=byId('evidence-body');
   const count=byId('table-count');
+  const exportButton=byId('ops-export');
   function rows() {
     const records=new Map(snapshot?.records.map(x=>[x.id,x])||[]);
     const filtered=cases.filter(c=>(stage.value==='all'||String(c.stage)===stage.value)
@@ -123,6 +163,13 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
       dataCell(tr,'data-mono',fmtTime(r?.checkedAt));
       table.append(tr);
     }
+    if (!filtered.length) {
+      const row = $('tr');
+      const message = $('td','table-empty','조건에 맞는 항목이 없습니다.');
+      message.colSpan = 8;
+      row.append(message);
+      table.append(row);
+    }
     count.textContent=filtered.length+' / '+cases.length+' 항목 · 현재 배포만 관측';
   }
   function showRecords(records){
@@ -141,11 +188,6 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
     }
   }
   function render(x) {
-    const counts={verified:0,failed:0,inconclusive:0,unrun:0};
-    for(const r of x.records) if(Object.hasOwn(counts,r.outcome)) counts[r.outcome]++;
-    const good=Object.entries(counts).every(([k,v])=>v===x.summary[k]);
-    if(!good)throw Error('SERVER_RECORD_COUNT_MISMATCH');
-    snapshot=x;
     byId('metric-observed').textContent=String(x.summary.httpCount);
     byId('metric-verified').textContent=String(x.summary.verified);
     byId('metric-stages').textContent=String(x.verdict.stagesVerified);
@@ -158,16 +200,19 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
     byId('ops-revocation').textContent=x.revocation.executed===true?'회수 집행 증거 필요':'실제 집행 미검증';
     byId('ops-recovery').textContent=x.recovery.restoredVersion||'운영 복구 버전 미검증';
     byId('ops-info').textContent= '서버 HTTP '+x.summary.httpCount+'건 · 불일치 '+x.summary.failed+'건 · 판정보류 '+x.summary.inconclusive+'건';
-    byId('ops-state').textContent= '실측 관측 완료 · 공식 심판 판정 별도';
-    byId('ops-state').classList.remove('status-failed');
+    snapshot=x;
     paintChart();
     showRecords(x.records);
     rows();
+    exportButton.disabled=false;
+    byId('ops-state').textContent= '실측 관측 완료 · 공식 심판 판정 별도';
+    byId('ops-state').classList.remove('status-failed');
   }
+  const button=byId('ops-refresh');
   async function refresh(){
     const current=++requestNumber;
-    const button=byId('ops-refresh');
-    button.disabled=true;button.classList.add('loading');
+    button.setAttribute('aria-disabled','true');
+    byId('ops-state').classList.remove('status-failed');
     byId('ops-state').textContent='HTTP 관측 중 · 완료 전 수치 변경 없음';
     try {
       const token=getToken();
@@ -177,29 +222,34 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null}={}) {
         const proof=getDeviceProof();
         if(typeof proof==='string'&&proof)headers['x-aleph-device-proof']=proof;
       }
-      const response=await fetch('/api/ops',{method:'GET',headers,cache:'no-store',redirect:'error'});
+      const response=await fetch('/api/ops',{
+        method:'GET',headers,cache:'no-store',redirect:'error',signal:AbortSignal.timeout(12000),
+      });
       if(!response.ok)throw Error('HTTP_'+response.status);
       const body=await response.json();
-      if(body.schema!=='aleph.operations.snapshot.v1'||!Array.isArray(body.records)
-         ||!body.summary||!body.verdict||body.verdict.attackTypesRequired!==41
-         ||body.verdict.stagesRequired!==12)throw Error('INVALID_EVIDENCE_CONTRACT');
       if(current!==requestNumber)return;
+      validateSnapshot(body);
       render(body);
     }catch(error){
       if(current!==requestNumber)return;
-      byId('ops-state').textContent='증거 조회 실패 ('+String(error.message).slice(0,80)+') — 이전 관측을 새 결과로 취급하지 않음';
+      const code=/^(?:HTTP_\d{3}|INVALID_EVIDENCE_CONTRACT|SERVER_RECORD_COUNT_MISMATCH)$/u.test(error?.message)
+        ? ' ('+error.message+')' : '';
+      byId('ops-state').textContent='증적 조회 실패'+code+(snapshot?' · 마지막으로 받은 기록을 표시합니다.':' · 다시 시도할 수 있습니다.');
       byId('ops-state').classList.add('status-failed');
-      if(!snapshot){byId('metric-observed').textContent='—';byId('metric-verified').textContent='—';}
-    }finally{if(current===requestNumber){button.disabled=false;button.classList.remove('loading');}}
+      if(!snapshot)byId('ops-info').textContent='받은 HTTP 기록 없음';
+    }finally{if(current===requestNumber)button.setAttribute('aria-disabled','false');}
   }
-  const updateChart=createChart(value=>{
+  const updateChart=createChart((value,keyboard)=>{
     stage.value='all';kind.value='all';outcome.value=value;rows();
-    byId('evidence').scrollIntoView({block:'start',behavior:'auto'});
+    if (keyboard) byId('evidence-title').focus?.({preventScroll:true});
+    byId('evidence').scrollIntoView({block:'start',behavior:keyboard?'instant':'auto'});
   });
   const paintChart=()=>updateChart({records:snapshot?.records||[]});
   for(const item of [stage,kind,outcome])item.addEventListener('change',rows);
-  byId('ops-refresh').addEventListener('click',refresh);
-  byId('ops-export').addEventListener('click',()=>{
+  button.addEventListener('click',()=>{
+    if(button.getAttribute('aria-disabled')!=='true')void refresh();
+  });
+  exportButton.addEventListener('click',()=>{
     if(!snapshot)return;
     const data=JSON.stringify(snapshot,null,2)+'\n';
     const url=URL.createObjectURL(new Blob([data],{type:'application/json'}));

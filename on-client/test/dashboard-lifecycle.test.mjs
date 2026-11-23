@@ -11,6 +11,7 @@ class Element {
   appendChild(child){this.append(child);return child}
   replaceChildren(...children){this.children=children}
   setAttribute(name,value){this[name]=String(value)}
+  getAttribute(name){return this[name] ?? null}
   removeAttribute(name){delete this[name]}
   addEventListener(name,fn){this.handlers.set(name,fn)}
   removeEventListener(name){this.handlers.delete(name)}
@@ -56,16 +57,18 @@ function result(){
 }
 test('one-shot/start race cannot strand busy=true',async(t)=>{
   const b=await browser();t.after(()=>b.window.handlers.get('pagehide')?.({persisted:false}));b.get('sample-once').click();
-  assert.equal(b.get('start').disabled,true,'start must be disabled while a one-shot owns the request');
-  b.get('start').click(); b.requests[0](result());await flush();
-  assert.equal(b.get('sample-once').disabled,false);
+  assert.equal(b.get('start').getAttribute('aria-disabled'),'true','start must be disabled while a one-shot owns the request');
+  b.get('start').click(); b.get('sample-once').click();
+  assert.equal(b.requests.length,1,'unavailable controls cannot duplicate the in-flight measurement');
+  b.requests[0](result());await flush();
+  assert.equal(b.get('sample-once').getAttribute('aria-disabled'),'false');
   b.get('start').click();assert.equal(b.requests.length,2);
 });
 test('pagehide followed by persisted pageshow restores manual controls without auto-retry',async(t)=>{
   const b=await browser();t.after(()=>b.window.handlers.get('pagehide')?.({persisted:false}));b.get('start').click();
   b.window.handlers.get('pagehide')?.({persisted:true});
   b.window.handlers.get('pageshow')?.({persisted:true});await flush();
-  assert.equal(b.get('start').disabled,false);
+  assert.equal(b.get('start').getAttribute('aria-disabled'),'false');
   assert.equal(b.requests.length,1,'restoring the page must not restart measurement automatically');
   b.get('start').click();assert.equal(b.requests.length,2);
 });
@@ -81,7 +84,7 @@ test('cancelled old response cannot overwrite a new measurement',async(t)=>{
   const shown=b.get('cpu-value').textContent;
   b.requests[0](new Response('not-json',{headers:{'content-type':'application/json'}}));await flush();
   assert.equal(b.get('cpu-value').textContent,shown);
-  assert.equal(b.get('sample-once').disabled,false);
+  assert.equal(b.get('sample-once').getAttribute('aria-disabled'),'false');
 });
 test('partial sensor failure stops polling but preserves other measured values',async(t)=>{
   const b=await browser();t.after(()=>b.window.handlers.get('pagehide')?.({persisted:false}));
@@ -90,14 +93,14 @@ test('partial sensor failure stops polling but preserves other measured values',
   b.requests[0](new Response(JSON.stringify(data),{headers:{'content-type':'application/json'}}));await flush();
   assert.equal(b.get('cpu-value').textContent,'30.0');
   assert.equal(b.get('disk-value').textContent,'확인 불가');
-  assert.equal(b.get('start').disabled,false);
+  assert.equal(b.get('start').getAttribute('aria-disabled'),'false');
   assert.equal([...b.timers.values()].some(timer=>timer.type==='timeout'),false,'no automatic retry timer');
 });
 test('hidden tab cancels an in-flight one-shot and permits explicit recovery',async(t)=>{
   const b=await browser();t.after(()=>b.window.handlers.get('pagehide')?.({persisted:false}));
   b.get('sample-once').click();b.document.hidden=true;
   b.document.handlers.get('visibilitychange')?.();await flush();
-  assert.equal(b.get('start').disabled,false);assert.equal(b.get('sample-once').disabled,false);
+  assert.equal(b.get('start').getAttribute('aria-disabled'),'false');assert.equal(b.get('sample-once').getAttribute('aria-disabled'),'false');
   assert.equal(b.requests.length,1);
   b.document.hidden=false;b.document.handlers.get('visibilitychange')?.();
   assert.equal(b.requests.length,1,'showing a tab does not restart reads');

@@ -400,8 +400,13 @@ function renderErrors() {
     box.replaceChildren();
     return;
   }
-  const items = [...state.errors].map(([key, message]) =>
-    el('li', {}, [el('strong', { text: `${RESOURCE_LABELS[key] || key}: ` }), message]),
+  const groups = new Map();
+  for (const [key, message] of state.errors) {
+    if (!groups.has(message)) groups.set(message, []);
+    groups.get(message).push(RESOURCE_LABELS[key] || key);
+  }
+  const items = [...groups].map(([message, labels]) =>
+    el('li', {}, [el('strong', { text: `${labels.join(' · ')}: ` }), message]),
   );
   setChildren(box, el('ul', {}, items));
   box.hidden = false;
@@ -421,14 +426,19 @@ function selectView(view, { focus = false } = {}) {
 }
 
 function setupNav() {
+  const nav = $('nav');
+  const compact = window.matchMedia('(max-width: 1023px)');
+  const syncOrientation = () => nav.setAttribute('aria-orientation', compact.matches ? 'horizontal' : 'vertical');
+  syncOrientation();
+  compact.addEventListener('change', syncOrientation);
   const tabs = [...document.querySelectorAll('#nav [role="tab"]')];
   for (const tab of tabs) {
     tab.addEventListener('click', () => selectView(tab.dataset.view));
     tab.addEventListener('keydown', (event) => {
       const index = tabs.indexOf(tab);
       let next = null;
-      if (event.key === 'ArrowDown' || event.key === 'ArrowRight') next = tabs[(index + 1) % tabs.length];
-      else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') next = tabs[(index - 1 + tabs.length) % tabs.length];
+      if (event.key === (compact.matches ? 'ArrowRight' : 'ArrowDown')) next = tabs[(index + 1) % tabs.length];
+      else if (event.key === (compact.matches ? 'ArrowLeft' : 'ArrowUp')) next = tabs[(index - 1 + tabs.length) % tabs.length];
       else if (event.key === 'Home') next = tabs[0];
       else if (event.key === 'End') next = tabs[tabs.length - 1];
       if (!next) return;
@@ -831,7 +841,7 @@ function renderApps() {
             testid: `app-access-${app.id}`,
             'data-app-id': app.id,
             text: `${app.name || app.id} 접속 요청`,
-            onclick: (event) => requestAccess(app.id, app.name || app.id, event.currentTarget),
+            onclick: () => requestAccess(app.id, app.name || app.id),
           }),
         ]),
       ),
@@ -839,11 +849,11 @@ function renderApps() {
   );
 }
 
-async function requestAccess(appId, appName, button) {
+async function requestAccess(appId, appName) {
+  if (accessController) return;
   const gen = generation;
   const buttons = document.querySelectorAll('#apps .app-button');
-  for (const b of buttons) b.disabled = true;
-  if (accessController) accessController.abort();
+  for (const b of buttons) b.setAttribute('aria-disabled', 'true');
   const controller = new AbortController();
   accessController = controller;
   state.access = { status: 'loading', appId, appName };
@@ -861,8 +871,7 @@ async function requestAccess(appId, appName, button) {
     renderStudent('decision');
   } finally {
     if (accessController === controller) accessController = null;
-    for (const b of buttons) b.disabled = false;
-    if (gen === generation && button && document.body.contains(button)) button.focus();
+    for (const b of buttons) b.removeAttribute('aria-disabled');
   }
 }
 
