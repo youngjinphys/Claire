@@ -1,5 +1,5 @@
 import {
-  appendSample, appendGap, trendSummary, normalizeSnapshot, normalizeSecurity, normalizeEvents,
+  appendSample, appendGap, trendSummary, completedTrendSummary, normalizeSnapshot, normalizeSecurity, normalizeEvents, localTransportReason,
   HISTORY_WINDOW_MS, seriesSegments, pairedSamples,
   requestDashboardJson, exportMeasurements, readingFreshness, trimHistory,
 } from '/dashboard-model.mjs';
@@ -33,6 +33,7 @@ const REASONS = Object.freeze({
   RESPONSE_TOO_LARGE: '응답 크기가 허용 범위를 넘었습니다. 일부만 정상으로 표시하지 않습니다.',
   RESPONSE_CONTRACT_INVALID: 'HTTP 응답의 형식을 검증할 수 없습니다.',
   LOCAL_FETCH_FAILED: '로컬 서버에 접속할 수 없거나 요청 시간이 초과됐습니다.',
+  REQUEST_CANCELLED: '조회가 중단됐습니다. 필요한 경우 사용자가 다시 조회하세요.',
   MEASUREMENT_STALE: '이 값은 오래된 관측입니다. 새 측정이 필요합니다.',
   MEASUREMENT_TIME_INVALID: '센서의 관측 시각과 응답 시각이 일치하지 않습니다.',
   DISK_SCOPE_UNVERIFIED: '디스크 측정 대상 파일시스템이 확인되지 않았습니다.',
@@ -291,7 +292,7 @@ function showSecurity() {
   } else if (mode === 'disconnected') {
     description = 'SDP 미연결 · PC 자원 측정이나 로컬 보고서 조회 성공과 무관합니다. ' + time;
   } else if (mode !== 'connected') {
-    description = 'SDP 연결 확인 불가 · 원천 응답을 검증할 수 없습니다.';
+    description = 'SDP 연결 확인 불가 · ' + reasonText(info?.reason || 'SOURCE_MODE_UNVERIFIED') + ' · 직접 다시 조회하세요.';
   } else if (info?.status !== 'ok' || !current) {
     description = 'SDP 어댑터 연결 구성 · 정책 결과 확인 불가. '
       + reasonText(info?.status !== 'ok' ? info?.reason || 'SECURITY_LOOKUP_FAILED' : timeReason)
@@ -366,7 +367,9 @@ function renderChart() {
   }
   plot.replaceChildren(...elements);
   renderMeasurementRecords();
-  const trend = trendSummary(history);
+  const activeTrend = trendSummary(history);
+  const trend = activeTrend || completedTrendSummary(history);
+  const historical = !activeTrend && Boolean(trend);
   $('chart-empty').hidden = ['cpu', 'memory'].some(key => seriesSegments(history, key).length > 0);
   const verified = pairedSamples(history);
   set('sample-count', verified.length + '개');
@@ -377,8 +380,9 @@ function renderChart() {
     return;
   }
   const signed = n => (n > 0 ? '+' : '') + n.toFixed(1);
-  set('trend-headline', 'CPU ' + signed(trend.cpuDelta) + ' %p');
-  set('trend-copy', '메모리 ' + signed(trend.memoryDelta) + ' %p · 가장 최근 연속 관측 ' + trend.cpuSamples + '개. 관측 최대 CPU ' + trend.cpuPeak.toFixed(1) + '%, 메모리 ' + trend.memoryPeak.toFixed(1) + '%(표본 최대, 실제 절대 피크 아님). 구간 ' + dateText(new Date(trend.from).toISOString()) + ' → ' + dateText(new Date(trend.to).toISOString()) + '. 보안 위협이나 원인 판정이 아닙니다.');
+  set('trend-headline', (historical ? '완료 구간 · ' : '') + 'CPU ' + signed(trend.cpuDelta) + ' %p');
+  set('trend-copy', (historical ? '과거의 마지막 비교 가능한 완료 구간이며 현재 추이가 아닙니다. ' : '')
+    + '메모리 ' + signed(trend.memoryDelta) + ' %p · 연속 관측 ' + trend.cpuSamples + '개. 관측 최대 CPU ' + trend.cpuPeak.toFixed(1) + '%, 메모리 ' + trend.memoryPeak.toFixed(1) + '%(표본 최대, 실제 절대 피크 아님). 구간 ' + dateText(new Date(trend.from).toISOString()) + ' → ' + dateText(new Date(trend.to).toISOString()) + '. 보안 위협이나 원인 판정이 아닙니다.');
 }
 
 let lastRenderedRows = null;
@@ -530,28 +534,24 @@ async function refreshSecurity() {
   showSecurity(); redrawEvents();
   const read = async path => {
     const requestedAt = Date.now();
-    let response;
+    let response = null, localFailure = null;
     try { response = await fetchJson(path, controller); }
-    catch (error) {
-      const code = ['REQUEST_CANCELLED', 'RESPONSE_TOO_LARGE', 'RESPONSE_CONTRACT_INVALID'].includes(error?.message)
-        ? error.message : 'LOCAL_FETCH_FAILED';
-      response = { ok: false, error: { code }, meta: { mode: 'unknown' } };
-    }
-    return { response, timing: { requestedAt, receivedAt: Date.now() } };
+    catch (error) { localFailure = localTransportReason(error); }
+    return { response, localFailure, timing: { requestedAt, receivedAt: Date.now() } };
   };
   try {
     // Each independent source updates as it settles. A slow events read cannot
     // hide a finished identity result (or vice versa). Generations reject late replies.
     await Promise.all([
-      read('/api/me').then(({ response, timing }) => {
+      read('/api/me').then(({ response, timing, localFailure }) => {
         if (token !== eventGeneration) return;
-        latestSecurity = normalizeSecurity(response, timing);
+        latestSecurity = normalizeSecurity(response, timing, localFailure);
         securityPending.identity = false;
         showSecurity();
       }),
-      read('/api/events').then(({ response, timing }) => {
+      read('/api/events').then(({ response, timing, localFailure }) => {
         if (token !== eventGeneration) return;
-        latestEvents = normalizeEvents(response, timing);
+        latestEvents = normalizeEvents(response, timing, localFailure);
         securityPending.events = false;
         redrawEvents();
       }),
@@ -587,7 +587,12 @@ async function measureOnce() {
       snapshot.metrics[key]?.status === 'ok' && readingFreshness(snapshot.metrics[key].measuredAt, now) === 'recent').length : 0;
     const unreliable = snapshot.status !== 'ok' || readingFreshness(snapshot.checkedAt, now) !== 'recent'
       || observedCount !== 3;
-    if (unreliable && observing) observing = false;
+    if (unreliable && observing) {
+      observing = false;
+      // Even a disk-only failure ends this monitoring session. Keep the
+      // successfully acquired CPU/memory sample, then close its trend.
+      history = appendGap(history, receivedAt);
+    }
     for (const key of ['cpu', 'memory', 'disk']) showMetric(key, latestSnapshot.status === 'ok' ? latestSnapshot : { metrics: { [key]: { reason: latestSnapshot.reason } } });
     renderChart();
     set('page-notice', snapshot.status !== 'ok'

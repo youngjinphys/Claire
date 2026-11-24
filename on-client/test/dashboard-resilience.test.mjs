@@ -71,7 +71,7 @@ class Element {
   focus() { this.focused = true; if (this.ownerDocument) this.ownerDocument.activeElement = this; }
 }
 
-async function browser(t, { delayedEvents = false, throwingPanel = false, blockedDownload = false, layoutFailureFixture = false, failedModule = false, pendingModule = false } = {}) {
+async function browser(t, { delayedEvents = false, throwingPanel = false, blockedDownload = false, layoutFailureFixture = false, failedModule = false, pendingModule = false, transportFailure = false } = {}) {
   const elements = new Map(), timers = new Map(), calls = [], deferred = [];
   let timerId = 0;
   const window = new Element(), document = new Element(); document.body = new Element('body'); document.hidden = false;
@@ -91,6 +91,8 @@ async function browser(t, { delayedEvents = false, throwingPanel = false, blocke
   const fetch = async path => {
     calls.push(path);
     if (path === '/api/local-pc') return json(sample());
+    if (transportFailure && path === '/api/me') throw Error('private synthetic detail');
+    if (transportFailure && path === '/api/events') return new Response('invalid', { headers: { 'content-type': 'text/html' } });
     if (path === '/api/events' && delayedEvents) return new Promise(resolve => deferred.push(resolve));
     return json(path === '/api/me' ? identity() : events());
   };
@@ -371,4 +373,37 @@ test('all unavailable PC sensors stop sampling and never announce successful mea
   assert.equal(b.get('cpu-value').textContent, '확인 불가');
   assert.equal(b.get('start').getAttribute('aria-disabled'), 'false');
   assert.equal([...b.timers.values()].some(timer => timer.type === 'timeout'), false);
+});
+
+test('separate SDP transport failures retain their actual local causes and no raw exception text', async t => {
+  const b = await browser(t, { transportFailure: true });
+  await flush();
+  assert.match(b.get('sdp-policy-detail').textContent, /SDP 연결 확인 불가.*로컬 서버에 접속할 수 없/);
+  assert.match(b.get('events-body').textContent, /HTTP 응답의 형식을 검증할 수 없습니다/);
+  assert.doesNotMatch(b.get('sdp-policy-detail').textContent, /private synthetic detail/);
+  assert.match(b.get('events-origin').textContent, /SDP 연결 확인 불가/);
+});
+test('stop preserves a visibly historical trend without changing the current-segment contract', async t => {
+  const b = await browser(t);
+  vm.runInContext('history=[{time:Date.now()-10000,cpu:10,memory:20},{time:Date.now()-5000,cpu:60,memory:40}];observing=true;stopObserving();', b.context);
+  assert.equal(vm.runInContext('trendSummary(history)', b.context), null);
+  assert.match(b.get('trend-headline').textContent, /완료 구간/);
+  assert.match(b.get('trend-copy').textContent, /현재 추이가 아닙니다/);
+});
+
+test('disk-only partial failure closes the monitoring interval but retains the successful paired sample', async t => {
+  const b = await browser(t);
+  vm.runInContext(`history=[{time:Date.now()-5000,cpu:10,memory:20}];
+    fetchJson=async()=>{const now=Date.now(), stamp=new Date(now).toISOString();
+      return {ok:true,data:{schema:'claire.local-pc.v1',scope:'local-machine',checkedAt:stamp,metrics:{
+        cpu:{status:'ok',value:60,unit:'%',source:'os.cpus',measuredAt:stamp,measuredFrom:new Date(now-400).toISOString(),windowMs:400},
+        memory:{status:'ok',value:50,unit:'%',source:'os.totalmem/os.freemem',measuredAt:stamp,usedGiB:4,totalGiB:8},
+        disk:{status:'unavailable',value:null,unit:'GiB',source:'fs.statfs',measuredAt:stamp,reason:'DISK_READ_FAILED'}
+      }}};}; observing=true; void measureOnce();`, b.context);
+  await flush();
+  assert.equal(vm.runInContext('observing', b.context), false);
+  assert.equal(vm.runInContext('trendSummary(history)', b.context), null);
+  assert.equal(vm.runInContext('completedTrendSummary(history).cpuPeak', b.context), 60);
+  assert.equal(b.get('cpu-value').textContent, '60.0');
+  assert.match(b.get('trend-headline').textContent, /완료 구간/);
 });

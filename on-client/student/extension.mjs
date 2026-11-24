@@ -174,6 +174,9 @@ const HOST_REASON_GUIDANCE = Object.freeze({
   FIREWALL_PROFILE_INCOMPLETE: 'Windows 방화벽 프로필 일부가 누락됐거나 사용 상태가 확인되지 않았습니다. 누락·미설정을 켜짐/꺼짐으로 판단하지 말고 현재 권한에서 새 보고서를 확인하세요.',
   OTHER_BACKEND_UNVERIFIED: '일부 방화벽 관리 도구만 확인됐습니다. 다른 백엔드의 상태를 확인하기 전에는 전체 상태로 해석하지 마세요.',
   NETWORK_READ_FAILED: '인터페이스·DNS를 읽을 수 없습니다. Node 실행 환경과 일반 사용자 권한을 확인하세요.',
+  NETWORK_INTERFACE_READ_FAILED: '네트워크 인터페이스 조회에 실패했습니다. 현재 실행 환경을 확인하고 새 보고서를 선택하세요.',
+  NETWORK_DNS_READ_FAILED: 'Node DNS resolver 조회에 실패했습니다. 현재 실행 환경을 확인하고 새 보고서를 선택하세요.',
+  NETWORK_PARTIAL: '네트워크 원천 중 일부를 읽지 못했습니다. 아래 인터페이스·DNS별 사유를 확인하세요.',
   READ_FAILED: '조회 프로그램이 실패했습니다. 현재 사용자 권한과 OS 지원 여부를 확인하세요.',
   QUERY_TIMEOUT: '조회 시간이 초과됐습니다. OS 상태를 점검한 후 수집기를 직접 다시 실행하세요.',
   RESULT_LIMIT: '네트워크 항목 상한을 초과했습니다. 이 결과는 일부만 표시합니다.',
@@ -232,6 +235,54 @@ const hostTime = value => hostIso(value) ? new Date(value).toLocaleString('ko-KR
 function hostParseNetwork(data, platform, produced) {
   if (!data || !hostIso(data.measuredAt) || Math.abs(Date.parse(data.measuredAt) - produced) > 30000
     || data.source !== 'node:os.networkInterfaces+node:dns.getServers') return hostUnavailable();
+  // Optional per-source metadata extends v1 without reinterpreting older reports.
+  if (Object.hasOwn(data, 'parts')) {
+    if (!data.parts || typeof data.parts !== 'object' || Array.isArray(data.parts)
+      || Object.keys(data.parts).length !== 2 || !Object.hasOwn(data.parts, 'interfaces') || !Object.hasOwn(data.parts, 'dns')) return hostUnavailable();
+    const specs = { interfaces: ['node:os.networkInterfaces', 32], dns: ['node:dns.getServers', 12] };
+    const claimed = Object.values(data.parts).map(p => p?.status);
+    const combined = states => states.every(s => s === 'ok') ? 'ok' : states.every(s => s === 'unavailable') ? 'unavailable' : 'partial';
+    if (claimed.some(s => !['ok','partial','unavailable'].includes(s)) || data.status !== combined(claimed)) return hostUnavailable();
+    const parsePart = key => {
+      const [source, limit] = specs[key], meta = data.parts[key];
+      const reject = () => ({ meta: hostUnavailable('INVALID_REPORT_FIELD', source), values: [] });
+      if (meta?.source !== source || !hostIso(meta.measuredAt)
+        || Math.abs(Date.parse(meta.measuredAt) - produced) > 30000
+        || Math.abs(Date.parse(meta.measuredAt) - Date.parse(data.measuredAt)) > 30000
+        || !Array.isArray(data[key]) || data[key].length > limit) return reject();
+      if (meta.status === 'unavailable') {
+        if (data[key].length !== 0) return reject();
+        return { meta: hostUnavailable(hostReason(meta.reason), source, meta.measuredAt), values: [] };
+      }
+      if (meta.status === 'ok' && meta.reason != null || meta.status === 'partial' && meta.reason !== 'RESULT_LIMIT') return reject();
+      let values;
+      if (key === 'dns') {
+        if (!data.dns.every(hostValidResolver)) return reject();
+        values = [...data.dns];
+      } else {
+        values = [];
+        for (const item of data.interfaces) {
+          if (!hostSafeString(item?.name, 90) || !Array.isArray(item.addresses) || item.addresses.length > 8) return reject();
+          const addresses = [];
+          for (const entry of item.addresses) {
+            if (!['IPv4','IPv6'].includes(entry?.family) || !hostSafeString(entry.address, 90)
+              || !(entry.family === 'IPv4' ? hostValidIPv4(entry.address) : hostValidIPv6(entry.address))
+              || typeof entry.internal !== 'boolean') return reject();
+            addresses.push({ family: entry.family, address: entry.address, internal: entry.internal });
+          }
+          values.push({ name: item.name, addresses });
+        }
+      }
+      return { values, meta: { status: meta.status, source, measuredAt: meta.measuredAt, reason: meta.status === 'partial' ? 'RESULT_LIMIT' : null } };
+    };
+    const iface = parsePart('interfaces'), dns = parsePart('dns');
+    const parts = { interfaces: iface.meta, dns: dns.meta };
+    const status = combined(Object.values(parts).map(p => p.status));
+    return { status, reason: status === 'ok' ? null : status === 'unavailable' ? 'NETWORK_READ_FAILED'
+      : Object.values(parts).some(p => p.status === 'unavailable') ? 'NETWORK_PARTIAL' : 'RESULT_LIMIT',
+      measuredAt: data.measuredAt, source: data.source, parts, interfaces: iface.values, dns: dns.values,
+      gateway: { status: 'unavailable', reason: 'GATEWAY_NOT_COLLECTED' } };
+  }
   if (data.status === 'unavailable') return hostUnavailable(hostReason(data.reason), data.source, data.measuredAt);
   if (!['ok', 'partial'].includes(data.status) || !Array.isArray(data.interfaces) || data.interfaces.length > 32
     || !Array.isArray(data.dns) || data.dns.length > 12) return hostUnavailable();
@@ -409,6 +460,18 @@ export function hostReportQuality(report, now = Date.now()) {
   };
   const feeds = { network: sourceAge(report.network),
     firewall: sourceAge(report.firewall), windowsEvents: sourceAge(report.windowsEvents) };
+  // A newer aggregate timestamp must not conceal a stale or future sub-source.
+  // Keep the network card conservative while retaining independent details.
+  if (report.network?.parts) {
+    const parts = ['interfaces','dns'].map(key => sourceAge(report.network.parts[key]));
+    const observed = parts.filter(row => ['observed','partial'].includes(row.state));
+    for (const timeState of ['clock_skew','stale','unverifiable']) {
+      if (feeds.network.freshness === timeState || observed.some(row => row.freshness === timeState)) {
+        feeds.network.freshness = timeState;
+        break;
+      }
+    }
+  }
   const applicable = Object.values(feeds).filter(row => row.state !== 'not_applicable');
   const observedFeeds = applicable.filter(row => row.state === 'observed' && row.freshness === 'recent').length;
   const coverage = freshness !== 'recent' ? 'unverifiable'
@@ -463,6 +526,22 @@ export function buildClaireHostAggregateEvidence(report, exportedAt = new Date()
           : source.reason || 'SOURCE_NOT_OBSERVED' };
   };
   const network = report.network, firewall = report.firewall, events = report.windowsEvents;
+  const networkObservation = (key, unit) => {
+    if (!network?.parts) return observation(Array.isArray(network?.[key]) ? network[key].length : null, unit, 'network');
+    if (network.source !== expected.network) return observation(null, unit, 'network');
+    // Revalidate the projected part instead of treating a failed empty array as zero.
+    const checked = hostParseNetwork(network, report.platform, Date.parse(report.producedAt));
+    const part = checked.parts?.[key];
+    const expectedPart = key === 'interfaces' ? 'node:os.networkInterfaces' : 'node:dns.getServers';
+    const age = part?.measuredAt ? Date.parse(exportedAt) - Date.parse(part.measuredAt) : NaN;
+    const freshness = !Number.isFinite(age) ? 'unverifiable' : age < -HOST_FUTURE_TOLERANCE_MS ? 'clock_skew'
+      : age > HOST_REPORT_MAX_AGE_MS || Date.parse(exportedAt) - Date.parse(network.measuredAt) > HOST_REPORT_MAX_AGE_MS ? 'stale' : 'recent';
+    const state = part?.source === expectedPart && part.status === 'ok' ? 'observed'
+      : part?.source === expectedPart && part.status === 'partial' ? 'partial' : 'unavailable';
+    return { status: state, value: state === 'unavailable' ? null : boundedCount(checked[key]?.length), unit,
+      source: expectedPart, measuredAt: part?.measuredAt || null, freshness,
+      reason: state === 'observed' ? null : hostReason(part?.reason) };
+  };
   const firewallItems = Array.isArray(firewall?.profiles) ? firewall.profiles.length
     : Array.isArray(firewall?.backends) ? firewall.backends.length
       : ['enabled', 'disabled'].includes(firewall?.state) ? 1 : null;
@@ -496,8 +575,8 @@ export function buildClaireHostAggregateEvidence(report, exportedAt = new Date()
       && events.measuredAt === events.windowEnd
       ? { start: events.windowStart, end: events.windowEnd } : null,
     measurements: {
-      networkInterfaces: observation(Array.isArray(network?.interfaces) ? network.interfaces.length : null, 'interfaces', 'network'),
-      dnsServers: observation(Array.isArray(network?.dns) ? network.dns.length : null, 'resolvers', 'network'),
+      networkInterfaces: networkObservation('interfaces', 'interfaces'),
+      dnsServers: networkObservation('dns', 'resolvers'),
       firewallBackends: observation(firewallItems, firewallUnit, 'firewall'),
       windowsSystemWarnings: eventCount(events?.system, 'warning'),
       windowsSystemErrors: eventCount(events?.system, 'error'),
@@ -522,7 +601,10 @@ export function hostHistoryTransition(history, report, fingerprint) {
   if (!Array.isArray(history) || report?.status !== 'ok' || !Number.isFinite(Date.parse(report.producedAt)))
     return { history: Array.isArray(history) ? history : [], conflict: false, reason: 'INVALID_REPORT' };
   const time = Date.parse(report.producedAt);
-  const total = report.windowsEvents?.system?.status === 'ok' && report.windowsEvents?.application?.status === 'ok'
+  const events = report.windowsEvents;
+  const validWindow = hostIso(events?.windowStart) && hostIso(events?.windowEnd)
+    && Date.parse(events.windowEnd) - Date.parse(events.windowStart) === 86400000 && events.measuredAt === events.windowEnd;
+  const total = validWindow && events?.system?.status === 'ok' && events?.application?.status === 'ok'
     ? report.windowsEvents.system.warning + report.windowsEvents.system.error
       + report.windowsEvents.application.warning + report.windowsEvents.application.error : null;
   const existing = history.find(row => row.time === time);
@@ -536,17 +618,22 @@ export function hostHistoryTransition(history, report, fingerprint) {
   }
   const next = { time, platform: report.platform, networkStatus: report.network.status,
     firewallStatus: report.firewall.status, windowsEventCount: total,
+    windowStart: validWindow ? events.windowStart : null, windowEnd: validWindow ? events.windowEnd : null,
     fingerprint: typeof fingerprint === 'string' ? fingerprint : null, conflict: false };
   return { history: [...history, next].sort((a,b) => a.time - b.time).slice(-HOST_HISTORY_LIMIT),
     conflict: false, reason: null };
 }
 const validHostEventCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 4000;
+const validHostHistoryWindow = row => hostIso(row?.windowStart) && hostIso(row?.windowEnd)
+  && Date.parse(row.windowEnd) - Date.parse(row.windowStart) === 86400000;
+const orderedHostWindows = (previous, last) => validHostHistoryWindow(previous) && validHostHistoryWindow(last)
+  && Date.parse(last.windowEnd) > Date.parse(previous.windowEnd);
 function hostComparisonPair(history) {
   if (!Array.isArray(history) || history.length < 2) return null;
   const last = history.at(-1), previous = history.slice(0, -1).reverse().find(row => row.time < last.time);
   if (!previous || last.conflict || previous.conflict || !last.fingerprint || !previous.fingerprint
     || last.platform !== 'win32' || previous.platform !== 'win32'
-    || !validHostEventCount(last.windowsEventCount) || !validHostEventCount(previous.windowsEventCount)) return null;
+    || !orderedHostWindows(previous, last) || !validHostEventCount(last.windowsEventCount) || !validHostEventCount(previous.windowsEventCount)) return null;
   return [previous.time, previous.fingerprint, last.time, last.fingerprint].join(':');
 }
 export function hostComparison(history, pair = undefined) {
@@ -554,9 +641,9 @@ export function hostComparison(history, pair = undefined) {
   const last = history.at(-1), previous = history.slice(0, -1).reverse().find(row => row.time < last.time);
   if (!previous || last.conflict || previous.conflict || previous.platform !== 'win32' || last.platform !== 'win32') return null;
   if (pair !== undefined && (!pair || hostComparisonPair(history) !== pair)) return null;
-  if (!validHostEventCount(last.windowsEventCount) || !validHostEventCount(previous.windowsEventCount)) return null;
-  return { from: previous.time, to: last.time, delta: last.windowsEventCount - previous.windowsEventCount,
-    note: '각 시점의 이전 24시간 경고·오류 총건수 차이. 그 사이 새 발생 건수가 아님' };
+  if (!orderedHostWindows(previous, last) || !validHostEventCount(last.windowsEventCount) || !validHostEventCount(previous.windowsEventCount)) return null;
+  return { from: Date.parse(previous.windowEnd), to: Date.parse(last.windowEnd), delta: last.windowsEventCount - previous.windowsEventCount,
+    note: '각 집계 종료 기준의 보존된 24시간 경고·오류 총건수 차이. 그 사이 새 발생 건수가 아님' };
 }
 
 function hostNode(tag, text, className = '') {
@@ -582,7 +669,7 @@ export function hostPanel(state, mode) {
   const retry = hostNode('button', '다시 조회 · 보고서 선택', 'btn');
   retry.type = 'button';
   retry.setAttribute('aria-label', '다시 조회, 로컬 관측 보고서 선택');
-  const exportButton = hostNode('button', '비식별 집계 JSON 저장', 'btn');
+  const exportButton = hostNode('button', '주소·식별자 제외 집계 JSON 저장', 'btn');
   exportButton.type = 'button';
   exportButton.setAttribute('aria-label', '주소·식별자 없는 로컬 관측 요약을 JSON으로 저장');
   exportButton.disabled = !state.latest || state.pending === true;
@@ -639,7 +726,8 @@ export function hostPanel(state, mode) {
   const reasonLine = row => row?.status === 'unavailable' || row?.status === 'partial'
     ? '사유: ' + (HOST_REASON_GUIDANCE[row.reason] || '확인 불가 · 코드 ' + hostReason(row.reason)) : '';
   const networkText = row => row?.status === 'ok' ? row.interfaces.length + '개 인터페이스'
-    : row?.status === 'partial' ? '일부 조회 · ' + row.interfaces.length + '개' : '확인 불가';
+    : row?.status === 'partial' ? row.parts?.interfaces?.status === 'unavailable'
+      ? '일부 조회 · 인터페이스 확인 불가' : '일부 조회 · ' + row.interfaces.length + '개' : '확인 불가';
   const firewallText = row => row?.status === 'ok' ? '조회 완료'
     : row?.status === 'partial' ? '일부 조회' : '확인 불가';
   const eventTotal = row => {
@@ -683,26 +771,26 @@ export function hostPanel(state, mode) {
     grid.append(
       card('네트워크', latest ? (feedFresh('network') ? networkText(net) : feedIssue('network')) : emptyValue, [
         latest ? '조회 기준 ' + hostTime(net?.measuredAt) : emptyDetail,
-        '출처: ' + (net?.source || '조회 전'), reasonLine(net),
+        net?.source ? '출처: Node 인터페이스·DNS' : '출처: 조회 전', reasonLine(net),
       ].filter(Boolean), 'network'),
       card('방화벽', latest ? (feedFresh('firewall') ? firewallText(fw) : feedIssue('firewall')) : emptyValue, [
         latest ? '조회 기준 ' + hostTime(fw?.measuredAt) : emptyDetail,
-        '출처: ' + (fw?.source || '조회 전'), reasonLine(fw),
+        fw?.source ? '출처: ' + (latest.platform === 'win32' ? 'Windows 정책' : latest.platform === 'darwin' ? 'Application Firewall' : 'firewalld/UFW') : '출처: 조회 전', reasonLine(fw),
       ].filter(Boolean), 'firewall'),
       card('Windows 기록', latest ? (logs?.status === 'not_applicable' ? '해당 없음 · Windows 전용'
         : feedFresh('windowsEvents') ? eventTotal(logs) : feedIssue('windowsEvents')) : emptyValue, [
         latest ? '집계 기준 ' + hostTime(logs?.measuredAt) : emptyDetail,
-        'System·Application, 경고(Level 3)·오류(Level 2)',
+        'System·Application · 경고/오류',
         logs?.status === 'not_applicable' ? 'Windows 전용 · 이 OS에는 해당 없음'
           : logs?.status === 'partial' || logs?.status === 'unavailable'
             ? 'System/Application 중 조회 실패 · 아래 각 로그별 사유와 다음 조치 확인' : reasonLine(logs),
       ].filter(Boolean), 'windows-events'),
-      card('SDP', sdp[0], [sdp[1], 'PC 조회와 독립 · 실제 연결·정책은 기존 화면에서 별도 확인'], 'sdp'),
+      card('SDP', sdp[0], [sdp[1], 'PC 관측과 독립'], 'sdp'),
     );
     cardsRoot.replaceChildren(grid);
     if (!latest) return;
     const source = hostNode('p', '보고서 수집 시각: ' + hostTime(latest.producedAt)
-      + ' · 실행 OS: ' + latest.platform + ' · 대상: 수집기 Node 실행 환경 · 사용자 선택 파일(원본 인증 불가)', 'muted');
+      + ' · 실행 OS: ' + latest.platform + ' · 대상: 수집기 Node 실행 환경 · 사용자 선택 파일(원본·실측 여부 미인증)', 'muted');
     dataRoot.append(source);
     const qualityLabel = quality.coverage === 'observed' ? '조회 범위 내 관측'
       : quality.coverage === 'partial' ? '부분 관측'
@@ -733,10 +821,20 @@ export function hostPanel(state, mode) {
     const netSection = hostNode('details');
     netSection.style.marginTop = '12px';
     netSection.append(hostNode('summary', '네트워크 상세 · 인터페이스 및 DNS (Enter/Space로 펼치기)'));
+    if (net?.parts) {
+      for (const [key, label] of [['interfaces', '인터페이스'], ['dns', 'DNS resolver']]) {
+        const part = net.parts[key];
+        const age = part.measuredAt ? Date.now() - Date.parse(part.measuredAt) : NaN;
+        const current = fresh && Number.isFinite(age) && age >= -HOST_FUTURE_TOLERANCE_MS && age <= HOST_REPORT_MAX_AGE_MS;
+        netSection.append(hostNode('p', label + ' · ' + (part.status === 'unavailable' ? '확인 불가 · ' + HOST_REASON_GUIDANCE[part.reason]
+          : (current ? '' : '과거 또는 시각 미확인 · ') + (part.status === 'partial' ? '일부 조회 · ' : '조회됨 · ') + net[key].length + '개')
+          + ' · 출처: ' + part.source + ' · 조회 기준 ' + hostTime(part.measuredAt), part.status === 'unavailable' || !current ? 'state state-error' : 'muted'));
+      }
+    }
     if (net?.status === 'ok' || net?.status === 'partial') {
       for (const iface of net.interfaces) netSection.append(hostNode('p', iface.name + ': '
         + (iface.addresses.length ? iface.addresses.map(item => item.family + ' ' + item.address + (item.internal ? ' (loopback)' : '')).join(' · ') : 'IP 주소 확인 불가'), 'muted'));
-      netSection.append(hostNode('p', 'DNS: ' + (net.dns.length ? net.dns.join(', ') : '확인 불가') + ' · 기본 게이트웨이: 확인 불가(이번 수집 대상 제외)', 'muted'));
+      netSection.append(hostNode('p', 'DNS: ' + (net.dns.length ? net.dns.join(', ') : net.parts?.dns?.status === 'ok' ? '조회 결과 0개' : '확인 불가') + ' · 기본 게이트웨이: 확인 불가(이번 수집 대상 제외)', 'muted'));
     } else netSection.append(hostNode('p', reasonLine(net), 'state state-error'));
     // Network details follow the comparison and event summary.
     const fwSection = hostNode('details');
@@ -791,8 +889,15 @@ export function hostPanel(state, mode) {
       const comparison = mayCompare && state.compareConfirmed === true && state.comparePair === currentPair
         ? hostComparison(state.history, currentPair) : null;
       if (comparison) return '최근 24시간 이동 집계 차이: '
-        + (comparison.delta > 0 ? '+' : '') + comparison.delta + '건. ' + comparison.note;
-      if (!mayCompare) return '비교 확인 불가 · 최신 Windows 보고서 2개가 필요합니다. 오래된/다른 OS 보고서를 자동 연결하지 않습니다.';
+        + (comparison.delta > 0 ? '+' : '') + comparison.delta + '건. 집계 종료 ' + hostTime(new Date(comparison.from).toISOString()) + ' → ' + hostTime(new Date(comparison.to).toISOString()) + '. ' + comparison.note;
+      if (!mayCompare) {
+        const previous = state.history.at(-2);
+        if (previous && newest && previous.platform === 'win32' && newest.platform === 'win32'
+          && validHostHistoryWindow(previous) && validHostHistoryWindow(newest) && !orderedHostWindows(previous, newest)) {
+          return '비교 보류 · 동일하거나 역순인 Windows 집계 종료 시각입니다. 같은 집계 창의 재조회 결과를 이동 추이로 해석하지 않습니다.';
+        }
+        return '비교 확인 불가 · 서로 다른 집계 종료 시각의 유효한 Windows 보고서 2개가 필요합니다. 오래된/다른 OS 보고서를 자동 연결하지 않습니다.';
+      }
       return '비교 보류 · 동일 PC·실행 환경 여부는 사용자가 확인해야 합니다. OS 기록 수치 자체는 침해 탐지가 아닙니다.';
     };
     if (mayCompare) {
@@ -819,7 +924,7 @@ export function hostPanel(state, mode) {
     for (const h of state.history.slice(-HOST_HISTORY_LIMIT).reverse()) {
       list.append(hostNode('li', hostTime(new Date(h.time).toISOString()) + ' · OS ' + h.platform
         + ' · 네트워크 ' + h.networkStatus + ' · 방화벽 ' + h.firewallStatus
-        + ' · 24시간 기록 ' + (h.conflict ? '동일 시각 상충 · 비교 제외'
+        + ' · 집계 종료 ' + hostTime(h.windowEnd) + ' · 24시간 기록 ' + (h.conflict ? '동일 시각 상충 · 비교 제외'
           : h.windowsEventCount === null ? '확인 불가' : h.windowsEventCount + '건'), 'muted'));
     }
     historySection.append(list);
@@ -850,7 +955,7 @@ export function hostPanel(state, mode) {
       : state.error ? '확인 불가 — ' + (HOST_REASON_GUIDANCE[state.error] || HOST_REASON_GUIDANCE.INVALID_REPORT)
         : state.latest ? '파일 확인 ' + hostTime(state.loadedAt) + ' · 보고서 생성 ' + hostTime(state.latest.producedAt)
           + (state.hostConflict ? ' · 동일 생성 시각에 상충하는 보고서가 있어 해당 시각의 비교를 제외했습니다.' : '')
-          + ' · 사용자 선택 파일(원본 인증 불가) · 예제 수치 없음.'
+          + ' · 사용자 선택 파일(원본·실측 여부 미인증) · 조회 실패를 예시 수치로 대체하지 않습니다.'
           : HOST_REASON_GUIDANCE.NOT_SELECTED;
     region.setAttribute('aria-busy', state.pending ? 'true' : 'false');
     retry.disabled = state.pending === true;
@@ -923,7 +1028,7 @@ export function hostPanel(state, mode) {
         link.download = 'claire-host-aggregates-' + evidence.provenance.generatedAt.slice(0, 10) + '.json';
         document.body.append(link);
         link.click();
-        progress.textContent = '비식별 집계 JSON 저장을 요청했습니다. 브라우저 다운로드 결과를 확인하세요. 원본 주소·DNS·SDP 사건은 제외됩니다.';
+        progress.textContent = '주소·식별자 제외 집계 JSON 저장을 요청했습니다. 다운로드 결과를 확인하세요. 원본 주소·DNS·SDP 사건 제외 · 시각/건수는 포함됩니다.';
       } finally {
         try { link?.remove(); } catch {}
         setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 5000);

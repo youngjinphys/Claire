@@ -38,15 +38,23 @@ function runReadOnlyCommand(file, args, { timeout = COMMAND_TIMEOUT_MS } = {}) {
 
 /** No MAC, hostname, user name, external probes or network access. */
 export function readNetwork({ networkInterfaces = () => os.networkInterfaces(), dnsServers = () => dns.getServers(), clock = Date.now } = {}) {
-  const measuredAt = iso(clock()), source = 'node:os.networkInterfaces+node:dns.getServers';
-  try {
+  const source = 'node:os.networkInterfaces+node:dns.getServers';
+  const read = (source, query, reason) => {
+    const measuredAt = iso(clock());
+    try {
+      const { values, truncated } = query();
+      return { values, meta: { status: truncated ? 'partial' : 'ok', reason: truncated ? 'RESULT_LIMIT' : null, measuredAt, source } };
+    } catch (error) {
+      return { values: [], meta: failure(errorReason(error) === 'PERMISSION_DENIED' ? 'PERMISSION_DENIED' : reason, measuredAt, source) };
+    }
+  };
+  const iface = read('node:os.networkInterfaces', () => {
     const raw = networkInterfaces();
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error('INVALID_INTERFACES');
-    const entries = Object.entries(raw);
-    const interfaces = [];
+    const entries = Object.entries(raw), values = [];
     let truncated = entries.length > 32;
     for (const [name, addresses] of entries.slice(0, 32)) {
-      if (!bounded(name, 90) || !Array.isArray(addresses)) throw Error('INVALID_INTERFACES');
+      if (!bounded(name, 90) || !name.length || !Array.isArray(addresses)) throw Error('INVALID_INTERFACES');
       if (addresses.length > 8) truncated = true;
       const list = [];
       for (const entry of addresses.slice(0, 8)) {
@@ -56,21 +64,36 @@ export function readNetwork({ networkInterfaces = () => os.networkInterfaces(), 
         if (!family || !bounded(address, 90) || isIP(address) !== (family === 'IPv4' ? 4 : 6)) { truncated = true; continue; }
         list.push({ family, address, internal: entry.internal === true });
       }
-      interfaces.push({ name, addresses: list });
+      values.push({ name, addresses: list });
     }
+    return { values, truncated };
+  }, 'NETWORK_INTERFACE_READ_FAILED');
+  const resolver = read('node:dns.getServers', () => {
     const servers = dnsServers();
     if (!Array.isArray(servers)) throw Error('INVALID_DNS');
-    if (servers.length > 12) truncated = true;
-    const dnsValues = servers.slice(0, 12).filter(s => bounded(s, 90));
-    if (dnsValues.length !== Math.min(servers.length, 12)) throw Error('INVALID_DNS');
-    return { status: truncated ? 'partial' : 'ok', reason: truncated ? 'RESULT_LIMIT' : null,
-      measuredAt, source, interfaces, dns: dnsValues,
-      gateway: { status: 'unavailable', reason: 'GATEWAY_NOT_COLLECTED' },
-      note: '해당 Node 실행 환경의 인터페이스와 DNS 설정. MAC·호스트 이름은 수집하지 않음' };
-  } catch {
-    return { ...failure('NETWORK_READ_FAILED', measuredAt, source), interfaces: [], dns: [],
-      gateway: { status: 'unavailable', reason: 'GATEWAY_NOT_COLLECTED' } };
-  }
+    const valid = value => {
+      if (!bounded(value, 90) || !value.length) return false;
+      if (isIP(value)) return true;
+      const v4 = /^([^:]+):([0-9]{1,5})$/u.exec(value);
+      const v6 = /^\[([^\]]+)\]:([0-9]{1,5})$/u.exec(value);
+      const match = v4 || v6;
+      return Boolean(match && Number(match[2]) >= 1 && Number(match[2]) <= 65535
+        && isIP(match[1]) === (v4 ? 4 : 6));
+    };
+    const values = servers.slice(0, 12);
+    if (!values.every(valid)) throw Error('INVALID_DNS');
+    return { values, truncated: servers.length > 12 };
+  }, 'NETWORK_DNS_READ_FAILED');
+  const parts = { interfaces: iface.meta, dns: resolver.meta };
+  const states = Object.values(parts).map(part => part.status);
+  const status = states.every(s => s === 'ok') ? 'ok' : states.every(s => s === 'unavailable') ? 'unavailable' : 'partial';
+  const reason = status === 'ok' ? null : status === 'unavailable' ? 'NETWORK_READ_FAILED'
+    : states.includes('unavailable') ? 'NETWORK_PARTIAL' : 'RESULT_LIMIT';
+  const measuredAt = [iface.meta.measuredAt, resolver.meta.measuredAt].sort()[0];
+  return { status, reason, measuredAt, source, parts,
+    interfaces: iface.values, dns: resolver.values,
+    gateway: { status: 'unavailable', reason: 'GATEWAY_NOT_COLLECTED' },
+    note: '해당 Node 실행 환경의 인터페이스와 DNS 설정. MAC·호스트 이름은 수집하지 않음' };
 }
 
 export const WINDOWS_FIREWALL_QUERY = String.raw`

@@ -70,9 +70,10 @@ test('report identity and time claims are constrained; forged scheme and future 
   assert.equal(stale.network.status, 'unavailable');
 });
 test('trend compares two real report snapshots with same OS and valid 24h counts only', () => {
-  const sample = { time: T, platform: 'win32', windowsEventCount: 9 };
+  const window = end => ({ windowStart: new Date(end - 86400000).toISOString(), windowEnd: new Date(end).toISOString() });
+  const sample = { time: T, platform: 'win32', windowsEventCount: 9, ...window(T) };
   assert.equal(hostComparison([sample]), null);
-  assert.equal(hostComparison([sample, { ...sample, time: T + 300000, windowsEventCount: 14 }]).delta, 5);
+  assert.equal(hostComparison([sample, { ...sample, time: T + 300000, windowsEventCount: 14, ...window(T + 300000) }]).delta, 5);
   assert.equal(hostComparison([sample, { ...sample, time: T + 300000, platform: 'linux' }]), null);
   assert.equal(hostComparison([sample, { ...sample, time: T + 300000, windowsEventCount: null }]), null);
   assert.equal(hostComparison([sample, { ...sample }]), null);
@@ -260,7 +261,7 @@ test('Claire export is user-initiated; before selecting a report the button is d
   await withDocument(async () => {
     const state = { pending:false, latest:null, history:[], error:null, requestId:0 };
     const root = hostPanel(state, 'disconnected');
-    const button = root.find(el => el.tagName === 'BUTTON' && el.textContent.includes('비식별 집계'));
+    const button = root.find(el => el.tagName === 'BUTTON' && el.textContent.includes('주소·식별자 제외 집계'));
     assert.ok(button);
     assert.equal(button.disabled, true);
     const selected = JSON.stringify(await report('win32', Date.now()));
@@ -291,12 +292,20 @@ test('local report rejects non-IP interface and DNS strings instead of displayin
   for (const address of ['999.999.999.999', '127.0.0.999', '1.2.3.04', '2001:db8:::1']) {
     const changed = structuredClone(original);
     changed.network.interfaces[0].addresses[0].address = address;
-    assert.equal(normalizeHostObservation(changed, T).network.status, 'unavailable', address);
+    const result = normalizeHostObservation(changed, T).network;
+    assert.equal(result.status, 'partial', address);
+    assert.equal(result.parts.interfaces.status, 'unavailable');
+    assert.equal(result.parts.dns.status, 'ok');
+    assert.deepEqual(result.interfaces, []);
   }
   for (const resolver of ['bad:ipv6', '999.999.999.999', '[::1]:70000']) {
     const changed = structuredClone(original);
     changed.network.dns = [resolver];
-    assert.equal(normalizeHostObservation(changed, T).network.status, 'unavailable', resolver);
+    const result = normalizeHostObservation(changed, T).network;
+    assert.equal(result.status, 'partial', resolver);
+    assert.equal(result.parts.dns.status, 'unavailable');
+    assert.equal(result.parts.interfaces.status, 'ok');
+    assert.deepEqual(result.dns, []);
   }
   for (const resolver of ['127.0.0.1', '127.0.0.1:5353', '::1', '[::1]:5353']) {
     const changed = structuredClone(original);
@@ -422,8 +431,9 @@ test('Windows-only nonapplicable status remains identifiable even when a macOS o
 });
 
 test('historical pairs can be explicitly bound to the consented pair, rather than a reused approval', () => {
-  const rows = [{ time: T - 20_000, platform: 'win32', windowsEventCount: 8, fingerprint: 'a' },
-    { time: T, platform: 'win32', windowsEventCount: 12, fingerprint: 'b' }];
+  const window = end => ({ windowStart: new Date(end - 86400000).toISOString(), windowEnd: new Date(end).toISOString() });
+  const rows = [{ time: T - 20_000, platform: 'win32', windowsEventCount: 8, fingerprint: 'a', ...window(T - 20_000) },
+    { time: T, platform: 'win32', windowsEventCount: 12, fingerprint: 'b', ...window(T) }];
   assert.equal(hostComparison(rows).delta, 4);
   assert.equal(hostComparison(rows, 'nonmatching-previous-pair'), null);
   assert.equal(hostComparison(rows, [T - 20_000, 'a', T, 'b'].join(':')).delta, 4);
@@ -498,7 +508,7 @@ test('host aggregate export removes its anchor when a browser click fails and re
     const latest=normalizeHostObservation(await report('win32',Date.now()));
     const state={pending:false,latest,history:[],error:null,requestId:0};
     const root=hostPanel(state,'disconnected');
-    const output=root.find(el=>el.tagName==='BUTTON'&&el.textContent.includes('비식별 집계'));
+    const output=root.find(el=>el.tagName==='BUTTON'&&el.textContent.includes('주소·식별자 제외 집계'));
     const attached=[],revoked=[],timers=[];
     document.body={append(link){attached.push(link);}};
     const create=document.createElement;
@@ -523,4 +533,68 @@ test('host aggregate export removes its anchor when a browser click fails and re
     assert.equal(timers.length,1);assert.equal(timers[0].delay,5000);
     timers[0].fn();assert.deepEqual(revoked,['blob:fixture-host']);
   });
+});
+
+test('independent network evidence retains a valid count and never exports a failed DNS array as zero', async () => {
+  const raw = await report('win32', T);
+  raw.network.dns = [];
+  raw.network.status = 'partial';
+  raw.network.reason = 'NETWORK_PARTIAL';
+  raw.network.parts.dns.status = 'unavailable';
+  raw.network.parts.dns.reason = 'NETWORK_DNS_READ_FAILED';
+  const parsed = normalizeHostObservation(raw, T);
+  assert.equal(parsed.network.parts.interfaces.status, 'ok');
+  const evidence = buildClaireHostAggregateEvidence(parsed, new Date(T).toISOString());
+  assert.equal(evidence.measurements.networkInterfaces.value, 1);
+  assert.equal(evidence.measurements.networkInterfaces.status, 'observed');
+  assert.equal(evidence.measurements.dnsServers.value, null);
+  assert.equal(evidence.measurements.dnsServers.reason, 'NETWORK_DNS_READ_FAILED');
+  assert.doesNotMatch(JSON.stringify(evidence), /fe80::1|eth0/);
+});
+test('legacy v1 report without parts keeps the old validation contract', async () => {
+  const raw = await report('win32', T);
+  delete raw.network.parts;
+  assert.equal(normalizeHostObservation(raw, T).network.status, 'ok');
+  raw.network.dns = ['not-an-address'];
+  assert.equal(normalizeHostObservation(raw, T).network.status, 'unavailable');
+});
+test('different report generation times with the same Windows window are not a moving-window comparison', async () => {
+  const raw = await report('win32', T);
+  const first = normalizeHostObservation(raw, T);
+  const second = structuredClone(raw);
+  second.producedAt = new Date(T + 1000).toISOString();
+  second.windowsEvents.system.warning += 3;
+  let history = hostHistoryTransition([], first, 'a').history;
+  history = hostHistoryTransition(history, normalizeHostObservation(second, T + 1000), 'b').history;
+  assert.equal(hostComparison(history), null);
+  const next = normalizeHostObservation(await report('win32', T + 5000), T + 5000);
+  history = hostHistoryTransition(history, next, 'c').history;
+  const compared = hostComparison(history);
+  assert.equal(compared.from, T);
+  assert.equal(compared.to, T + 5000);
+  assert.equal(compared.delta, -3);
+});
+
+test('a future DNS observation cannot certify the aggregate network freshness', async () => {
+  const raw = await report('win32', T);
+  raw.network.parts.dns.measuredAt = new Date(T + 10_000).toISOString();
+  const parsed = normalizeHostObservation(raw, T);
+  assert.equal(hostReportQuality(parsed, T).feeds.network.freshness, 'clock_skew');
+  const evidence = buildClaireHostAggregateEvidence(parsed, new Date(T).toISOString());
+  assert.equal(evidence.measurements.dnsServers.freshness, 'clock_skew');
+  assert.equal(evidence.measurements.networkInterfaces.freshness, 'recent');
+});
+test('two unavailable network sources retain independent reasons without reporting zero', async () => {
+  const raw = await report('win32', T);
+  raw.network.status = 'unavailable';
+  raw.network.reason = 'NETWORK_READ_FAILED';
+  raw.network.interfaces = [];
+  raw.network.dns = [];
+  Object.assign(raw.network.parts.interfaces, { status:'unavailable', reason:'NETWORK_INTERFACE_READ_FAILED' });
+  Object.assign(raw.network.parts.dns, { status:'unavailable', reason:'PERMISSION_DENIED' });
+  const evidence = buildClaireHostAggregateEvidence(normalizeHostObservation(raw, T), new Date(T).toISOString());
+  assert.equal(evidence.measurements.networkInterfaces.value, null);
+  assert.equal(evidence.measurements.networkInterfaces.reason, 'NETWORK_INTERFACE_READ_FAILED');
+  assert.equal(evidence.measurements.dnsServers.value, null);
+  assert.equal(evidence.measurements.dnsServers.reason, 'PERMISSION_DENIED');
 });

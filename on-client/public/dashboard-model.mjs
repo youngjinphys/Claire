@@ -176,15 +176,7 @@ export function pairedSamples(history) {
     && finite(point?.memory) && point.cpu >= 0 && point.cpu <= 100
     && point.memory >= 0 && point.memory <= 100);
 }
-export function trendSummary(history) {
-  if (!Array.isArray(history)) return null;
-  // Only compare continuous, paired samples; a failed or partial read breaks the baseline.
-  let segment = [];
-  for (const point of history) {
-    if (!finite(point?.time) || !finite(point?.cpu) || !finite(point?.memory) || point.cpu < 0 || point.cpu > 100 || point.memory < 0 || point.memory > 100) segment = [];
-    else if (segment.length && (point.time <= segment.at(-1).time || point.time - segment.at(-1).time > MAX_CONTIGUOUS_GAP_MS)) segment = [point];
-    else segment.push(point);
-  }
+function summarizePairedSegment(segment) {
   if (segment.length < 2) return null;
   const from = segment[0], to = segment.at(-1);
   return {
@@ -199,6 +191,31 @@ export function trendSummary(history) {
   };
 }
 
+// Keep the existing strict current-segment contract; the completed view is
+// independently derived from retained samples and cannot reconnect a gap.
+function pairedTrendSegments(history) {
+  let current = [], completed = null;
+  const finish = () => {
+    if (current.length >= 2) completed = summarizePairedSegment(current);
+    current = [];
+  };
+  for (const point of Array.isArray(history) ? history : []) {
+    if (!finite(point?.time) || !finite(point?.cpu) || !finite(point?.memory)
+      || point.cpu < 0 || point.cpu > 100 || point.memory < 0 || point.memory > 100) { finish(); continue; }
+    if (current.length && (point.time <= current.at(-1).time || point.time - current.at(-1).time > MAX_CONTIGUOUS_GAP_MS)) finish();
+    current.push(point);
+  }
+  return { current: summarizePairedSegment(current), completed };
+}
+
+export function trendSummary(history) {
+  return pairedTrendSegments(history).current;
+}
+
+export function completedTrendSummary(history) {
+  return pairedTrendSegments(history).completed;
+}
+
 // Bind successful live SDP envelopes to the caller's observed HTTP interval.
 // Stored fixtures omit timing; no wall-clock time is invented for historical data.
 function responseTimeValid(checkedAt, timing) {
@@ -209,7 +226,16 @@ function responseTimeValid(checkedAt, timing) {
     && Date.parse(checkedAt) <= timing.receivedAt + 1000
     && timing.receivedAt - Date.parse(checkedAt) <= MAX_MEASUREMENT_AGE_MS;
 }
-export function normalizeSecurity(response, timing = null) {
+// A local transport failure is an independent fact from the response's
+// unverified SDP mode. Only the caller's closed set of local errors is accepted.
+const LOCAL_TRANSPORT_FAILURES = new Set(['LOCAL_FETCH_FAILED','REQUEST_CANCELLED','RESPONSE_TOO_LARGE','RESPONSE_CONTRACT_INVALID']);
+export function localTransportReason(error) {
+  return LOCAL_TRANSPORT_FAILURES.has(error?.message) ? error.message : 'LOCAL_FETCH_FAILED';
+}
+export function normalizeSecurity(response, timing = null, localFailure = null) {
+  if (response === null && LOCAL_TRANSPORT_FAILURES.has(localFailure)) {
+    return { status: 'unavailable', reason: localFailure, mode: 'unknown', checkedAt: null };
+  }
   const mode = response?.meta?.mode;
   const checkedAt = isIso(response?.meta?.checkedAt) ? response.meta.checkedAt : null;
   if (!['connected','demo','disconnected'].includes(mode)) return { status:'unavailable', reason:'SOURCE_MODE_UNVERIFIED', mode:'unknown', checkedAt };
@@ -262,7 +288,10 @@ function coverageValid(coverage, expected, checkedAt, timing) {
     && timing.receivedAt - coverage.observedAtMs <= 20000;
 }
 
-export function normalizeEvents(response, timing = null) {
+export function normalizeEvents(response, timing = null, localFailure = null) {
+  if (response === null && LOCAL_TRANSPORT_FAILURES.has(localFailure)) {
+    return { status: 'unavailable', reason: localFailure, mode: 'unknown', checkedAt: null, events: [] };
+  }
   const mode = response?.meta?.mode;
   const checkedAt = isIso(response?.meta?.checkedAt) ? response.meta.checkedAt : null;
   if (!['connected', 'demo', 'disconnected'].includes(mode)) return { status: 'unavailable', reason: 'SOURCE_MODE_UNVERIFIED', checkedAt, mode: 'unknown', events: [] };

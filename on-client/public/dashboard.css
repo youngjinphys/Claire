@@ -373,3 +373,10 @@ footer { padding: 14px 0 7px; border-top: 1px solid var(--line); color: var(--mu
 @media (max-width: 420px) {
   .resource-metrics { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Compact the summary on small screens without hiding failures or source time. */
+@media (max-width: 560px) {
+  #integrated-host-root [data-host-card] { min-height: 128px; padding: 12px 10px !important; }
+  #integrated-host-root [data-host-card] strong { margin: 9px 0 7px !important; }
+  #integrated-host-root [data-host-card] p { margin: 4px 0; }
+}

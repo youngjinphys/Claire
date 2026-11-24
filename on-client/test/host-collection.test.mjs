@@ -32,9 +32,12 @@ test('permission failures and network read errors fail closed, not 0 or firewall
   assert.equal(logs.system.warning, null);
   assert.equal(logs.application.error, null);
   assert.doesNotMatch(JSON.stringify({ firewall, logs }), /sensitive path/);
-  const network = readNetwork({ networkInterfaces: () => { throw Error('private path'); }, clock: () => T });
-  assert.equal(network.status, 'unavailable');
+  const network = readNetwork({ networkInterfaces: () => { throw Error('private path'); }, dnsServers: dns, clock: () => T });
+  assert.equal(network.status, 'partial');
   assert.equal(network.interfaces.length, 0);
+  assert.equal(network.parts.interfaces.status, 'unavailable');
+  assert.equal(network.parts.dns.status, 'ok');
+  assert.deepEqual(network.dns, ['1.1.1.1']);
 });
 test('Windows fixed PowerShell scripts contain only read-only APIs and bounded 24h event filters', async () => {
   const commands = [];
@@ -171,4 +174,19 @@ test('incomplete Windows profile reads and unconfigured Enabled never imply a co
   assert.equal(sample.profiles[0].enabled, null);
   const denied = await readFirewall({ platform: 'win32', clock: () => T, run: async () => { throw Error('Access is denied'); } });
   assert.equal(denied.reason, 'PERMISSION_DENIED');
+});
+
+test('network feeds fail independently and an empty successful resolver result is not a failed read', () => {
+  const sample = readNetwork({ networkInterfaces: iface, dnsServers: () => { throw Error('fixture'); }, clock: () => T });
+  assert.equal(sample.status, 'partial');
+  assert.equal(sample.interfaces.length, 2);
+  assert.equal(sample.parts.interfaces.status, 'ok');
+  assert.equal(sample.parts.dns.reason, 'NETWORK_DNS_READ_FAILED');
+  const empty = readNetwork({ networkInterfaces: iface, dnsServers: () => [], clock: () => T });
+  assert.equal(empty.parts.dns.status, 'ok');
+  assert.deepEqual(empty.dns, []);
+  const neither = readNetwork({ networkInterfaces: () => { throw Error('fixture'); }, dnsServers: () => { throw Error('fixture'); }, clock: () => T });
+  assert.equal(neither.status, 'unavailable');
+  assert.equal(neither.parts.interfaces.status, 'unavailable');
+  assert.equal(neither.parts.dns.status, 'unavailable');
 });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createLocalPcSampler } from '../src/local-pc-metrics.mjs';
 import {
-  appendSample, appendGap, normalizeSnapshot, normalizeEvents, normalizeSecurity, trendSummary,
+  appendSample, appendGap, normalizeSnapshot, normalizeEvents, normalizeSecurity, trendSummary, completedTrendSummary, localTransportReason,
   MAX_SAMPLES, HISTORY_WINDOW_MS, seriesSegments, securityCardState, pairedSamples, readingFreshness, trimHistory, exportMeasurements,
 } from '../public/dashboard-model.mjs';
 
@@ -279,4 +279,39 @@ test('trend peak reports only actual samples in the latest uninterrupted paired 
   assert.equal(summary.memoryPeak, 65);
   assert.equal(summary.cpuSamples, 3);
   assert.equal(summary.from, t + 15000);
+});
+
+test('only explicitly supplied local transport failures survive unknown SDP attribution', () => {
+  const now = Date.now(), timing = { requestedAt: now, receivedAt: now };
+  for (const normalize of [normalizeSecurity, normalizeEvents]) {
+    for (const reason of ['LOCAL_FETCH_FAILED','REQUEST_CANCELLED','RESPONSE_TOO_LARGE','RESPONSE_CONTRACT_INVALID']) {
+      const failure = normalize(null, timing, reason);
+      assert.equal(failure.mode, 'unknown');
+      assert.equal(failure.status, 'unavailable');
+      assert.equal(failure.reason, reason);
+      assert.equal(failure.checkedAt, null);
+    }
+    assert.equal(normalize(null, timing, 'PRIVATE_MESSAGE').reason, 'SOURCE_MODE_UNVERIFIED');
+    const untrusted = { ok: false, meta: { mode: 'unknown' }, error: { code: 'LOCAL_FETCH_FAILED' } };
+    assert.equal(normalize(untrusted, timing).reason, 'SOURCE_MODE_UNVERIFIED');
+  }
+  assert.equal(localTransportReason(Error('RESPONSE_TOO_LARGE')), 'RESPONSE_TOO_LARGE');
+  assert.equal(localTransportReason(Error('private path')), 'LOCAL_FETCH_FAILED');
+});
+test('a stopped or failed interval retains its last completed paired summary without connecting later samples', () => {
+  const t = Date.now() - 30000;
+  const good = [{ time:t,cpu:10,memory:20 }, { time:t+5000,cpu:60,memory:40 }];
+  const stopped = appendGap(good, t+6000);
+  assert.equal(trendSummary(stopped), null);
+  assert.equal(completedTrendSummary(stopped).cpuPeak, 60);
+  assert.equal(completedTrendSummary(stopped).to, t+5000);
+  const next = [...stopped, { time:t+10000,cpu:5,memory:10 }];
+  assert.equal(trendSummary(next), null);
+  assert.equal(completedTrendSummary(next).cpuDelta, 50);
+  next.push({ time:t+15000,cpu:7,memory:12 });
+  assert.equal(trendSummary(next).cpuDelta, 2);
+  const ended = appendGap(next, t+16000);
+  assert.equal(completedTrendSummary(ended).cpuPeak, 7);
+  assert.equal(completedTrendSummary(trimHistory(ended, t+HISTORY_WINDOW_MS+20000)), null);
+  assert.equal(completedTrendSummary(good), null);
 });
