@@ -2,23 +2,20 @@
   "schema": "claire.commit-files.v1",
   "files": [
     "README.md",
+    "on-client/public/app.js",
     "on-client/public/dashboard.css",
     "on-client/public/dashboard.html",
+    "on-client/public/dashboard.mjs",
     "on-client/public/index.html",
     "on-client/public/style.css",
-    "on-client/test/dashboard.test.mjs",
+    "on-client/student/extension.mjs",
+    "on-client/test/student-host-view.test.mjs",
+    "on-client/tools/dashboard-browser-smoke.mjs",
     "package/commit-files.json",
     "public/index.html",
-    "public/observatory-theme.css",
-    "public/offline.html",
     "public/operations.css",
     "public/operations.mjs",
-    "public/sw.js",
-    "scripts/operations-chart-browser-smoke.mjs",
-    "test/offline-recovery.test.mjs",
-    "test/operations-chart-focus-ui.test.mjs",
-    "test/operations-ui-race.test.mjs",
-    "test/responsive-layout.test.mjs"
+    "scripts/operations-chart-browser-smoke.mjs"
   ],
-  "releaseNote": "Improve navigation, focus visibility, dashboard state retention and offline recovery across the Claire client and operations portal."
+  "releaseNote": "Keep keyboard focus and section headings visible, distinguish unmeasured resources, and reflow evidence rows on mobile."
 }

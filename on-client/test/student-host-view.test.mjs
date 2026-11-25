@@ -372,7 +372,11 @@ test('selected local report stays pending and latest mounted student panel recei
     file.files = [{ size: 8000, text: () => new Promise(resolve => { finish = resolve; }) }];
     const reading = file.dispatch('change');
     assert.equal(state.pending, true);
-    assert.equal(original.find(el => el.tagName === 'BUTTON').disabled, true);
+    const choose = original.find(el => el.tagName === 'BUTTON');
+    assert.notEqual(choose.disabled, true, 'keep the selection control focusable');
+    assert.equal(choose.getAttribute('aria-disabled'), 'true');
+    file.click = () => assert.fail('a pending read must not reopen the file chooser');
+    await choose.dispatch('click');
     const replacement = hostPanel(state,'disconnected');
     assert.equal(replacement.getAttribute('aria-busy'), 'true');
     finish(JSON.stringify(await report('win32', Date.now())));
@@ -380,7 +384,7 @@ test('selected local report stays pending and latest mounted student panel recei
     assert.equal(state.pending, false);
     assert.equal(state.error, null);
     assert.match(replacement.textContent, /4건 \/ 24시간/);
-    assert.equal(replacement.find(el => el.tagName === 'BUTTON').disabled, false);
+    assert.equal(replacement.find(el => el.tagName === 'BUTTON').getAttribute('aria-disabled'), 'false');
   });
 });
 

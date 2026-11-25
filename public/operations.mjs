@@ -80,7 +80,19 @@ function validateSnapshot(body) {
   }
 }
 
-function dataCell(tr, cls, value) { tr.append($('td',cls,value)); }
+function dataCell(tr, cls, value) {
+  const cell = $('td', cls);
+  cell.setAttribute('role', 'cell');
+  if (typeof value === 'string') cell.textContent = value;
+  else cell.append(value);
+  const label = $('span', 'cell-label');
+  label.setAttribute('aria-hidden', 'true');
+  label.setAttribute('data-label', ledgerColumns[tr.children.length]);
+  cell.append(label);
+  tr.append(cell);
+}
+const ledgerColumns = Array.from(byId('evidence-columns').children, header => header.textContent);
+
 function createChart(onFilter) {
   const svg=byId('outcomes-chart');
   svg.replaceChildren();
@@ -155,6 +167,20 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null,reques
   const table=byId('evidence-body');
   const count=byId('table-count');
   const exportButton=byId('ops-export');
+  const scroller = byId('evidence-scroll');
+  scroller.addEventListener('focus', () => {
+    if (scroller.matches(':focus-visible')) {
+      scroller.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+    }
+  });
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(() => {
+      const scrolls = scroller.scrollHeight > scroller.clientHeight || scroller.scrollWidth > scroller.clientWidth;
+      scroller.tabIndex = scrolls ? 0 : -1;
+    });
+    observer.observe(scroller);
+    observer.observe(byId('evidence-table'));
+  }
   function rows() {
     const records=new Map(snapshot?.records.map(x=>[x.id,x])||[]);
     const filtered=cases.filter(c=>(stage.value==='all'||String(c.stage)===stage.value)
@@ -165,9 +191,12 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null,reques
       const r=records.get(c.probeId);
       const state=r?.outcome||'unrun';
       const tr=$('tr');
+      tr.setAttribute('role','row');
       dataCell(tr,'',c.stage.toString().padStart(2,'0'));
       dataCell(tr,'',modeLabel(c.mode));
-      dataCell(tr,'',c.title+' — '+c.request);
+      const request=$('span','',c.title);
+      request.append($('code','request-path',c.request));
+      dataCell(tr,'',request);
       dataCell(tr,'',c.expected);
       dataCell(tr,state==='unrun'?'status-unrun':'status-'+state,
         r?.httpStatus==null?(state==='unrun'?'미실행':'응답 없음'):('HTTP '+r.httpStatus+(r.errorCode?' '+r.errorCode:'')));
@@ -178,7 +207,10 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null,reques
     }
     if (!filtered.length) {
       const row = $('tr');
-      const message = $('td','table-empty','조건에 맞는 항목이 없습니다.');
+      row.setAttribute('role','row');
+      const message = $('td','table-empty');
+      message.setAttribute('role','cell');
+      message.append($('span','','조건에 맞는 항목이 없습니다.'));
       message.colSpan = 8;
       row.append(message);
       table.append(row);

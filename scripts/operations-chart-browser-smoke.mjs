@@ -194,15 +194,17 @@ async function main(){
       await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
       const stops=await evaluate(`(()=>{
         document.querySelector('.skip').focus();
-        const targets=[...document.querySelectorAll('.brand,.mainnav a,#ops-refresh,#ops-export,.metric-help summary,.bar-column,#filter-stage')];
+        const targets=[...document.querySelectorAll('.brand,.mainnav a,#ops-refresh,#ops-export,.metric-help summary,.bar-column,.table-bar select,#ops-reset,#evidence-scroll')];
         document.addEventListener('focusin',event=>{
           const el=event.target;
           window.__qaTabFrame=new Promise(resolve=>requestAnimationFrame(()=>{
             const rect=el.getBoundingClientRect(),style=getComputedStyle(el);
             const ring=style.outlineStyle==='none'?0:Math.max(0,parseFloat(style.outlineWidth)+parseFloat(style.outlineOffset));
+            const header=document.querySelector('.topbar');
+            const inset=el.id==='evidence-scroll' && getComputedStyle(header).position==='sticky' ? header.getBoundingClientRect().bottom : 0;
             resolve({index:targets.indexOf(el),label:el.id||el.getAttribute('aria-label')||el.textContent,
               visible:document.activeElement===el && rect.width>0 && rect.height>0
-                && rect.left-ring>=0 && rect.top-ring>=0 && rect.right+ring<=innerWidth && rect.bottom+ring<=innerHeight});
+                && rect.left-ring>=0 && rect.top-ring>=inset && rect.right+ring<=innerWidth && rect.bottom+ring<=innerHeight});
           }));
         },{signal:(window.__qaTabListener=new AbortController()).signal});
         return targets.length;
@@ -297,13 +299,44 @@ async function main(){
       }
       await evaluate("document.querySelector('#filter-state').value='failed';document.querySelector('#filter-state').dispatchEvent(new Event('change'))");
       assert.match(await evaluate("document.querySelector('#evidence-body').textContent"),/조건에 맞는 항목이 없습니다/);
-      assert.equal(await evaluate("document.querySelector('.table-wrap').tabIndex"),0);
+      await observed("document.getElementById('evidence-scroll').tabIndex===-1",'empty ledger has no unnecessary tab stop');
+      if(width===320){
+        await cmd('Emulation.setDeviceMetricsOverride',{width:768,height:900,deviceScaleFactor:1,mobile:false});
+        await observed("document.getElementById('evidence-scroll').tabIndex===0",'tablet ledger can scroll with the keyboard');
+        const emptyVisible=await evaluate(`(async()=>{
+          const wrap=document.getElementById('evidence-scroll');
+          document.getElementById('ops-reset').click();
+          wrap.scrollLeft=wrap.scrollWidth;
+          const filter=document.getElementById('filter-state');
+          filter.value='failed';filter.dispatchEvent(new Event('change'));
+          await new Promise(requestAnimationFrame);
+          const area=wrap.getBoundingClientRect();
+          const hint=document.querySelector('.table-empty > span').getBoundingClientRect();
+          return wrap.scrollLeft>0 && hint.width>0 && hint.left>=area.left && hint.right<=area.right;
+        })()`);
+        assert.ok(emptyVisible,'empty result remains readable at the far edge of a scrolled table');
+        await cmd('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+      }
       // A response updates the same controls; exercise a formerly-zero bar again.
       await evaluate("window.__chartQaFirst=document.querySelector('#outcomes-chart .bar-column');window.__chartQaFirst.focus()");
       current=refreshed;await evaluate("document.getElementById('ops-refresh').click()");
       await observed("document.querySelector('#outcomes-chart .bar-column').getAttribute('aria-label').includes('1건')",'refreshed snapshot');
       assert.equal(await evaluate("document.activeElement===window.__chartQaFirst && document.querySelector('#outcomes-chart .bar-column')===window.__chartQaFirst"),true,'focus retained');
       await click(109,100,'verified',false);
+      if(width===320){
+        const ledger=await evaluate(`(()=>{
+          const wrap=document.getElementById('evidence-scroll'),area=wrap.getBoundingClientRect();
+          const row=document.querySelector('#evidence-body tr'),cells=[...row.cells];
+          return {width:wrap.clientWidth,scrollWidth:wrap.scrollWidth,columns:cells.length,
+            visible:cells.every(cell=>{
+              const bounds=cell.getBoundingClientRect();
+              return bounds.width>0 && bounds.left>=area.left && bounds.right<=area.right;
+            }),observation:cells[4].innerText};
+        })()`);
+        assert.equal(ledger.scrollWidth,ledger.width,'phone ledger needs no sideways scrolling');
+        assert.equal(ledger.columns,8);assert.ok(ledger.visible,'all observation fields fit the phone ledger');
+        assert.match(ledger.observation,/HTTP 200/u);
+      }
       current=incomplete;
       let releaseResponse;
       pendingResponse=new Promise(resolve=>{releaseResponse=resolve;});

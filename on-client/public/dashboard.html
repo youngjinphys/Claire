@@ -90,24 +90,24 @@
           </div>
         <div id="page-notice" class="page-notice" role="status" aria-live="polite">측정을 시작하면 CPU·메모리·디스크의 실제 로컬 관측값이 표시됩니다. 측정 전에는 예시 수치를 넣지 않습니다.</div>
 
-        <section class="metrics-grid resource-metrics" aria-label="PC 자원 실측 카드 3개">
-          <article class="metric-card" id="cpu-card" data-state="unavailable">
+        <section class="resource-metrics" aria-label="PC 자원 실측 카드 3개">
+          <article class="metric-card" id="cpu-card" data-state="idle">
             <div class="metric-top"><h2>CPU 사용률</h2></div>
-            <div class="metric-reading"><strong id="cpu-value">확인 불가</strong><span id="cpu-unit">%</span></div>
+            <div class="metric-reading"><strong id="cpu-value">미측정</strong><span id="cpu-unit">%</span></div>
             <p class="metric-detail" id="cpu-detail">두 시점의 OS 누적 시간 차이</p>
             <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="cpu-time">미측정</span></div>
             <p class="metric-reason" id="cpu-reason">관측 시작 전</p>
           </article>
-          <article class="metric-card" id="memory-card" data-state="unavailable">
+          <article class="metric-card" id="memory-card" data-state="idle">
             <div class="metric-top"><h2>메모리 사용률</h2></div>
-            <div class="metric-reading"><strong id="memory-value">확인 불가</strong><span id="memory-unit">%</span></div>
+            <div class="metric-reading"><strong id="memory-value">미측정</strong><span id="memory-unit">%</span></div>
             <p class="metric-detail" id="memory-detail">os.freemem 기준 · OS별 캐시 처리 상이</p>
             <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="memory-time">미측정</span></div>
             <p class="metric-reason" id="memory-reason">관측 시작 전</p>
           </article>
-          <article class="metric-card" id="disk-card" data-state="unavailable">
+          <article class="metric-card" id="disk-card" data-state="idle">
             <div class="metric-top"><h2>디스크 여유 공간</h2></div>
-            <div class="metric-reading"><strong id="disk-value">확인 불가</strong><span id="disk-unit">GiB</span></div>
+            <div class="metric-reading"><strong id="disk-value">미측정</strong><span id="disk-unit">GiB</span></div>
             <p class="metric-detail" id="disk-detail">앱 폴더가 위치한 파일시스템 기준</p>
             <div class="metric-bottom"><span class="source-pill">PC 실측</span><span id="disk-time">미측정</span></div>
             <p class="metric-reason" id="disk-reason">관측 시작 전</p>
@@ -125,7 +125,7 @@
             </div>
             <div class="chart-frame">
               <svg id="resource-chart" viewBox="0 0 920 224" role="img" aria-label="최근 10분 CPU 실선·메모리 점선 사용률 차트. 수치·시각은 아래 측정 기록에서 확인." preserveAspectRatio="xMidYMid meet"></svg>
-              <div id="chart-empty" class="chart-empty">관측값이 없습니다. 추이를 비교하려면 유효한 표본이 두 개 이상 필요합니다.</div>
+              <div id="chart-empty" class="chart-empty"><span>관측값이 없습니다. 추이를 비교하려면 유효한 표본이 두 개 이상 필요합니다.</span></div>
             </div>
             <div class="chart-footer"><span>10분 전</span><span>관측값 단위: % · 세로축 0–100</span><span>현재</span></div>
           </section>

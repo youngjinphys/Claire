@@ -26,6 +26,7 @@
 }
 
 * { box-sizing: border-box; }
+html { scroll-padding-block: 12px; }
 body { margin: 0; min-width: 320px; word-break: keep-all; overflow-wrap: anywhere; }
 h1 { font-size: clamp(1.55rem, 2vw, 2rem); line-height: 1.35; letter-spacing: -.035em; margin: 0 0 20px; }
 h2 { font-size: 1.05rem; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -81,6 +82,7 @@ h4 { font-size: 0.9rem; margin: 0 0 4px; color: var(--muted); }
 #nav [role="tab"][aria-selected="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 main { width: 100%; padding: 30px clamp(24px, 3.2vw, 52px) 48px; max-width: 1400px; }
 main:focus { outline: none; }
+.view { scroll-margin-block-start: 16px; }
 
 .sidebar-tools {
   border-top: 1px solid var(--border); margin-top: 16px; padding: 8px 12px 0;
@@ -129,6 +131,7 @@ main:focus { outline: none; }
   background: var(--unknown-soft); color: var(--unknown); margin-left: 4px;
 }
 .tag-student { padding: 0; margin: 0; border-radius: 0; background: none; color: var(--student); }
+.protection-summary .tag { margin: 0; padding: 0; color: var(--muted); background: none; }
 .tag-demo { background: var(--challenge-soft); color: var(--challenge); }
 
 .muted { color: var(--muted); font-size: 0.875rem; }
@@ -171,7 +174,7 @@ main:focus { outline: none; }
 
 /* 기록 */
 .records { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.event { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.event { border-top: 1px solid var(--border); padding-block: 16px 4px; }
 .event-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .event-head h3 { margin-right: 6px; }
 .event .grid-2 { margin: 8px 0; }
@@ -265,5 +268,7 @@ main:focus { outline: none; }
   .identity { grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; }
   .kv { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
   .kv dt { margin-top: 8px; }
+  .event .kv { grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; }
+  .event .kv dt { margin: 0; }
   .mode-badge { max-width: 100%; overflow-wrap: anywhere; text-align: center; }
 }

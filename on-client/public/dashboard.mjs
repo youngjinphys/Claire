@@ -110,6 +110,15 @@ function restoreHostView(saved, restoreFocus = true) {
   }
   return restoredFocus;
 }
+function showReportPlaceholder(details) {
+  if (hostState.latest || details.children.length) return;
+  const note = document.createElement('p');
+  note.className = 'records-note';
+  note.textContent = hostState.pending ? '선택한 보고서를 확인하고 있습니다.'
+    : hostState.error ? '선택한 보고서를 표시할 수 없습니다. 내 PC 관제에서 보고서를 다시 선택하세요.'
+      : '내 PC 관제에서 보고서를 선택하면 여기에 원천별 세부 정보가 표시됩니다.';
+  details.append(note);
+}
 function renderHostObservation(mode, retry = false) {
   if (!hostPanel) return;
   const normalizedMode = ['connected', 'demo', 'disconnected'].includes(mode) ? mode : 'unknown';
@@ -123,13 +132,14 @@ function renderHostObservation(mode, retry = false) {
     const panel = hostPanel(hostState, normalizedMode);
     const details = panel?.querySelector?.('[data-host-report-details]');
     if (!panel || !details) throw Error('HOST_RENDER_UNAVAILABLE');
+    showReportPlaceholder(details);
     $('host-report-content').replaceChildren(details);
     $('integrated-host-root').replaceChildren(panel);
     const redraw = hostState.hostRedraw;
     if (typeof redraw === 'function') {
       hostState.hostRedraw = () => {
         const previous = hostViewState();
-        try { redraw(); restoreHostView(previous); }
+        try { redraw(); showReportPlaceholder(details); restoreHostView(previous); }
         catch { showHostRenderFailure(previous); }
       };
     }
@@ -254,8 +264,8 @@ function showMetric(key, snapshot) {
   const metric = snapshot?.metrics?.[key];
   const freshness = readingFreshness(metric?.measuredAt);
   const valid = metric?.status === 'ok' && freshness === 'recent';
-  element.dataset.state = valid ? 'ok' : 'unavailable';
-  set(key + '-value', valid ? metric.value.toFixed(key === 'disk' ? 2 : 1) : '확인 불가');
+  element.dataset.state = !snapshot ? 'idle' : valid ? 'ok' : 'unavailable';
+  set(key + '-value', !snapshot ? '미측정' : valid ? metric.value.toFixed(key === 'disk' ? 2 : 1) : '확인 불가');
   set(key + '-unit', key === 'disk' ? 'GiB' : '%');
   const stamp = metric?.measuredAt || null;
   set(key + '-time', stamp ? (metric.status === 'ok' ? '' : '조회 시도 ') + dateText(stamp) : '미측정');

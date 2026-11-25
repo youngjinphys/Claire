@@ -958,7 +958,7 @@ export function hostPanel(state, mode) {
           + ' · 사용자 선택 파일(원본·실측 여부 미인증) · 조회 실패를 예시 수치로 대체하지 않습니다.'
           : HOST_REASON_GUIDANCE.NOT_SELECTED;
     region.setAttribute('aria-busy', state.pending ? 'true' : 'false');
-    retry.disabled = state.pending === true;
+    // The click guard blocks repeat selection while the file reads, preserving keyboard focus.
     retry.setAttribute('aria-disabled', state.pending ? 'true' : 'false');
     exportButton.disabled = state.pending === true || state.hostConflict === true || state.latest?.status !== 'ok';
     exportButton.setAttribute('aria-disabled', exportButton.disabled ? 'true' : 'false');

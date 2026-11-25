@@ -79,8 +79,23 @@ async function main() {
     await cmd('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
     await cmd('Page.navigate', { url: origin + '/dashboard.html' });
     await observed("document.readyState === 'complete' && document.querySelectorAll('[data-host-card]').length === 4 && document.querySelectorAll('.metric-card').length === 3", 'four host cards and three resource cards');
-    assert.equal(await evaluate("document.getElementById('cpu-value').textContent"), '확인 불가');
+    assert.equal(await evaluate("document.getElementById('cpu-value').textContent"), '미측정');
     await observed("document.getElementById('events-origin').textContent.includes('예제 DEMO')", 'DEMO evidence');
+    await observed("document.querySelector('#host-report-content').textContent.includes('보고서를 선택하면')", 'empty report guidance after mount');
+    await evaluate(`(() => {
+      const input = document.querySelector('#integrated-host-root input[type=file]');
+      const chooser = document.querySelector('#integrated-host-root button');
+      chooser.focus();
+      const file = new File(['{}'], 'invalid.json', {type:'application/json'});
+      file.text = () => new Promise(resolve => { window.__qaFinishFile = () => resolve('{}'); });
+      const files = new DataTransfer(); files.items.add(file);
+      input.files = files.files; input.dispatchEvent(new Event('change', {bubbles:true}));
+    })()`);
+    await observed("document.querySelector('#host-report-content').textContent.includes('확인하고 있습니다')", 'pending report guidance');
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#integrated-host-root button')"), true, 'reading must keep keyboard focus');
+    await evaluate("document.querySelector('#sample-once').focus(); window.__qaFinishFile(); delete window.__qaFinishFile");
+    await observed("document.querySelector('#host-report-content').textContent.includes('다시 선택')", 'invalid report recovery');
+    assert.equal(await evaluate("document.activeElement.id"), 'sample-once', 'read completion must respect later focus');
     await evaluate("document.getElementById('sample-once').focus();document.getElementById('sample-once').click()");
     await observed("document.getElementById('cpu-time').textContent !== '미측정' && document.getElementById('sample-once').getAttribute('aria-disabled') === 'false'", 'PC measurement', 20000);
     assert.equal(await evaluate('document.activeElement.id'), 'sample-once', 'one-shot completion must retain keyboard focus');
@@ -206,9 +221,25 @@ async function main() {
     assert.equal(narrow.viewport, 320);
     assert.equal(narrow.cards, 4);
     assert.ok(narrow.width <= narrow.viewport + 4, '320px overflow: ' + JSON.stringify(narrow));
-    for (const width of [320, 390, 768, 1440]) {
+    for (const width of [320, 390, 768, 1280, 1440]) {
       await cmd('Emulation.setDeviceMetricsOverride', { width, height:900, deviceScaleFactor:1, mobile:false });
       await sleep(200);
+      const layout = await evaluate(`(() => {
+        const cards = [...document.querySelectorAll('#integrated-host-root [data-host-card]')];
+        return {
+          hostRows: new Set(cards.map(card => card.offsetTop)).size,
+          readings: [...document.querySelectorAll('.metric-card')].map(card => {
+            const title = card.querySelector('.metric-top').getBoundingClientRect();
+            const value = card.querySelector('.metric-reading').getBoundingClientRect();
+            return {sameRow: title.bottom > value.top && value.bottom > title.top, left: title.left, right: value.right};
+          }),
+        };
+      })()`);
+      assert.equal(layout.hostRows, width >= 1280 ? 1 : 2, width + 'px host summary rows');
+      if (width <= 390) {
+        assert.ok(layout.readings.every(row => row.sameRow && row.left >= 0 && row.right <= width),
+          width + 'px metric names and values should share a visible row');
+      }
       const axis = await evaluate(`(() => {
         const plot = document.getElementById('resource-chart');
         const label = plot.querySelector('text');
@@ -357,6 +388,39 @@ async function main() {
         assert.equal(await evaluate("document.activeElement?.getAttribute('aria-selected')"), 'true', `${width}px ${key} selection`);
       }
     }
+    // The desktop sidebar can switch panels while the old panel is deeply scrolled.
+    await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 600, deviceScaleFactor: 1, mobile: false });
+    await evaluate("document.getElementById('tab-protection').focus();window.scrollTo(0, document.documentElement.scrollHeight)");
+    assert.ok(await evaluate('scrollY > innerHeight'));
+    await cmd('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'End', code: 'End' });
+    await cmd('Input.dispatchKeyEvent', { type: 'keyUp', key: 'End', code: 'End' });
+    assert.ok(await evaluate(`new Promise(resolve => requestAnimationFrame(() => {
+      const title = document.querySelector('#view-records h1').getBoundingClientRect();
+      resolve(document.activeElement.id === 'tab-records' && title.top >= 0 && title.bottom <= innerHeight);
+    }))`), 'switching a scrolled panel must reveal its title on the first frame');
+    // Hold diagnostics while a keyboard user moves on to another control.
+    await evaluate(`(() => {
+      document.getElementById('tab-protection').click();
+      const originalFetch = window.fetch;
+      window.__qaDiagnosticsCalls = 0;
+      window.fetch = (path, options) => {
+        if (path !== '/api/diagnostics') return originalFetch(path, options);
+        window.__qaDiagnosticsCalls++;
+        return new Promise(resolve => {
+          window.__qaReleaseDiagnostics = () => {
+            window.fetch = originalFetch;
+            resolve(originalFetch(path, options));
+          };
+        });
+      };
+      const button = document.getElementById('diag-load');
+      button.focus(); button.click(); button.click();
+    })()`);
+    assert.equal(await evaluate('window.__qaDiagnosticsCalls'), 1);
+    assert.equal(await evaluate('document.activeElement.id'), 'diag-load');
+    await evaluate("document.getElementById('refresh').focus();window.__qaReleaseDiagnostics()");
+    await observed("!document.getElementById('diag-output').hidden", 'diagnostics loaded');
+    assert.equal(await evaluate('document.activeElement.id'), 'refresh');
     // Keep access requests single-flight without removing the focused button.
     // A delayed verdict must preserve a user's subsequent focus choice.
     await evaluate(`(() => {
@@ -384,14 +448,18 @@ async function main() {
       window.fetch = (path, options) => ['/api/me','/api/apps','/api/events','/api/devices','/api/sessions'].includes(path)
         ? Promise.resolve(new Response(JSON.stringify({ok:false,error:{code:'ENGINE_NOT_CONNECTED',message:'예제 연결 실패'},meta:{mode:'disconnected',checkedAt:new Date().toISOString()}}),{status:503,headers:{'content-type':'application/json'}}))
         : window.__qaFetch(path, options);
+      document.getElementById('refresh').focus();
       document.getElementById('refresh').click();
     })()`);
-    await observed("!document.getElementById('refresh').disabled && document.getElementById('mode-badge').dataset.mode === 'disconnected'", 'common connection failure');
+    await observed("!document.getElementById('refresh').hasAttribute('aria-disabled') && document.getElementById('mode-badge').dataset.mode === 'disconnected'", 'common connection failure');
+    assert.equal(await evaluate('document.activeElement.id'), 'refresh');
+    assert.ok(await evaluate("['identity-demo','devices-demo','sessions-demo'].every(id => document.getElementById(id).hidden)"));
     assert.equal(await evaluate("document.querySelectorAll('#error-message li').length"), 1, 'identical failures should share one explanation');
     const errorSummary = await evaluate("document.getElementById('error-message').textContent");
     for (const label of ['로그인 정보', '업무 앱', '보안 기록', '기기', '세션']) assert.ok(errorSummary.includes(label), 'failure summary retains ' + label);
     await evaluate("window.fetch=window.__qaFetch;delete window.__qaFetch;document.getElementById('refresh').click()");
-    await observed("!document.getElementById('refresh').disabled && document.getElementById('error-message').hidden", 'manual connection retry clears common failure');
+    await observed("!document.getElementById('refresh').hasAttribute('aria-disabled') && document.getElementById('error-message').hidden", 'manual connection retry clears common failure');
+    assert.ok(await evaluate("['identity-demo','devices-demo','sessions-demo'].every(id => !document.getElementById(id).hidden)"));
     assert.deepEqual(errors, [], 'no browser JS exceptions');
     console.log('PASS browser: independent SDP reads, pending filter state, keyboard focus/disclosure preservation, local JSON saved, download failure recovery, 1440/390/320 layouts, responsive tab orientation and arrow keys, single-flight access, focus-preserving verdict, grouped failures and manual retry, original-page navigation, zero JS exceptions.');
     console.log('Screenshots (synthetic SDP only; OS figures are from the CI runner): ' + captures);

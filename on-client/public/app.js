@@ -447,6 +447,7 @@ function renderErrors() {
 // ---------- 메뉴 ----------
 
 function selectView(view, { focus = false } = {}) {
+  const changed = state.view !== view;
   state.view = view;
   for (const tab of document.querySelectorAll('#nav [role="tab"]')) {
     const selected = tab.dataset.view === view;
@@ -454,6 +455,10 @@ function selectView(view, { focus = false } = {}) {
     tab.tabIndex = selected ? 0 : -1;
     if (selected && focus) tab.focus();
     $(tab.getAttribute('aria-controls')).hidden = !selected;
+  }
+  const panel = $('view-' + view);
+  if (changed && panel.getBoundingClientRect().top < 0) {
+    panel.scrollIntoView({ block: 'start', behavior: 'instant' });
   }
 }
 
@@ -702,6 +707,7 @@ function noteIdentity(resource) {
 
 function renderIdentity() {
   const me = state.me;
+  $('identity-demo').hidden = me.status !== 'ok' || me.meta?.mode !== 'demo';
   const cells = { user: $('identity-user'), device: $('identity-device'), session: $('identity-session') };
   if (me.status === 'loading') {
     for (const cell of Object.values(cells)) cell.textContent = '불러오는 중';
@@ -716,9 +722,6 @@ function renderIdentity() {
   cells.user.textContent = user.label || user.id;
   cells.device.textContent = `${device.label || device.id} · ${stateLabel('device', device.status)}`;
   cells.session.textContent = `${session.id} · ${stateLabel('session', session.status)}`;
-  if (me.meta && me.meta.mode === 'demo') {
-    for (const cell of Object.values(cells)) cell.append(el('span', { className: 'tag tag-demo', text: 'demo' }));
-  }
 }
 
 // 검증된 coverage 의 확인 시각. 원천이 확인한 시각이며 화면을 그린 시각이 아니다.
@@ -727,13 +730,13 @@ const coverageTime = (coverage) => formatTime(new Date(coverage.observedAtMs).to
 // coverage 문구는 검증된 ok 상태에서만, 목록과 분리된 문단으로 보인다. 오류·불러오는 중에는 남기지 않는다.
 function renderOwnedList(targetId, resource, emptyText, describe, coverageNotice) {
   const target = $(targetId);
+  $(targetId + '-demo').hidden = resource.status !== 'ok' || resource.meta?.mode !== 'demo';
   if (resource.status === 'loading') return setChildren(target, loadingBox());
   if (resource.status === 'error') return setChildren(target, stateBox('error', resource.error.message));
   const notice = resource.coverage && coverageNotice ? coverageNotice(resource.coverage) : null;
   if (resource.data.length === 0) return setChildren(target, stateBox('empty', emptyText), notice);
   setChildren(
     target,
-    resource.meta && resource.meta.mode === 'demo' ? el('p', { className: 'tag tag-demo', text: '예제 데이터' }) : null,
     el('ul', { className: 'plain-list' }, resource.data.map((item) => el('li', {}, describe(item)))),
     notice,
   );
@@ -767,10 +770,11 @@ let diagnosticsText = '';
 
 async function loadDiagnostics() {
   const button = $('diag-load');
+  if (button.getAttribute('aria-disabled') === 'true') return;
   const copy = $('diag-copy');
   const status = $('diag-status');
   const output = $('diag-output');
-  button.disabled = true;
+  button.setAttribute('aria-disabled', 'true');
   copy.disabled = true;
   diagnosticsText = '';
   status.textContent = '도움정보를 불러오는 중…';
@@ -792,7 +796,7 @@ async function loadDiagnostics() {
     copy.disabled = false;
     status.textContent = '아래 내용을 직접 확인한 뒤 복사하세요. 복사 전에는 어디에도 전송되지 않습니다.';
   } finally {
-    button.disabled = false;
+    button.removeAttribute('aria-disabled');
   }
 }
 
@@ -1383,7 +1387,7 @@ async function loadAll() {
   clearVulnerabilities();
 
   const refresh = $('refresh');
-  refresh.disabled = true;
+  refresh.setAttribute('aria-disabled', 'true');
   refresh.textContent = '불러오는 중…';
   state.checkedAt = null;
   for (const key of Object.keys(PATHS)) {
@@ -1398,7 +1402,7 @@ async function loadAll() {
   } finally {
     if (gen === generation) {
       refreshController = null;
-      refresh.disabled = false;
+      refresh.removeAttribute('aria-disabled');
       refresh.textContent = '다시 불러오기';
     }
   }
@@ -1406,7 +1410,7 @@ async function loadAll() {
 
 function init() {
   setupNav();
-  $('refresh').addEventListener('click', () => loadAll());
+  $('refresh').addEventListener('click', () => { if (!refreshController) loadAll(); });
   $('diag-load').addEventListener('click', () => loadDiagnostics());
   $('diag-copy').addEventListener('click', () => copyDiagnostics());
   $('vulnerabilities-load').addEventListener('click', () => loadVulnerabilities());

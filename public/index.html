@@ -123,10 +123,10 @@
             </label>
             <button id="ops-reset" type="button" class="secondary">초기화</button><span class="count" id="table-count" role="status">22개 항목</span>
           </div>
-          <div class="table-wrap" role="region" aria-labelledby="evidence-table-title" tabindex="0">
-            <table>
-              <thead><tr><th scope="col">단계</th><th scope="col">종류</th><th scope="col">요청</th><th scope="col">기대 결과</th><th scope="col">실제 API</th><th scope="col">분류</th><th scope="col">요청 ID</th><th scope="col">확인 시각 (KST)</th></tr></thead>
-              <tbody id="evidence-body"><tr><td colspan="8">실측 증적을 조회하고 있습니다. 미실행 시험은 미실행으로 남습니다.</td></tr></tbody>
+          <div class="table-wrap" id="evidence-scroll" role="region" aria-labelledby="evidence-table-title" tabindex="0">
+            <table id="evidence-table" role="table" aria-labelledby="evidence-table-title">
+              <thead role="rowgroup"><tr role="row" id="evidence-columns"><th scope="col" role="columnheader">단계</th><th scope="col" role="columnheader">종류</th><th scope="col" role="columnheader">요청</th><th scope="col" role="columnheader">기대 결과</th><th scope="col" role="columnheader">실제 API</th><th scope="col" role="columnheader">분류</th><th scope="col" role="columnheader">요청 ID</th><th scope="col" role="columnheader">확인 시각 (KST)</th></tr></thead>
+              <tbody id="evidence-body" role="rowgroup"><tr role="row"><td class="table-empty" role="cell" colspan="8"><span>실측 증적을 조회하고 있습니다. 미실행 시험은 미실행으로 남습니다.</span></td></tr></tbody>
             </table>
           </div>
         </div>
