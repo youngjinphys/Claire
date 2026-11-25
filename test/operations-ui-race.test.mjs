@@ -272,6 +272,24 @@ test('the latest failure remains visible and retains the previous observation',a
   assert.equal(x.node('ops-refresh').getAttribute('aria-disabled'),'false');
 });
 
+test('record list distinguishes an empty result from an observation without an HTTP status',async t=>{
+  const x=await setup(t);
+  const list=x.node('ops-records');
+  const observation=operationsSnapshot([{id:PROBES[0].id,outcome:'inconclusive'}]);
+  delete observation.records[0].httpStatus;
+  x.requests[0].resolve(response(observation));
+  await until(()=>list.children.length===1);
+  const line=list.children[0].children[0];
+  assert.deepEqual(line.children.map(child=>child.textContent),[
+    PROBES[0].method+' '+PROBES[0].path,'판정 보류',
+  ]);
+
+  x.refresh();await x.runTasks();
+  x.requests[1].resolve(response(snapshot('EMPTY',0)));
+  await until(()=>x.node('ops-target').textContent==='EMPTY');
+  assert.deepEqual(list.children.map(child=>child.textContent),['이번 조회에서 받은 서버 기록이 없습니다.']);
+});
+
 test('an older success cannot erase a newer failure',async t=>{
   const x=await setup(t);
   x.requests[0].resolve(response(snapshot('PREVIOUS',1)));

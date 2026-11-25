@@ -109,6 +109,16 @@ function createChart(onFilter) {
     g.append(hit,rect,value);
     g.append(element('text',{class:'chart-label',x:x+36,y:216,fill:'#9daeb6','text-anchor':'middle','font-size':'12'},labels[i]));
     g.append(title);
+    g.addEventListener('focus',()=>{
+      if (!g.matches(':focus-visible')) return;
+      const bounds=g.getBoundingClientRect();
+      const margin=parseFloat(getComputedStyle(g).scrollMarginTop) || 0;
+      const inset=parseFloat(getComputedStyle(doc.documentElement).scrollPaddingTop) || 0;
+      if (bounds.top < inset+margin || bounds.bottom+margin > window.innerHeight) {
+        // Firefox scrolls an SVG group's origin into view. Center the plot to expose the whole bar.
+        svg.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+      }
+    });
     g.addEventListener('click',()=>onFilter(outcome,false));
     g.addEventListener('keydown',e=>{
       if(e.key==='Enter'||e.key===' '){
@@ -178,12 +188,13 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null,reques
   function showRecords(records){
     const root=byId('ops-records');
     root.replaceChildren();
+    if (!records.length) root.append($('p','micro','이번 조회에서 받은 서버 기록이 없습니다.'));
     for(const r of records){
       const article=$('article','record');
       const line=$('div','record-line');
       line.append($('code','',r.method+' '+r.path));
       line.append($('span','status-'+r.outcome,outcomeLabel(r.outcome)));
-      if(r.httpStatus!==null)line.append($('code','',String(r.httpStatus)));
+      if(r.httpStatus!=null)line.append($('code','',String(r.httpStatus)));
       const meta=$('p','record-meta',
         'HTTP 식별자 '+(r.requestId||'미제공')+'  ·  '+fmtTime(r.checkedAt)
         +(r.errorCode?'  ·  '+r.errorCode:''));
@@ -307,8 +318,9 @@ export function initOperations({getToken=()=>null,getDeviceProof=()=>null,reques
   }
   const updateChart=createChart((value,keyboard)=>{
     stage.value='all';kind.value='all';outcome.value=value;rows();
-    if (keyboard) byId('evidence-title').focus?.({preventScroll:true});
-    byId('evidence').scrollIntoView({block:'start',behavior:keyboard?'instant':'auto'});
+    const target=byId(keyboard?'evidence-title':'evidence');
+    if (keyboard) target.focus?.({preventScroll:true});
+    target.scrollIntoView({block:'start',behavior:keyboard?'instant':'auto'});
   });
   const paintChart=()=>updateChart({records:snapshot?.records||[]});
   for(const item of [stage,kind,outcome])item.addEventListener('change',rows);

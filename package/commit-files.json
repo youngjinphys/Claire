@@ -1,20 +1,24 @@
 {
   "schema": "claire.commit-files.v1",
   "files": [
-    "docs/CURRENT_LIMITATIONS.md",
-    "on-client/README.md",
-    "on-client/docs/STUDENT_RUNBOOK.md",
-    "on-client/public/dashboard-model.mjs",
+    "README.md",
     "on-client/public/dashboard.css",
-    "on-client/public/dashboard.mjs",
-    "on-client/student/HOST_OBSERVATION.md",
-    "on-client/student/collect-host.mjs",
-    "on-client/student/extension.mjs",
-    "on-client/test/dashboard-regression.test.mjs",
-    "on-client/test/dashboard-resilience.test.mjs",
-    "on-client/test/host-collection.test.mjs",
-    "on-client/test/student-host-view.test.mjs",
-    "package/commit-files.json"
+    "on-client/public/dashboard.html",
+    "on-client/public/index.html",
+    "on-client/public/style.css",
+    "on-client/test/dashboard.test.mjs",
+    "package/commit-files.json",
+    "public/index.html",
+    "public/observatory-theme.css",
+    "public/offline.html",
+    "public/operations.css",
+    "public/operations.mjs",
+    "public/sw.js",
+    "scripts/operations-chart-browser-smoke.mjs",
+    "test/offline-recovery.test.mjs",
+    "test/operations-chart-focus-ui.test.mjs",
+    "test/operations-ui-race.test.mjs",
+    "test/responsive-layout.test.mjs"
   ],
-  "releaseNote": "2026-11-24: retain independent network evidence, compare actual Windows log windows, preserve local SDP transport causes and historical completed trends, and clarify provenance. Read-only collector and UI changes; no protected source, prior submissions, packaging or deployment changes. Exact-head full CI not run."
+  "releaseNote": "Improve navigation, focus visibility, dashboard state retention and offline recovery across the Claire client and operations portal."
 }

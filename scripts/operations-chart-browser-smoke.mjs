@@ -183,13 +183,41 @@ async function main(){
     await cmd('Page.addScriptToEvaluateOnNewDocument',{source:operationsRequestTraceSource(origin)});
     await cmd('Network.setBypassServiceWorker',{bypass:true});
     await cmd('Fetch.enable',{patterns:[{urlPattern:'*'}]});
-    await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
-    const names=['verified','failed','inconclusive','unrun'];let pointerChecks=0,keyboardChecks=0;
+    const names=['verified','failed','inconclusive','unrun'];let pointerChecks=0,keyboardChecks=0,tabFrames=0;
     for(const width of [320,1440]){
       current=initial;
       await cmd('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
       await cmd('Page.navigate',{url:origin+'/'});
       await observed("document.readyState==='complete' && document.querySelectorAll('#outcomes-chart .bar-column').length===4 && document.querySelector('#ops-state').textContent.includes('실측 관측 완료')",'fixture snapshot');
+      // Check native Tab scrolling with the user's ordinary motion setting.
+      // Sampling in focusin catches the first painted frame even if CDP is slow.
+      await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+      const stops=await evaluate(`(()=>{
+        document.querySelector('.skip').focus();
+        const targets=[...document.querySelectorAll('.brand,.mainnav a,#ops-refresh,#ops-export,.metric-help summary,.bar-column,#filter-stage')];
+        document.addEventListener('focusin',event=>{
+          const el=event.target;
+          window.__qaTabFrame=new Promise(resolve=>requestAnimationFrame(()=>{
+            const rect=el.getBoundingClientRect(),style=getComputedStyle(el);
+            const ring=style.outlineStyle==='none'?0:Math.max(0,parseFloat(style.outlineWidth)+parseFloat(style.outlineOffset));
+            resolve({index:targets.indexOf(el),label:el.id||el.getAttribute('aria-label')||el.textContent,
+              visible:document.activeElement===el && rect.width>0 && rect.height>0
+                && rect.left-ring>=0 && rect.top-ring>=0 && rect.right+ring<=innerWidth && rect.bottom+ring<=innerHeight});
+          }));
+        },{signal:(window.__qaTabListener=new AbortController()).signal});
+        return targets.length;
+      })()`);
+      for(let index=0;index<stops;index++){
+        const tab={key:'Tab',code:'Tab',windowsVirtualKeyCode:9,nativeVirtualKeyCode:9};
+        await cmd('Input.dispatchKeyEvent',{type:'rawKeyDown',...tab});
+        await cmd('Input.dispatchKeyEvent',{type:'keyUp',...tab});
+        const frame=await evaluate('window.__qaTabFrame');
+        assert.equal(frame?.index,index,`${width}px native tab order at stop ${index+1}`);
+        assert.ok(frame.visible,`${width}px focus outside the first frame: ${frame.label}`);
+        tabFrames++;
+      }
+      await evaluate('window.__qaTabListener.abort()');
+      await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
       if(width===320){
         // Hold exactly one tagged native request, then cancel its original
         // signal. This proves the trace without weakening unrelated failures.
@@ -443,6 +471,7 @@ async function main(){
     assert.equal(pageLifecycleChecks,1,'browser pagehide and restored pageshow exercised');
     assert.equal(moduleRecoveryChecks,2,'module evaluation rejection and real loader deadline exercised');
     console.log(`PASS chart browser: ${pointerChecks} synthetic mouse/touch positions, ${keyboardChecks} chart activations, 16 help toggles, 60 focus frames, 320/1440px, invalid response, previous export and retry.`);
+    console.log(`PASS portal keyboard navigation: ${tabFrames} first-frame focus outlines across navigation, metric help, chart and filters.`);
     console.log(`PASS request lifecycle: ${controlledCancellations} controlled native pre-header abort, ${knownCancellations.length} exactly correlated cancelled interceptions, ${pageLifecycleChecks} pagehide/restore check, 0 unexpected interception errors.`);
     console.log(`PASS device module recovery: ${moduleRecoveryChecks} visible accessible fallbacks, disabled device actions, locked vault, usable login/operations, actual 10 second deadline and late evaluation without initialization.`);
   }finally{

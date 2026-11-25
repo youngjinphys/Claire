@@ -59,7 +59,7 @@ async function setup(t){
     for(let i=0;i<100&&node('ops-target').textContent!==snapshot.target;i++)await tick();
     assert.equal(node('ops-target').textContent,snapshot.target,'fixture must finish rendering');
   };
-  return {node,doc,bars,finish};
+  return {node,doc,win,bars,finish};
 }
 
 for(const [index,label] of ['HTTP 일치','불일치','보류','미실행'].entries()){
@@ -81,4 +81,32 @@ test('pending observation does not move focus from an outside control',async t=>
   node('filter-stage').focus();
   await finish();
   assert.ok(doc.activeElement===node('filter-stage'),'the outside control should keep focus');
+});
+
+test('keyboard focus centers the SVG plot only when the column is clipped',async t=>{
+  const {node,doc,win,bars,finish}=await setup(t);
+  await finish();
+  const bar=bars()[0],scrolls=[];
+  node('outcomes-chart').scrollIntoView=options=>scrolls.push(options);
+  doc.documentElement={};
+  win.innerHeight=380;
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'getComputedStyle');
+  Object.defineProperty(globalThis,'getComputedStyle',{configurable:true,value:el=>
+    el===doc.documentElement?{scrollPaddingTop:'0px'}:{scrollMarginTop:'12px'}});
+  t.after(()=>{
+    if(previous) Object.defineProperty(globalThis,'getComputedStyle',previous);
+    else delete globalThis.getComputedStyle;
+  });
+
+  let keyboard=false,top=219;
+  bar.matches=selector=>selector===':focus-visible'&&keyboard;
+  bar.getBoundingClientRect=()=>({top,bottom:top+201});
+  bar.dispatchEvent(new Event('focus'));
+  assert.equal(scrolls.length,0);
+  keyboard=true;
+  bar.dispatchEvent(new Event('focus'));
+  assert.deepEqual(scrolls,[{block:'center',inline:'nearest',behavior:'instant'}]);
+  top=99;
+  bar.dispatchEvent(new Event('focus'));
+  assert.equal(scrolls.length,1);
 });

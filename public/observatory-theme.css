@@ -12,21 +12,12 @@ body {
   text-rendering:optimizeLegibility;
 }
 .topbar { background:#0c1828; border-bottom-color:rgba(169,216,255,.17); }
-.brand-icon { border-radius:8px; border-color:rgba(158,216,255,.55); background:#16304a; }
-.mainnav a:hover,.mainnav a:focus-visible { background:rgba(159,212,200,.08) }
-.rail { border-right-color:rgba(160,190,205,.16) }
-.rail-link { border-bottom-color:rgba(160,190,205,.12) }
-.hero { align-items:flex-start; margin-bottom:8px; padding:4px 0 24px }
-.hero h1 { font-size:32px; margin:0 0 12px }
-.metric,.panel {
-  border:1px solid rgba(170,200,214,.2);border-radius:8px;background:var(--surface);
-}
-.metric { position:relative;min-height:147px }
-.metric-head { padding-right:34px; min-height:28px; margin-bottom:20px }
+.hero h1 { font-size:clamp(32px,3vw,40px); margin:0 0 10px }
+.panel { border-color:rgba(170,200,214,.2);border-radius:6px;background:var(--surface) }
 .metric-label {color:#c5d5df}
 #metric-stages,#metric-attacks {font:inherit;color:inherit;letter-spacing:inherit}
 .metric-help summary {
-  position:absolute;top:16px;right:16px;display:grid;place-items:center;
+  position:absolute;top:16px;right:18px;display:grid;place-items:center;
   width:28px;height:28px;list-style:none;border:1px solid var(--line-light);
   border-radius:50%;font:12px var(--mono);color:var(--muted);cursor:pointer;
 }
@@ -36,7 +27,7 @@ body {
 .metric-help p {margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);font:12px/1.7 var(--font);color:var(--muted)}
 .system-item,.record {border-color:rgba(148,180,196,.16)}
 .panel-head {padding-top:23px}
-.strip,.install-panel,.device-panel {
+.install-panel,.device-panel {
   border-radius:8px;border-color:rgba(168,200,214,.2);background:#15283c;
 }
 input,textarea,select { background:#0d1b28;border-color:rgba(163,196,210,.28) }
@@ -46,11 +37,6 @@ button.secondary:hover,.export-button:hover {background:rgba(159,212,200,.1)}
 table th {background:#132636;color:#b7c9d4}
 tbody tr:hover {background:rgba(159,212,200,.06)}
 .table-wrap {scrollbar-color:#3d6270 var(--surface)}
-@media(max-width:900px) {
-  .hero { align-items:flex-start; flex-direction:column }
-}
 @media(max-width:730px) {
-  .hero h1 {font-size:30px}
-  .metric {min-height:120px}
-  .metric-help summary {top:12px;right:12px}
+  .metric-help summary {top:12px;right:10px}
 }

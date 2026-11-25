@@ -22,8 +22,8 @@
     <div class="topbar-status">
       <span id="mode-badge" class="mode-badge" data-mode="loading" role="status" aria-live="polite">상태 확인 중</span>
       <span id="checked-at" class="checked-at"></span>
-      <button type="button" id="refresh" class="btn">다시 불러오기</button>
     </div>
+    <button type="button" id="refresh" class="btn">다시 불러오기</button>
   </header>
 
   <div class="layout">
@@ -33,10 +33,13 @@
         <button type="button" role="tab" id="tab-apps" data-testid="nav-apps" data-view="apps" aria-controls="view-apps" aria-selected="false" tabindex="-1">업무 앱</button>
         <button type="button" role="tab" id="tab-records" data-testid="nav-records" data-view="records" aria-controls="view-records" aria-selected="false" tabindex="-1">보안 기록</button>
       </div>
-      <details class="notice">
-        <summary>제공 화면·학생 구현 안내</summary>
-        <p><strong>제공 공통 UI</strong>와 <strong>학생 구현 표시</strong>(student/extension.mjs)는 구분되어 있습니다. 제공 코드는 학생 성취로 계산되지 않으며, 예제(demo)·연결 없음 상태는 실제 연결 성공이 아닙니다.</p>
-      </details>
+      <div class="sidebar-tools">
+        <a class="dashboard-link" href="/dashboard.html">통합 관제 열기</a>
+        <details class="notice">
+          <summary>제공 화면·학생 구현 안내</summary>
+          <p><strong>제공 공통 UI</strong>와 <strong>학생 구현 표시</strong>(student/extension.mjs)는 구분되어 있습니다. 제공 코드는 학생 성취로 계산되지 않으며, 예제(demo)·연결 없음 상태는 실제 연결 성공이 아닙니다.</p>
+        </details>
+      </div>
     </nav>
 
     <main id="main" tabindex="-1">
@@ -65,10 +68,10 @@
           </section>
         </div>
 
-        <section class="card student" aria-labelledby="student-identity-title">
-          <h2 id="student-identity-title">학생 구현 표시 <span class="tag tag-student">student/extension.mjs · renderIdentity</span></h2>
+        <details class="student-comparison">
+          <summary><h2 id="student-identity-title">학생 구현에서 로그인·기기·세션 비교 <span class="tag tag-student">student/extension.mjs · renderIdentity</span></h2></summary>
           <div id="student-identity" class="student-slot" aria-live="polite"></div>
-        </section>
+        </details>
 
         <section class="card student" aria-labelledby="student-status-title">
           <h2 id="student-status-title">학생 상태·알림 표시 <span class="tag tag-student">student/extension.mjs · renderStatus</span></h2>

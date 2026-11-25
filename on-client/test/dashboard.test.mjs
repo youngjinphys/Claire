@@ -149,7 +149,13 @@ test('narrow observatory keeps every workspace link on screen', async () => {
     const css = await cssResponse.text();
     const nav = html.match(/<nav class="rail-nav"[\s\S]*?<\/nav>/u)?.[0] || '';
     const hrefs = [...nav.matchAll(/href="([^"]+)"/gu)].map(match => match[1]);
-    assert.deepEqual(hrefs, ['/dashboard.html', '/', '#resource-panel', '#records-panel', '#source-panel']);
+    assert.deepEqual(hrefs, ['#dashboard', '/', '#resource-panel', '#records-panel', '#source-panel']);
+    for (const href of hrefs.filter(value => value.startsWith('#'))) {
+      assert.ok(html.includes(`id="${href.slice(1)}"`), `missing in-page destination ${href}`);
+    }
+    const home = await (await fetch(base + '/')).text();
+    const mainNav = home.match(/<nav class="sidebar"[\s\S]*?<\/nav>/u)?.[0] || '';
+    assert.match(mainNav, /<a\b[^>]*href="\/dashboard\.html"/u);
     const narrow = mediaBlock(css, '@media (max-width: 850px)');
     assert.match(narrow, /\.rail-nav\s*\{[^}]*flex-wrap:\s*wrap/u);
     assert.doesNotMatch(narrow, /\.rail-nav a:nth-child\([^)]*\)\s*\{[^}]*display:\s*none/u);

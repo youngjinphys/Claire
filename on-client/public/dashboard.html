@@ -15,17 +15,21 @@
   <a class="skip-link" href="#dashboard">본문으로 이동</a>
   <div class="shell">
     <aside class="rail" aria-label="관제 메뉴">
-      <div class="identity">
-        <div class="logo-mark" aria-hidden="true">C</div>
-        <div><strong>Claire</strong><small>로컬 관제</small></div>
-      </div>
-      <div class="rail-section">화면</div>
       <nav class="rail-nav" aria-label="화면 전환">
-        <a class="active" href="/dashboard.html" aria-current="page">통합 관제</a>
-        <a href="/">ALEPH 기본 화면</a>
-        <a href="#resource-panel">PC 자원 추이</a>
-        <a href="#records-panel">SDP · XDR 기록</a>
-        <a href="#source-panel">데이터 출처</a>
+        <div class="identity">
+          <div class="logo-mark" aria-hidden="true">C</div>
+          <div><strong>Claire</strong><small>로컬 관제</small></div>
+        </div>
+        <div class="rail-section">화면</div>
+        <div class="workspace-links">
+          <a class="active" href="#dashboard" aria-current="page">통합 관제</a>
+          <a href="/">ALEPH 기본 화면</a>
+        </div>
+        <div class="section-links">
+          <a href="#resource-panel">PC 자원 추이</a>
+          <a href="#records-panel">SDP · XDR 기록</a>
+          <a href="#source-panel">데이터 출처</a>
+        </div>
       </nav>
       <div class="rail-bottom">
         <div class="rail-rule"></div>
@@ -36,23 +40,19 @@
     </aside>
 
     <div class="workspace">
-      <header class="masthead">
-        <div class="path">관제 <span>/</span> 로컬</div>
-        <div class="masthead-right">
-          <span class="status-led" aria-hidden="true"></span>
-          <span id="live-state" role="status" aria-live="polite">관측 대기</span>
-          <time id="header-clock" aria-label="현재 PC 시각">—</time>
-        </div>
-      </header>
-
-      <main id="dashboard">
-        <div class="heading-row">
-          <div>
+      <main id="dashboard" tabindex="-1">
+        <header>
+          <div class="heading-row">
             <h1>Claire 통합 관제</h1>
-            <p class="lede">네트워크 · 방화벽 · Windows 기록 · SDP를 한 화면에서 확인하고, 아래에서 CPU·메모리·디스크 추이와 보안 기록을 살펴봅니다.</p>
-            <p class="runtime-note">측정 대상: Node 서버 실행 환경. WSL·컨테이너·가상 머신에서는 물리 PC 전체와 다를 수 있습니다.</p>
+            <div class="observation-status">
+              <span class="status-led" aria-hidden="true"></span>
+              <span id="live-state" role="status" aria-live="polite">관측 대기</span>
+              <time id="header-clock" aria-label="현재 PC 시각">—</time>
+            </div>
           </div>
-        </div>
+          <p class="lede">네트워크 · 방화벽 · Windows 기록 · SDP</p>
+          <p class="runtime-note">CPU·메모리·디스크는 Node 서버가 실행되는 환경에서 측정합니다. WSL·컨테이너·가상 머신에서는 물리 PC 전체와 다를 수 있습니다.</p>
+        </header>
 
         <section class="panel integrated-host" id="host-panel" aria-labelledby="host-overview-title">
           <h2 id="host-overview-title" class="visually-hidden">네트워크·방화벽·Windows 기록·SDP</h2>
