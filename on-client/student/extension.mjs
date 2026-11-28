@@ -653,6 +653,7 @@ function hostNode(tag, text, className = '') {
   return el;
 }
 export function hostPanel(state, mode) {
+  const previousView = state.hostCaptureView?.();
   const region = hostNode('section');
   region.className = 'student-host-panel';
   region.setAttribute('aria-label', '학생 추가 PC 상태');
@@ -673,6 +674,7 @@ export function hostPanel(state, mode) {
   exportButton.type = 'button';
   exportButton.setAttribute('aria-label', '주소·식별자 없는 로컬 관측 요약을 JSON으로 저장');
   exportButton.disabled = !state.latest || state.pending === true;
+  const fixedControls = new Map([['retry', retry], ['export', exportButton]]);
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.id = 'student-host-observation-file';
@@ -701,9 +703,61 @@ export function hostPanel(state, mode) {
     const unifiedLink = hostNode('a', '통합 관제 대시보드 열기', 'btn');
     unifiedLink.href = '/dashboard.html';
     unifiedLink.setAttribute('aria-label', '같은 Claire 서버의 통합 관제 대시보드 열기');
+    fixedControls.set('dashboard-link', unifiedLink);
     actionBar.append(unifiedLink);
   }
   region.append(cardsRoot, actionBar, progress, help, dataRoot);
+
+  // Element references also cover details relocated outside the panel by the
+  // dashboard. One snapshot handles local redraw and whole status-slot replacement.
+  let controls = new Map(fixedControls), pendingFocus = null;
+  const disclosures = new Map();
+  const focusUnchanged = saved => document.activeElement === saved.focusedElement
+    || (!saved.focusedElement?.isConnected && (document.activeElement === document.body || document.activeElement == null));
+  const captureView = () => {
+    const focused = [...controls].find(([, control]) => control === document.activeElement);
+    // Several status responses may replace the panel before a queued focus
+    // recovery runs. Carry it forward only while focus has not moved elsewhere.
+    const waiting = pendingFocus && focusUnchanged(pendingFocus) ? pendingFocus : null;
+    return {
+      open: new Set([...disclosures].filter(([, detail]) => detail.open).map(([key]) => key)),
+      focusedKey: focused?.[0] || waiting?.focusedKey,
+      focusedElement: focused ? document.activeElement : waiting?.focusedElement || document.activeElement,
+    };
+  };
+  const restoreView = saved => {
+    if (!saved) return;
+    for (const [key, detail] of disclosures) if (saved.open.has(key)) detail.open = true;
+    if (!saved.focusedKey) return;
+    pendingFocus = saved;
+    const targetControl = () => {
+      const target = controls.get(saved.focusedKey);
+      return target && !target.disabled ? target : retry;
+    };
+    const restoreFocus = () => {
+      if (state.hostCaptureView === captureView && focusUnchanged(saved)) {
+        const target = targetControl();
+        if (target?.isConnected && !target.disabled) target.focus?.({ preventScroll: true });
+      }
+      if (pendingFocus === saved) pendingFocus = null;
+    };
+    if (targetControl()?.isConnected) restoreFocus();
+    else if (typeof queueMicrotask === 'function') queueMicrotask(restoreFocus);
+  };
+  const disclosure = (key, title) => {
+    const detail = hostNode('details'), summary = hostNode('summary', title);
+    detail.append(summary);
+    disclosures.set(key, detail); controls.set(key, summary);
+    return detail;
+  };
+  const partIsCurrent = (part, quality, now) => {
+    const age = part?.measuredAt ? now - Date.parse(part.measuredAt) : NaN;
+    return quality.freshness === 'recent' && Number.isFinite(age)
+      && age >= -HOST_FUTURE_TOLERANCE_MS && age <= HOST_REPORT_MAX_AGE_MS;
+  };
+  const freshnessSignature = (quality, now) => [quality.freshness,
+    ...Object.values(quality.feeds).map(feed => feed.freshness),
+    ...['interfaces', 'dns'].map(key => partIsCurrent(state.latest?.network?.parts?.[key], quality, now))].join('|');
 
   const card = (title, value, details, kind) => {
     const node = hostNode('article');
@@ -740,22 +794,15 @@ export function hostPanel(state, mode) {
       : mode === 'connected' ? ['SDP 어댑터 연결 구성', '실제 서버 응답·기기 정책은 기존 제공 화면에서 별도 확인']
         : ['SDP 확인 불가', '기존 제공 화면에서 로그인과 연결 상태를 확인'];
 
-  const draw = () => {
-    // Keep focus and disclosure state across the student-slot refresh. The
-    // integrated dashboard also has a wrapper for its relocated details.
-    const previousDetails = [...(dataRoot.querySelectorAll?.('details[open]') || [])]
-      .map(node => node.querySelector?.('summary')?.textContent).filter(Boolean);
-    const active = typeof document !== 'undefined' ? document.activeElement : null;
-    const focusedSummary = active?.tagName === 'SUMMARY' && dataRoot.contains?.(active)
-      ? active.textContent : null;
-    const focusedCompare = active?.id === 'student-host-compare-consent';
+  const draw = (quality, now) => {
+    controls = new Map(fixedControls);
+    disclosures.clear();
     dataRoot.replaceChildren();
     const latest = state.latest, sdp = security();
     const emptyValue = state.pending ? '조회 중' : state.error ? '확인 불가' : '미조회';
     const emptyDetail = state.pending ? '로컬 JSON을 읽는 중 · OS 재측정 아님'
       : state.error ? HOST_REASON_GUIDANCE[state.error] || HOST_REASON_GUIDANCE.INVALID_REPORT
         : '수집기 실행 후 보고서 선택';
-    const quality = hostReportQuality(latest, Date.now());
     const fresh = quality.freshness === 'recent';
     const feedFresh = name => fresh && quality.feeds[name]?.freshness === 'recent';
     const feedIssue = name => quality.freshness === 'clock_skew' || quality.feeds[name]?.freshness === 'clock_skew'
@@ -798,8 +845,7 @@ export function hostPanel(state, mode) {
     dataRoot.append(hostNode('p', '선택 보고서의 출처 범위: ' + qualityLabel
       + ' · 성공 ' + quality.observedFeeds + '/' + quality.applicableFeeds
       + '개 적용 대상 원천 · 파일 원본 미인증', 'muted'));
-    const detail = hostNode('details');
-    detail.append(hostNode('summary', '원천별 관측 상태·출처·시각 확인'));
+    const detail = disclosure('sources', '원천별 관측 상태·출처·시각 확인');
     for (const [name, feed] of Object.entries(quality.feeds)) {
       const label = { network: '네트워크', firewall: '방화벽', windowsEvents: 'OS 이벤트' }[name];
       const stateLabel = { observed: '조회됨', partial: '부분 조회', unavailable: '확인 불가',
@@ -818,14 +864,12 @@ export function hostPanel(state, mode) {
           : '오래되거나 검증되지 않은 보고서입니다. 현재 상태로 해석하지 마세요. 수집기를 다시 실행해 새 파일을 선택하세요.',
         'state state-error'));
     }
-    const netSection = hostNode('details');
+    const netSection = disclosure('network', '네트워크 상세 · 인터페이스 및 DNS (Enter/Space로 펼치기)');
     netSection.style.marginTop = '12px';
-    netSection.append(hostNode('summary', '네트워크 상세 · 인터페이스 및 DNS (Enter/Space로 펼치기)'));
     if (net?.parts) {
       for (const [key, label] of [['interfaces', '인터페이스'], ['dns', 'DNS resolver']]) {
         const part = net.parts[key];
-        const age = part.measuredAt ? Date.now() - Date.parse(part.measuredAt) : NaN;
-        const current = fresh && Number.isFinite(age) && age >= -HOST_FUTURE_TOLERANCE_MS && age <= HOST_REPORT_MAX_AGE_MS;
+        const current = partIsCurrent(part, quality, now);
         netSection.append(hostNode('p', label + ' · ' + (part.status === 'unavailable' ? '확인 불가 · ' + HOST_REASON_GUIDANCE[part.reason]
           : (current ? '' : '과거 또는 시각 미확인 · ') + (part.status === 'partial' ? '일부 조회 · ' : '조회됨 · ') + net[key].length + '개')
           + ' · 출처: ' + part.source + ' · 조회 기준 ' + hostTime(part.measuredAt), part.status === 'unavailable' || !current ? 'state state-error' : 'muted'));
@@ -837,9 +881,8 @@ export function hostPanel(state, mode) {
       netSection.append(hostNode('p', 'DNS: ' + (net.dns.length ? net.dns.join(', ') : net.parts?.dns?.status === 'ok' ? '조회 결과 0개' : '확인 불가') + ' · 기본 게이트웨이: 확인 불가(이번 수집 대상 제외)', 'muted'));
     } else netSection.append(hostNode('p', reasonLine(net), 'state state-error'));
     // Network details follow the comparison and event summary.
-    const fwSection = hostNode('details');
+    const fwSection = disclosure('firewall', '방화벽 상세 · 읽기 전용 (Enter/Space로 펼치기)');
     fwSection.style.marginTop = '12px';
-    fwSection.append(hostNode('summary', '방화벽 상세 · 읽기 전용 (Enter/Space로 펼치기)'));
     if (fw?.status === 'ok' || fw?.status === 'partial') {
       if (fw.profiles) for (const p of fw.profiles) fwSection.append(hostNode('p', p.name + ' · 사용 ' + (p.enabled === true ? '켜짐' : p.enabled === false ? '꺼짐' : '확인 불가(미설정)')
         + ' · 기본 인바운드 ' + p.inbound + ' · 기본 아웃바운드 ' + p.outbound, 'muted'));
@@ -911,6 +954,7 @@ export function hostPanel(state, mode) {
       check.name = 'hostCompareConsent';
       check.checked = state.compareConfirmed === true && state.comparePair === currentPair;
       check.setAttribute('aria-label', '이전 보고서와 현재 보고서가 동일 PC의 동일 실행 환경에서 생성되었음을 확인한 경우에만 비교');
+      controls.set('comparison', check);
       consent.append(check, hostNode('span', '두 보고서가 같은 PC·실행 환경에서 수집됐음을 확인했습니다 (원본 인증은 아님).'));
       const note = hostNode('p', comparisonText(), 'muted');
       check.addEventListener('change', () => {
@@ -930,27 +974,8 @@ export function hostPanel(state, mode) {
     historySection.append(list);
     // Visible record order: four cards -> provenance -> trend -> Windows log -> network/firewall details.
     dataRoot.append(historySection, logsSection, netSection, fwSection);
-    for (const details of dataRoot.querySelectorAll?.('details') || []) {
-      if (previousDetails.includes(details.querySelector?.('summary')?.textContent)) details.open = true;
-    }
-    const nextFocus = focusedCompare
-      ? dataRoot.querySelector?.('#student-host-compare-consent')
-      : [...(dataRoot.querySelectorAll?.('summary') || [])]
-        .find(node => node.textContent === focusedSummary);
-    if (nextFocus && !nextFocus.disabled) nextFocus.focus?.({ preventScroll: true });
-    else if ((focusedCompare || focusedSummary) && retry?.isConnected) retry.focus?.({ preventScroll: true });
   };
-  const redraw = () => {
-    // Preserve open student disclosures even in lightweight DOM test fixtures
-    // without querySelectorAll. The dashboard additionally preserves its slot.
-    const opened = new Set([...dataRoot.children]
-      .filter(node => node.tagName === 'DETAILS' && node.open === true)
-      .map(node => node.firstElementChild?.textContent || node.children?.[0]?.textContent)
-      .filter(Boolean));
-    const focused = typeof document !== 'undefined' ? document.activeElement : null;
-    const hadLocalFocus = Boolean(focused && dataRoot.contains?.(focused));
-    const focusKey = hadLocalFocus ? [focused.tagName, focused.getAttribute?.('aria-label') || '',
-      focused.textContent || ''].join('|') : null;
+  const redraw = (saved = captureView()) => {
     progress.textContent = state.pending ? '로컬 보고서를 읽고 검증하는 중입니다.'
       : state.error ? '확인 불가 — ' + (HOST_REASON_GUIDANCE[state.error] || HOST_REASON_GUIDANCE.INVALID_REPORT)
         : state.latest ? '파일 확인 ' + hostTime(state.loadedAt) + ' · 보고서 생성 ' + hostTime(state.latest.producedAt)
@@ -962,41 +987,24 @@ export function hostPanel(state, mode) {
     retry.setAttribute('aria-disabled', state.pending ? 'true' : 'false');
     exportButton.disabled = state.pending === true || state.hostConflict === true || state.latest?.status !== 'ok';
     exportButton.setAttribute('aria-disabled', exportButton.disabled ? 'true' : 'false');
-    draw();
-    for (const node of dataRoot.children) {
-      if (node.tagName !== 'DETAILS') continue;
-      const title = node.firstElementChild?.textContent || node.children?.[0]?.textContent;
-      if (opened.has(title)) node.open = true;
-    }
-    if (focusKey && typeof document !== 'undefined' && document.activeElement === document.body) {
-      const candidates = [...(dataRoot.querySelectorAll?.('summary, input, button, a[href]') || [])];
-      const replacement = candidates.find(node => [node.tagName, node.getAttribute?.('aria-label') || '',
-        node.textContent || ''].join('|') === focusKey);
-      replacement?.focus?.({ preventScroll: true });
-    }
+    const now = Date.now(), quality = hostReportQuality(state.latest, now);
+    draw(quality, now);
+    state.hostFreshnessSignature = freshnessSignature(quality, now);
+    restoreView(saved);
   };
   // A provided SDP status refresh can replace the student slot while the
   // file reader is awaiting a Promise. Only repaint the most recent panel.
-  const previouslyFocused = state.hostRetry && typeof document !== 'undefined'
-    && document.activeElement === state.hostRetry;
   state.hostRedraw = redraw;
+  state.hostCaptureView = captureView;
   state.hostRetry = retry;
-  if (previouslyFocused && typeof queueMicrotask === 'function') {
-    queueMicrotask(() => { if (retry.isConnected) retry.focus?.({ preventScroll: true }); });
-  }
   // UI-only freshness tracking: no system, firewall, or SDP requests.
   if (typeof window !== 'undefined' && !state.hostLifecycleBound) {
     state.hostLifecycleBound = true;
     const startTicker = () => {
       if (state.hostTicker) return;
       state.hostTicker = window.setInterval(() => {
-        const quality = hostReportQuality(state.latest, Date.now());
-        const signature = [quality.freshness,
-          ...Object.values(quality.feeds).map(feed => feed.freshness)].join('|');
-        if (signature !== state.hostFreshnessSignature) {
-          state.hostFreshnessSignature = signature;
-          state.hostRedraw?.();
-        }
+        const now = Date.now(), signature = freshnessSignature(hostReportQuality(state.latest, now), now);
+        if (signature !== state.hostFreshnessSignature) state.hostRedraw?.();
       }, 15000);
     };
     startTicker();
@@ -1091,7 +1099,7 @@ export function hostPanel(state, mode) {
       if (id === state.requestId) { state.pending = false; state.hostRedraw?.(); }
     }
   });
-  redraw();
+  redraw(previousView);
   return region;
 }
 

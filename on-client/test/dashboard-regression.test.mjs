@@ -75,6 +75,56 @@ test('cached duplicates coalesce while small and large clock reversals break con
     assert.equal(seriesSegments(next, 'cpu').at(-1).length, 2);
   }
 });
+test('cached replies after stop and restart remain in their original interval without adding a new sample', () => {
+  const t = Date.UTC(2026, 10, 23), sample = time => normalizeSnapshot(measured(time));
+  let history = appendSample([], sample(t - 5000), t - 5000);
+  history = appendSample(history, sample(t), t);
+  history = appendGap(history, t + 100);
+  history = appendGap(history, t + 200);
+  const reused = appendSample(history, sample(t), t + 300);
+  assert.deepEqual(reused, history, 'a normal cached reply must not become a new acquisition after a gap');
+  assert.equal(pairedSamples(reused).length, 2);
+  assert.equal(trendSummary(reused), null);
+  assert.equal(completedTrendSummary(reused).to, t);
+  const resumed = appendSample(reused, sample(t + 5000), t + 5000);
+  assert.equal(trendSummary(resumed), null, 'the new interval needs two newly acquired samples');
+  const continued = appendSample(resumed, sample(t + 10000), t + 10000);
+  assert.equal(trendSummary(continued).from, t + 5000);
+  assert.equal(trendSummary(continued).cpuSamples, 2);
+  assert.equal(exportMeasurements(continued, stamp(t + 10000)).records.filter(row => row.type === 'sample').length, 4);
+});
+test('a clock rollback may acquire different sensor evidence at an earlier retained timestamp', () => {
+  const t = Date.UTC(2026, 10, 23), earlier = t - 60000;
+  let history = appendSample([], normalizeSnapshot(measured(earlier)), earlier);
+  history = appendSample(history, normalizeSnapshot(measured(t)), t);
+  history = appendGap(history, earlier);
+  const reply = measured(earlier);
+  reply.data.metrics.cpu.value = 55;
+  history = appendSample(history, normalizeSnapshot(reply), earlier);
+  assert.equal(history.at(-1).cpu, 55, 'matching wall-clock time alone does not prove cached acquisition after a rollback');
+  assert.equal(trendSummary(history), null, 'the new evidence still starts an independent interval');
+  const next = measured(earlier + 5000);
+  next.data.metrics.cpu.value = 65;
+  history = appendSample(history, normalizeSnapshot(next), earlier + 5000);
+  assert.equal(trendSummary(history).cpuDelta, 10);
+  assert.equal(trendSummary(history).from, earlier);
+});
+test('a cached reply after clock rollback preserves a stop boundary removed by retention', () => {
+  const t = Date.UTC(2026, 10, 23), sample = time => normalizeSnapshot(measured(time));
+  let history = appendSample([], sample(t - 5000), t - 5000);
+  history = appendSample(history, sample(t), t);
+  history = appendGap(history, t + 5000);
+  const reused = appendSample(history, sample(t), t + 300);
+  assert.equal(pairedSamples(reused).length, 2, 'reuse does not add an acquisition');
+  assert.equal(reused.at(-1).cpu, null, 'retaining past samples must not remove their closing gap');
+  assert.equal(reused.at(-1).time, t + 300);
+  assert.equal(trendSummary(reused), null);
+  assert.equal(completedTrendSummary(reused).to, t);
+  const resumed = appendSample(reused, sample(t + 5000), t + 5000);
+  assert.equal(trendSummary(resumed), null);
+  const continued = appendSample(resumed, sample(t + 10000), t + 10000);
+  assert.equal(trendSummary(continued).from, t + 5000);
+});
 test('history display and export share the exact retention boundary and sample cap', () => {
   const now = Date.UTC(2026, 10, 23), history = [
     { time: now - HISTORY_WINDOW_MS, cpu: null, memory: null },

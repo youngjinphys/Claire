@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { collectHostObservation } from '../student/collect-host.mjs';
-import { normalizeHostObservation, hostComparison, hostPanel, hostReportQuality, buildClaireHostAggregateEvidence, hostHistoryTransition } from '../student/extension.mjs';
+import { normalizeHostObservation, hostComparison, hostPanel, hostReportQuality, buildClaireHostAggregateEvidence, hostHistoryTransition, createStudentView } from '../student/extension.mjs';
 
 const T = Date.parse('2026-10-31T02:00:00Z');
 const networkInterfaces = () => ({ eth0: [{ family: 'IPv6', address: 'fe80::1%eth0', internal: false }] });
@@ -80,11 +80,29 @@ test('trend compares two real report snapshots with same OS and valid 24h counts
 });
 
 class ElementStub {
-  constructor(tag) { this.tagName=tag.toUpperCase(); this._text=''; this.children=[]; this.listeners={}; this.style={}; this.attributes={}; this.files=[]; this.clickCount=0; this.className=''; }
-  set textContent(value) { this._text=String(value); this.children=[]; }
+  constructor(tag) { this.tagName=tag.toUpperCase(); this._text=''; this.children=[]; this.listeners={}; this.style={}; this.attributes={}; this.files=[]; this.clickCount=0; this.className=''; this.parentElement=null; this.open=false; }
+  set textContent(value) { this.replaceChildren(); this._text=String(value); }
   get textContent() { return this._text + this.children.map(child=>child.textContent).join(''); }
-  append(...children) { this.children.push(...children); }
-  replaceChildren(...children) { this.children=[...children]; this._text=''; }
+  get firstElementChild() { return this.children[0] || null; }
+  get isConnected() { return this === globalThis.document?.body || this.parentElement?.isConnected === true; }
+  append(...children) { for (const child of children) { if (child.parentElement) child.parentElement.children=child.parentElement.children.filter(item=>item!==child); child.parentElement=this; this.children.push(child); } }
+  replaceChildren(...children) {
+    if (this.children.some(child=>child.contains(globalThis.document?.activeElement))) globalThis.document.activeElement=globalThis.document.body;
+    for (const child of this.children) child.parentElement=null;
+    this.children=[]; this._text=''; this.append(...children);
+  }
+  contains(target) { return target === this || this.children.some(child=>child.contains(target)); }
+  focus() { if (this.isConnected && !this.disabled) globalThis.document.activeElement=this; }
+  querySelectorAll(selector) {
+    return this.findAll(node => node !== this && selector.split(',').some(value => {
+      const item = value.trim();
+      if (item.startsWith('#')) return node.id === item.slice(1);
+      if (item === 'details[open]') return node.tagName === 'DETAILS' && node.open;
+      if (item === 'a[href]') return node.tagName === 'A' && Boolean(node.href);
+      return node.tagName === item.toUpperCase();
+    }));
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   setAttribute(key,value) { this.attributes[key]=String(value); }
   getAttribute(key) { return this.attributes[key]; }
   addEventListener(name,fn) { (this.listeners[name]??=[]).push(fn); }
@@ -96,7 +114,8 @@ class ElementStub {
 
 async function withDocument(fn) {
   const previous = globalThis.document;
-  globalThis.document = { createElement: tag => new ElementStub(tag) };
+  const body = new ElementStub('body');
+  globalThis.document = { createElement: tag => new ElementStub(tag), body, activeElement: body };
   try { return await fn(); } finally { if (previous === undefined) delete globalThis.document; else globalThis.document=previous; }
 }
 test('student cards retain four statuses, keyboard-native reload button, and no prior sample before selecting a file', async () => {
@@ -601,4 +620,138 @@ test('two unavailable network sources retain independent reasons without reporti
   assert.equal(evidence.measurements.networkInterfaces.reason, 'NETWORK_INTERFACE_READ_FAILED');
   assert.equal(evidence.measurements.dnsServers.value, null);
   assert.equal(evidence.measurements.dnsServers.reason, 'PERMISSION_DENIED');
+});
+
+test('provided status replacement preserves host disclosures and keyboard focus across controls', async () => {
+  await withDocument(async () => {
+    const view = createStudentView();
+    let root = view.renderStatus({ mode: 'disconnected' });
+    document.body.append(root);
+    const select = async time => {
+      const value = JSON.stringify(await report('win32', time));
+      const file = root.find(el => el.tagName === 'INPUT' && el.type === 'file');
+      file.files = [{ size: Buffer.byteLength(value), text: async () => value }];
+      await file.dispatch('change');
+    };
+    await select(Date.now() - 5000); await select(Date.now());
+    const network = () => root.querySelectorAll('details').find(el => el.firstElementChild.textContent.startsWith('네트워크 상세'));
+    network().open = true;
+    const controls = [
+      () => network().firstElementChild,
+      () => root.querySelector('#student-host-compare-consent'),
+      () => root.querySelectorAll('button').find(el => el.textContent.includes('집계 JSON 저장')),
+    ];
+    for (const control of controls) {
+      control().focus();
+      root = view.renderStatus({ mode: 'demo' }); document.body.replaceChildren(root);
+      await Promise.resolve();
+      assert.equal(network().open, true);
+      assert.ok(document.activeElement === control(), 'the corresponding new host control must receive focus');
+    }
+  });
+});
+
+test('queued host focus restoration respects a user move and skips superseded panels', async () => {
+  await withDocument(async () => {
+    const state = { pending:false, latest:null, history:[], error:null, requestId:0 };
+    let root = hostPanel(state, 'disconnected'); document.body.append(root);
+    root.querySelector('button').focus();
+    root = hostPanel(state, 'demo'); document.body.replaceChildren(root);
+    const outside = document.createElement('button'); document.body.append(outside); outside.focus();
+    await Promise.resolve();
+    assert.ok(document.activeElement === outside, 'a later user destination must win over queued restoration');
+
+    root.querySelector('button').focus();
+    const intermediate = hostPanel(state, 'disconnected'); document.body.replaceChildren(intermediate);
+    root = hostPanel(state, 'demo'); document.body.replaceChildren(root);
+    await Promise.resolve();
+    assert.ok(document.activeElement === root.querySelector('button'), 'rapid replacement must restore only the newest panel');
+  });
+});
+
+test('host view preservation also covers dashboard-relocated details and pending file completion', async () => {
+  await withDocument(async () => {
+    const latest = normalizeHostObservation(await report('win32', Date.now()));
+    const state = { pending:false, latest, history:[], error:null, requestId:0 };
+    const root = hostPanel(state, 'disconnected'), detailMount = document.createElement('div');
+    document.body.append(root, detailMount);
+    const details = root.find(el => el.getAttribute('data-host-report-details') !== undefined);
+    detailMount.append(details);
+    const firewall = () => detailMount.querySelectorAll('details').find(el => el.firstElementChild.textContent.startsWith('방화벽 상세'));
+    firewall().open = true; firewall().firstElementChild.focus();
+    state.hostRedraw();
+    assert.ok(details.parentElement === detailMount);
+    assert.equal(firewall().open, true);
+    assert.ok(document.activeElement === firewall().firstElementChild);
+
+    let finish;
+    const file = root.find(el => el.tagName === 'INPUT' && el.type === 'file');
+    file.files = [{ size: 10_000, text: () => new Promise(resolve => { finish = resolve; }) }];
+    root.querySelector('button').focus();
+    const loading = file.dispatch('change');
+    const replacement = hostPanel(state, 'demo'); document.body.replaceChildren(replacement);
+    await Promise.resolve();
+    assert.equal(replacement.getAttribute('aria-busy'), 'true');
+    assert.ok(document.activeElement === replacement.querySelector('button'));
+    finish(JSON.stringify(await report('win32', Date.now() + 1000))); await loading;
+    assert.equal(replacement.getAttribute('aria-busy'), 'false');
+    assert.match(replacement.textContent, /4건 \/ 24시간/);
+    assert.match(replacement.textContent, /예제 DEMO/);
+    assert.ok(document.activeElement === replacement.querySelector('button'));
+  });
+});
+
+test('host freshness starts with the rendered signature and updates all source time states', async t => {
+  await withDocument(async () => {
+    const previousWindow = globalThis.window;
+    let now = T, tick;
+    t.mock.method(Date, 'now', () => now);
+    globalThis.window = { location:{ pathname:'/' }, setInterval(fn) { tick = fn; return 1; }, clearInterval() {}, addEventListener() {} };
+    try {
+      const latest = normalizeHostObservation(await report('win32', T + 24_000), T);
+      const state = { pending:false, latest, history:[], error:null, requestId:0 };
+      const root = hostPanel(state, 'disconnected'); document.body.append(root);
+      const network = () => root.find(el => el.getAttribute('data-host-card') === 'network');
+      const initial = network(); now = T + 15_000; tick();
+      assert.ok(network() === initial, 'the first unchanged timer tick must not rebuild the view');
+      now = T + 30_000; tick(); assert.match(network().textContent, /1개 인터페이스/);
+      now = T + 24_000 + 15 * 60_000 + 1; tick(); assert.match(network().textContent, /오래된 보고서 또는 원천/);
+    } finally { if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow; }
+  });
+});
+
+test('host timer updates DNS detail freshness while its network aggregate is already stale', async t => {
+  await withDocument(async () => {
+    const previousWindow = globalThis.window;
+    let now = T + 885_000, tick;
+    t.mock.method(Date, 'now', () => now);
+    globalThis.window = { location:{ pathname:'/' }, setInterval(fn) { tick = fn; return 1; }, clearInterval() {}, addEventListener() {} };
+    try {
+      const raw = await report('win32', T);
+      raw.network.measuredAt = raw.network.parts.interfaces.measuredAt = new Date(T - 20_000).toISOString();
+      raw.network.parts.dns.measuredAt = new Date(T - 5000).toISOString();
+      const latest = normalizeHostObservation(raw, now);
+      const root = hostPanel({ pending:false, latest, history:[], error:null, requestId:0 }, 'disconnected');
+      document.body.append(root);
+      const dnsLine = () => root.find(node => node.tagName === 'P' && node.textContent.startsWith('DNS resolver ·'));
+      assert.equal(hostReportQuality(latest, now).feeds.network.freshness, 'stale');
+      assert.match(dnsLine().textContent, /^DNS resolver · 조회됨/);
+      now = T + 900_000; tick();
+      const quality = hostReportQuality(latest, now);
+      assert.equal(quality.freshness, 'recent');
+      assert.equal(quality.feeds.network.freshness, 'stale');
+      assert.match(dnsLine().textContent, /^DNS resolver · 과거 또는 시각 미확인/);
+    } finally { if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow; }
+  });
+});
+
+test('Windows event envelope failure already includes specific next-step guidance in the host UI', async () => {
+  await withDocument(async () => {
+    const raw = await report('win32', Date.now()); raw.windowsEvents.status = 'unavailable';
+    const latest = normalizeHostObservation(raw);
+    const root = hostPanel({ pending:false, latest, history:[], error:null, requestId:0 }, 'disconnected');
+    assert.match(root.textContent, /Windows 이벤트 집계 형식이 잘못됐습니다\. 수집기로 새 보고서를 생성하세요\./);
+    assert.match(root.textContent, /1개 인터페이스/);
+    assert.doesNotMatch(root.textContent, /4건 \/ 24시간/);
+  });
 });

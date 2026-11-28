@@ -482,6 +482,7 @@ function showEventReadSummary(data) {
 
 function redrawEvents() {
   $('records-panel').setAttribute('aria-busy', String(securityPending.events));
+  const data = latestEvents;
   if (securityPending.events) {
     // A previous DEMO row must never lose its provenance while a new read
     // is pending. Keep the prior source and avoid claiming a fresh result.
@@ -490,16 +491,18 @@ function redrawEvents() {
     set('events-note', previous
       ? '기록 재조회 중 · 아래 내용은 이전 ' + previous + '이며 새 결과가 아닙니다.'
       : '기록 재조회 중 · 이전에 확인된 기록이 없습니다.');
-    return;
+    if (!previous) return;
+    // Filtering is local: keep the previous source and pending notice while
+    // applying the user's selection to the already available rows.
+  } else {
+    const mode = data.mode;
+    // Configured adapter and verified event data are different claims.
+    set('events-origin', data.status !== 'ok'
+      ? mode === 'demo' ? '예제 DEMO · 기록 확인 불가'
+        : mode === 'connected' ? 'SDP 조회 실패 · 기록 확인 불가'
+          : mode === 'disconnected' ? 'SDP 미연결' : 'SDP 연결 확인 불가'
+      : eventReadLabel(data));
   }
-  const data = latestEvents;
-  const mode = data.mode;
-  // Configured adapter and verified event data are different claims.
-  set('events-origin', data.status !== 'ok'
-    ? mode === 'demo' ? '예제 DEMO · 기록 확인 불가'
-      : mode === 'connected' ? 'SDP 조회 실패 · 기록 확인 불가'
-        : mode === 'disconnected' ? 'SDP 미연결' : 'SDP 연결 확인 불가'
-    : eventReadLabel(data));
   const body = $('events-body');
   body.replaceChildren();
   if (data.status !== 'ok') {
@@ -512,7 +515,7 @@ function redrawEvents() {
   }
   const selected = $('event-filter').value;
   const items = data.events.filter(row => selected === 'all' || row.kind === selected);
-  showEventReadSummary(data);
+  if (!securityPending.events) showEventReadSummary(data);
   if (!items.length) {
     const tr = document.createElement('tr'), td = document.createElement('td');
     td.colSpan = 5; td.textContent = '표시할 기록이 없습니다. 전체 환경에 사건이 없다는 뜻은 아닙니다.';
@@ -590,13 +593,17 @@ async function measureOnce() {
     const snapshot = normalizeSnapshot(response, { requestedAt, receivedAt });
     latestSnapshot = snapshot.status === 'ok' ? snapshot : { status: 'error', reason: snapshot.reason };
     advanceHistoryClock(receivedAt);
+    const previousPoint = history.at(-1);
     history = snapshot.status === 'ok' ? appendSample(history, snapshot, receivedAt) : appendGap(history, receivedAt);
+    const acquiredPoint = history.at(-1);
     // A failed read is not permission to retry. The user must explicitly restart monitoring.
     const now = Date.now();
     const observedCount = snapshot.status === 'ok' ? ['cpu','memory','disk'].filter(key =>
       snapshot.metrics[key]?.status === 'ok' && readingFreshness(snapshot.metrics[key].measuredAt, now) === 'recent').length : 0;
     const unreliable = snapshot.status !== 'ok' || readingFreshness(snapshot.checkedAt, now) !== 'recent'
       || observedCount !== 3;
+    const reused = !unreliable && observedCount === 3
+      && (acquiredPoint === previousPoint || !acquiredPoint?.metrics);
     if (unreliable && observing) {
       observing = false;
       // Even a disk-only failure ends this monitoring session. Keep the
@@ -609,7 +616,8 @@ async function measureOnce() {
       ? 'PC 측정 실패: ' + reasonText(snapshot.reason) + ' · 자동 재시도하지 않습니다.'
       : observedCount === 0
         ? 'PC 측정 실패 · 유효한 실측값 없음 · 조회 ' + dateText(snapshot.checkedAt) + ' · 카드별 사유 확인 후 직접 다시 측정하세요.'
-        : (observedCount === 3 && !unreliable ? 'PC 실측' : 'PC 일부 실측 · 측정 실패 또는 시각 불일치')
+        : (reused ? '이전 PC 측정값 재확인 · 새 표본 없음'
+          : observedCount === 3 && !unreliable ? 'PC 실측' : 'PC 일부 실측 · 측정 실패 또는 시각 불일치')
           + ' · ' + dateText(snapshot.checkedAt) + ' · 각 카드에는 독립된 측정 시각과 단위를 표시합니다. 기기 보안 상태는 SDP 원천 조회입니다.'
           + (unreliable ? ' · 관측 중단: 사용자가 다시 시작해야 합니다.' : ''));
   } catch (error) {

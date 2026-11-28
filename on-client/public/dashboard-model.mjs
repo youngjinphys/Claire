@@ -138,6 +138,21 @@ export function appendSample(history, snapshot, now = Date.now()) {
   const previous = Array.isArray(history) ? history.at(-1) : null;
   const previousTime = previous?.time;
   const alreadySeparated = previous?.cpu === null && previous?.memory === null && !Object.hasOwn(previous, 'metrics');
+  // A rollback can trim the future-dated stop marker while retaining the
+  // measurements before it. Preserve the boundary in the current clock.
+  if (alreadySeparated && recent.at(-1) !== previous) recent = appendGap(recent, now);
+  const lastSample = Array.isArray(history) ? [...history].reverse().find(point => finite(point?.time)
+    && (Object.hasOwn(point, 'metrics') || finite(point.cpu) || finite(point.memory))) : null;
+  // Stop/start gaps do not turn the server's short-lived cached reply into a
+  // new acquisition. A matching clock alone is insufficient after a rollback;
+  // only identical normalized sensor evidence is a repeated sample here.
+  if (alreadySeparated && time === lastSample?.time && ['cpu', 'memory', 'disk'].every(key => {
+    const before = lastSample.metrics?.[key], after = snapshot.metrics?.[key];
+    if (!isObject(before) || !isObject(after)) return false;
+    const fields = Object.keys(before);
+    return fields.length === Object.keys(after).length
+      && fields.every(field => Object.hasOwn(after, field) && before[field] === after[field]);
+  })) return recent;
   // Compare acquisition order before retention can remove future-dated points.
   // Equal timestamps are a reused cached sample; a reversal is a real gap.
   if (!alreadySeparated && finite(previousTime) && time < previousTime) recent = appendGap(recent, time);

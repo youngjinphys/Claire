@@ -47,3 +47,12 @@ Windows System·Application의 최근 24시간 경고·오류 건수는 **침해
 - 파일 원본과 실제 수집 여부는 미인증입니다. 주소·식별자 제외 집계도 시각·건수를 포함하므로 완전한 익명성을 보장하지 않습니다. 원본 임시 보고서의 개인정보와 보관·정리는 [호스트 수집 안내](student/HOST_OBSERVATION.md)를 확인하세요.
 
 일반 조회와 화면 모델만 검증하려면 `node --test test/host-collection.test.mjs test/student-host-view.test.mjs test/dashboard-regression.test.mjs test/dashboard-resilience.test.mjs`를 실행합니다. 전체 CI의 포장/공격 모의 범위를 대신하지 않으며 실제 사용자 PC나 운영 연결을 검증했다는 뜻이 아닙니다.
+
+### 관측 재개와 화면 갱신 (2026-11-28)
+
+- 관측 중지 직후 다시 시작하여 서버의 같은 캐시 응답을 받으면 `이전 PC 측정값 재확인 · 새 표본 없음`으로 안내합니다. 표본 수와 JSON 기록을 중복으로 늘리지 않으며, 재개 구간의 변화량은 새로 수집한 두 표본부터 계산합니다. 실제 시계가 뒤로 바뀌면 기존처럼 구간을 분리합니다.
+- 학생 보고서의 상세 펼침과 키보드 초점은 부분 갱신 및 기본 화면의 학생 패널 전체 교체에서 유지합니다. 사용자가 다른 컨트롤로 이동한 뒤에는 예약된 복원이 초점을 가져오지 않습니다.
+- 최신성 갱신은 네트워크 카드의 집계 상태뿐 아니라 인터페이스·DNS 원천의 개별 시각도 확인합니다. 한 원천이 먼저 오래된 상태가 되어도 나머지 원천의 표시가 계속 갱신됩니다.
+- SDP 기록 재조회 중에도 종류 필터는 이전에 받은 기록에 즉시 적용됩니다. `조회 중`, 이전 원천 및 DEMO 표시는 유지하며, 필터 변경으로 추가 조회를 보내지 않습니다.
+
+위 동작의 선택 검사는 `node --test test/dashboard-regression.test.mjs test/dashboard-lifecycle.test.mjs test/dashboard-resilience.test.mjs test/student-host-view.test.mjs`입니다. 실제 브라우저에서 기본 화면의 상세 펼침·Tab 이동과 대시보드의 중지→재개·재조회 중 필터를 확인하는 절차는 별도입니다.

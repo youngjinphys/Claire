@@ -153,6 +153,42 @@ test('changing event filter and freshness ticks cannot erase the in-flight state
   assert.equal(b.get('records-panel').getAttribute('aria-busy'), 'false');
 });
 
+test('event filters apply to previous DEMO rows during a slow refresh without another request', async t => {
+  const b = await browser(t, { delayedEvents: true });
+  const reply = events();
+  reply.meta.mode = 'demo';
+  const row = (kind, id) => ({
+    id, kind, at: reply.meta.checkedAt, summary: 'Synthetic display record', appId: null,
+    evidence: [], rules: [], supportedActions: [],
+    state: { access: 'unknown', session: 'unknown', device: 'unknown' },
+  });
+  reply.data = [row('access', 'previous-access'), row('xdr', 'previous-xdr')];
+  b.deferred[0](json(reply)); await flush();
+  assert.equal(b.get('events-body').children.length, 2);
+
+  b.get('refresh-security').click(); await flush();
+  b.get('event-filter').value = 'xdr'; b.get('event-filter').handlers.get('change')();
+  assert.equal(b.get('events-body').children.length, 1);
+  assert.match(b.get('events-body').textContent, /previous-xdr/);
+  assert.doesNotMatch(b.get('events-body').textContent, /previous-access/);
+  assert.match(b.get('events-origin').textContent, /조회 중.*이전 예제 DEMO/);
+  assert.match(b.get('events-note').textContent, /이전 예제 DEMO.*새 결과가 아닙니다/);
+  assert.equal(b.get('records-panel').getAttribute('aria-busy'), 'true');
+  assert.equal(b.get('refresh-security').getAttribute('aria-disabled'), 'true');
+  assert.equal(b.calls.filter(path => path === '/api/events').length, 2);
+
+  b.get('event-filter').value = 'access'; b.get('event-filter').handlers.get('change')();
+  assert.match(b.get('events-body').textContent, /previous-access/);
+  assert.doesNotMatch(b.get('events-body').textContent, /previous-xdr/);
+  const updated = events(); updated.meta.mode = 'demo';
+  updated.data = [row('access', 'current-access'), row('xdr', 'current-xdr')];
+  b.deferred[1](json(updated)); await flush();
+  assert.equal(b.get('events-body').children.length, 1);
+  assert.match(b.get('events-body').textContent, /current-access/);
+  assert.doesNotMatch(b.get('events-body').textContent, /current-xdr|previous-/);
+  assert.equal(b.get('records-panel').getAttribute('aria-busy'), 'false');
+});
+
 test('events and identity reject stale/future envelopes even when optional coverage is absent', () => {
   const now = Date.now(), timing = { requestedAt: now, receivedAt: now + 100 };
   for (const time of [now - 60000, now + 60000]) {

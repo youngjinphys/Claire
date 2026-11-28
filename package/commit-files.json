@@ -1,21 +1,15 @@
 {
   "schema": "claire.commit-files.v1",
   "files": [
-    "README.md",
-    "on-client/public/app.js",
-    "on-client/public/dashboard.css",
-    "on-client/public/dashboard.html",
+    "on-client/README.md",
+    "on-client/public/dashboard-model.mjs",
     "on-client/public/dashboard.mjs",
-    "on-client/public/index.html",
-    "on-client/public/style.css",
     "on-client/student/extension.mjs",
+    "on-client/test/dashboard-lifecycle.test.mjs",
+    "on-client/test/dashboard-regression.test.mjs",
+    "on-client/test/dashboard-resilience.test.mjs",
     "on-client/test/student-host-view.test.mjs",
-    "on-client/tools/dashboard-browser-smoke.mjs",
-    "package/commit-files.json",
-    "public/index.html",
-    "public/operations.css",
-    "public/operations.mjs",
-    "scripts/operations-chart-browser-smoke.mjs"
+    "package/commit-files.json"
   ],
-  "releaseNote": "Keep keyboard focus and section headings visible, distinguish unmeasured resources, and reflow evidence rows on mobile."
+  "releaseNote": "Keep cached observations in their original intervals, preserve report disclosure and keyboard focus through full panel replacement, update independent network freshness, and filter previous SDP rows during refresh. Preserve supplied UI, servers, collector and prior submission inputs."
 }

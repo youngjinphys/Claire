@@ -64,6 +64,25 @@ test('one-shot/start race cannot strand busy=true',async(t)=>{
   assert.equal(b.get('sample-once').getAttribute('aria-disabled'),'false');
   b.get('start').click();assert.equal(b.requests.length,2);
 });
+test('restarting with the same cached PC response announces reuse without counting a new sample', async t => {
+  const b = await browser();
+  t.after(() => b.window.handlers.get('pagehide')?.({persisted:false}));
+  const acquiredAt = Date.now();
+  b.context.clockAt = acquiredAt;
+  vm.runInContext(`{
+    const originalDate = Date;
+    Date = class extends originalDate { static now() { return globalThis.clockAt; } };
+  }`, b.context);
+  b.get('start').click(); b.requests[0](result(acquiredAt)); await flush();
+  assert.equal(b.get('sample-count').textContent, '1개');
+  b.context.clockAt = acquiredAt + 100;
+  b.get('stop').click();
+  b.context.clockAt = acquiredAt + 200;
+  b.get('start').click(); b.requests[1](result(acquiredAt)); await flush();
+  assert.equal(b.get('sample-count').textContent, '1개');
+  assert.match(b.get('page-notice').textContent, /이전 PC 측정값 재확인 · 새 표본 없음/);
+  assert.equal(vm.runInContext('trendSummary(history)', b.context), null);
+});
 test('a freshness redraw during clock rollback records a gap before a later sample can reconnect old history', async t => {
   const b = await browser();
   t.after(() => b.window.handlers.get('pagehide')?.({persisted:false}));
